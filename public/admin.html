@@ -8104,9 +8104,12 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 ? `$${balance.balance_usd}`
                 : (balance.balance != null ? `${balance.balance} cents` : '—');
             const gptPlans = (data.gpt_plans || []).filter((p) => p.enabled !== 0 && p.enabled !== false);
-            document.getElementById('gpt_api_plans').textContent = gptPlans.length
-                ? gptPlans.map((p) => `${p.name || p.key} (${p.key || '—'})`).join('、')
-                : (data.configured_plan ? `已配置代码：${data.configured_plan}` : '供应商未提供套餐列表');
+            const mappings = data.plan_mappings || {};
+            document.getElementById('gpt_api_plans').textContent = Object.keys(mappings).length
+                ? `Plus=${mappings.plus || '—'}、Pro 5x=${mappings.pro_5x || '—'}、Pro 20x=${mappings.pro_20x || '—'}`
+                : (gptPlans.length
+                    ? gptPlans.map((p) => `${p.name || p.key} (${p.key || '—'})`).join('、')
+                    : (data.configured_plan ? `已配置代码：${data.configured_plan}` : '供应商未提供套餐列表'));
             const creditPlans = data.credit_plans || [];
             document.getElementById('gpt_api_credit_plans').textContent = creditPlans.length
                 ? creditPlans.map((p) => `${p.name || p.id}: ${p.credits ?? '—'} 積分`).join('、')

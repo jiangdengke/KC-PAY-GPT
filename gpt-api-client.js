@@ -57,6 +57,24 @@ function resolveOpenPlanCode(planKey) {
     return OPEN_PLAN_ALIASES[value.toLowerCase()] || value || OPEN_PLAN_ALIASES.plus;
 }
 
+function resolveOpenPlanMappings(planKey) {
+    const configured = String(planKey || '').trim();
+    const standardCodes = new Set([
+        'chatgptplusplan',
+        'chatgptprolite',
+        'chatgptpro',
+        ...Object.keys(OPEN_PLAN_ALIASES)
+    ]);
+    if (configured && !standardCodes.has(configured.toLowerCase())) {
+        return { plus: configured, pro_5x: configured, pro_20x: configured };
+    }
+    return {
+        plus: resolveOpenPlanCode('plus'),
+        pro_5x: resolveOpenPlanCode('pro_5x'),
+        pro_20x: resolveOpenPlanCode('pro_20x')
+    };
+}
+
 function maskApiKey(key) {
     const k = String(key || '').trim();
     if (!k) return '';
@@ -190,13 +208,15 @@ async function fetchPlans(cfg) {
     if (isDesolateOpenProtocol(cfg)) {
         const account = await queryAccount(cfg);
         if (!account.success) return account;
+        const planMappings = resolveOpenPlanMappings(cfg.plan_key);
         return {
             success: true,
             status: account.status,
             plans: [],
             gptPlans: [],
             creditPlans: [],
-            configuredPlan: resolveOpenPlanCode(cfg.plan_key),
+            configuredPlan: planMappings.plus,
+            planMappings,
             account: account.data,
             raw: account.raw
         };
@@ -461,15 +481,17 @@ async function testConnection(cfg) {
     if (isDesolateOpenProtocol(cfg)) {
         const account = await queryAccount(cfg);
         if (!account.success) return { success: false, error: `账户查询失败: ${account.error}` };
-        const plan = resolveOpenPlanCode(cfg.plan_key);
+        const planMappings = resolveOpenPlanMappings(cfg.plan_key);
         const points = account.data?.availablePoints;
+        const mappingText = `Plus=${planMappings.plus}、Pro 5x=${planMappings.pro_5x}、Pro 20x=${planMappings.pro_20x}`;
         return {
             success: true,
-            message: `API 连接成功（可用积分 ${points == null ? '—' : points}，当前套餐代码 ${plan}）`,
+            message: `API 连接成功（可用积分 ${points == null ? '—' : points}；套餐映射 ${mappingText}）`,
             plans: [],
             gptPlans: [],
             creditPlans: [],
-            configuredPlan: plan,
+            configuredPlan: planMappings.plus,
+            planMappings,
             account: account.data,
             balance: account.data
         };
@@ -524,6 +546,7 @@ module.exports = {
     isDesolateOpenProtocol,
     resolveBaseUrl,
     resolveOpenPlanCode,
+    resolveOpenPlanMappings,
     queryAccount,
     validateOpenSession
 };

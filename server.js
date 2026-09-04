@@ -2499,7 +2499,8 @@ app.post('/api/admin/gpt-api/test', async (req, res) => {
             plans: result.plans,
             balance: result.balance,
             account: result.account || null,
-            configured_plan: result.configuredPlan || null
+            configured_plan: result.configuredPlan || null,
+            plan_mappings: result.planMappings || null
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -2538,6 +2539,7 @@ app.get('/api/admin/gpt-api/status', async (req, res) => {
             balance: balanceResult.success ? balanceResult.data : null,
             account: plansResult.account || balanceResult.account || null,
             configured_plan: plansResult.configuredPlan || cfg.plan_key || null,
+            plan_mappings: plansResult.planMappings || null,
             balance_error: balanceResult.success ? null : balanceResult.error,
             recent_orders: orders
         });

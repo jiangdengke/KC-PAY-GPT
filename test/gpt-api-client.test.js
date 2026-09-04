@@ -122,6 +122,25 @@ describe('gpt api client', () => {
         expect(client.resolveOpenPlanCode('plus')).toBe('chatgptplusplan');
     });
 
+    it('reports all Desolate Open plan mappings during connection tests', async () => {
+        vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: { code: 0, message: '成功', data: { accountId: 'usr_1', availablePoints: 20 } }
+        });
+        const out = await client.testConnection({
+            base_url: 'https://recharge.desolate.run',
+            api_key: 'ap_live_test',
+            plan_key: 'chatgptplusplan'
+        });
+        expect(out.planMappings).toEqual({
+            plus: 'chatgptplusplan',
+            pro_5x: 'chatgptprolite',
+            pro_20x: 'chatgptpro'
+        });
+        expect(out.message).toContain('Pro 5x=chatgptprolite');
+        expect(out.message).toContain('Pro 20x=chatgptpro');
+    });
+
     it('maps the Desolate Open order fields and unwraps its response envelope', async () => {
         const spy = vi.spyOn(axios, 'request').mockResolvedValue({
             status: 201,
