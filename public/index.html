@@ -143,14 +143,6 @@
             </ul>
         </details>
 
-        <aside id="publicRuntimeCard" class="public-runtime-panel load-low">
-            <div class="public-runtime-layout">
-                <div class="public-runtime-title">前台并发</div>
-                <div id="publicForegroundSlots" class="public-runtime-value">0/0</div>
-                <div id="publicForegroundSlotsMeta" class="public-runtime-meta">当前空闲</div>
-                <div id="publicForegroundSlotGrid" class="public-slot-grid"></div>
-            </div>
-        </aside>
     </div>
 
     <script>
@@ -170,16 +162,11 @@
         const taskProgressBar = document.getElementById('taskProgressBar');
         const taskProgressPercent = document.getElementById('taskProgressPercent');
         const taskProgressText = document.getElementById('taskProgressText');
-        const publicRuntimeCard = document.getElementById('publicRuntimeCard');
-        const publicForegroundSlots = document.getElementById('publicForegroundSlots');
-        const publicForegroundSlotGrid = document.getElementById('publicForegroundSlotGrid');
-        const publicForegroundSlotsMeta = document.getElementById('publicForegroundSlotsMeta');
         const flowStatusBadge = document.getElementById('flowStatusBadge');
         const flowStepper = document.getElementById('flowStepper');
         const tabButtons = Array.from(document.querySelectorAll('.tab-btn'));
         let taskProgressValue = 0;
         let activationLocked = false;
-        let publicRuntimeTimer = null;
 
         const PLAN_LABELS = {
             plus: 'ChatGPT Plus',
@@ -803,52 +790,6 @@
             statusMsg.style.display = 'block';
         }
 
-        function renderPublicSlotGrid(active, max) {
-            if (!publicRuntimeCard || !publicForegroundSlotGrid || !publicForegroundSlotsMeta) {
-                return;
-            }
-
-            const safeMax = Math.max(1, Number(max) || 1);
-            const safeActive = Math.max(0, Math.min(safeMax, Number(active) || 0));
-            const usageRate = safeMax > 0 ? (safeActive / safeMax) : 0;
-            let loadClass = 'load-low';
-            let loadText = '当前空闲';
-
-            if (usageRate >= 0.8) {
-                loadClass = 'load-high';
-                loadText = '并发占用较高';
-            } else if (usageRate >= 0.6) {
-                loadClass = 'load-mid';
-                loadText = '并发占用过半';
-            } else if (safeActive > 0) {
-                loadText = '运行中';
-            }
-
-            publicRuntimeCard.classList.remove('load-low', 'load-mid', 'load-high');
-            publicRuntimeCard.classList.add(loadClass);
-            publicForegroundSlotsMeta.textContent = loadText;
-            publicForegroundSlotGrid.innerHTML = Array.from({ length: safeMax }, (_, index) => {
-                const occupied = index < safeActive;
-                return `<div class="public-slot-box ${occupied ? 'occupied' : 'idle'}"></div>`;
-            }).join('');
-        }
-
-        async function loadPublicRuntime() {
-            try {
-                const response = await fetch('/api/public/runtime');
-                const data = await response.json();
-                if (!data.success) {
-                    return;
-                }
-                const active = Number(data.runtime?.active_foreground_jobs || 0);
-                const max = Number(data.runtime?.max_foreground_jobs || 1);
-                if (publicForegroundSlots) {
-                    publicForegroundSlots.textContent = `${active}/${max}`;
-                }
-                renderPublicSlotGrid(active, max);
-            } catch (_) { }
-        }
-
         async function loadPaymentRegionHint() {
             const hint = document.getElementById('paymentRegionHint');
             if (!hint) return;
@@ -863,8 +804,6 @@
 
         updateFlowUI(1, 'pending');
         loadPaymentRegionHint();
-        loadPublicRuntime();
-        publicRuntimeTimer = setInterval(loadPublicRuntime, 3000);
         lucide.createIcons();
     </script>
 </body>

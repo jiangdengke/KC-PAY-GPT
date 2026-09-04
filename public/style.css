@@ -543,101 +543,6 @@ button::after {
     text-transform: uppercase;
 }
 
-/* ============ 公共运行时面板（右侧并发槽） ============ */
-.public-runtime-panel {
-    position: fixed;
-    right: 16px;
-    top: 50%;
-    transform: translateY(-50%);
-    margin: 0;
-    padding: 16px 18px;
-    border-radius: var(--radius-lg);
-    background: var(--surface);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--shadow);
-    width: 220px;
-    z-index: 5;
-}
-
-.public-runtime-layout {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 10px;
-    width: 100%;
-}
-
-.public-runtime-title {
-    color: var(--text-dim);
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.public-runtime-value {
-    font-size: 26px;
-    font-weight: 700;
-    letter-spacing: 0;
-    text-align: left;
-    color: var(--text-main);
-}
-
-.public-runtime-meta {
-    color: var(--text-dim);
-    font-size: 12px;
-    text-align: left;
-    line-height: 1.45;
-}
-
-.public-slot-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 6px;
-    width: 100%;
-    margin-top: 4px;
-}
-
-.public-slot-box {
-    height: 12px;
-    border-radius: 999px;
-    border: 1px solid var(--glass-border);
-    background: var(--surface-soft);
-    transition: 0.2s ease;
-}
-
-.public-slot-box.idle {
-    background: var(--surface-soft);
-    border-color: var(--glass-border);
-}
-
-.public-runtime-panel.load-low .public-runtime-value {
-    color: var(--success);
-}
-
-.public-runtime-panel.load-low .public-slot-box.occupied {
-    background: var(--success);
-    border-color: #6ee7b7;
-}
-
-.public-runtime-panel.load-mid .public-runtime-value {
-    color: #d97706;
-}
-
-.public-runtime-panel.load-mid .public-slot-box.occupied {
-    background: var(--warning);
-    border-color: #fcd34d;
-}
-
-.public-runtime-panel.load-high .public-runtime-value {
-    color: var(--error);
-}
-
-.public-runtime-panel.load-high .public-slot-box.occupied {
-    background: var(--error);
-    border-color: #fca5a5;
-}
-
 .tab-nav {
     display: flex;
     gap: 4px;
@@ -1151,13 +1056,6 @@ button.is-loading .btn-text {
     font-size: 13px;
     line-height: 1.7;
     color: var(--text-dim);
-}
-
-.recharge-page .public-runtime-panel {
-    position: static;
-    transform: none;
-    width: 100%;
-    margin-top: 20px;
 }
 
 @media (max-width: 640px) {
