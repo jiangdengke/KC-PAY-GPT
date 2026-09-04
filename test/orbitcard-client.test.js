@@ -44,4 +44,44 @@ describe('orbitcard client', () => {
         expect(list.data[0]).toMatchObject({ cardId: 42, status: 'ACTIVE', last4: '4242' });
         expect(detail.data).toMatchObject({ cardId: 42, cardNumber: '4242424242424242', cvc: '123', expiry: '12/30' });
     });
+
+    it('selects an available product and calculates a one-time card amount per plan', () => {
+        const selection = orbitcard.chooseProductForPlan({ list: [
+            {
+                product_code: 'visa-1',
+                remaining_open_card_num: 20,
+                min_initial_amount: '20',
+                min_retained_balance: '0.10',
+                gpt_plan_prices: [
+                    { id: 'plus', price: '15.78', currency: 'USD' },
+                    { id: 'pro', price: '95.57', currency: 'USD' },
+                    { id: 'pro_20x', price: '143.40', currency: 'USD' }
+                ]
+            }
+        ] }, 'pro_5x');
+        expect(selection).toMatchObject({
+            success: true,
+            amount: '100.00',
+            product: { productCode: 'visa-1' },
+            planPrice: { id: 'pro', price: 95.57 }
+        });
+        expect(orbitcard.chooseProductForPlan({ list: [
+            { product_code: 'visa-1', remaining_open_card_num: 20, min_initial_amount: '20', min_retained_balance: '0.10', gpt_plan_prices: [{ id: 'pro_20x', price: '143.40' }] }
+        ] }, 'pro_20x').amount).toBe('145.00');
+    });
+
+    it('creates exactly one card with the documented idempotency key', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 201,
+            data: { code: 0, msg: 'ok', data: { card_id: 77, quantity: 1, status: 'PENDING' } }
+        });
+        const result = await orbitcard.createCard(
+            { base_url: 'https://orbitcard.cc', api_key: 'k', api_secret: 's' },
+            { productCode: 'visa-1', amount: '100.00', quantity: 1, idempotencyKey: 'orbitcard-job-1' }
+        );
+        expect(result.success).toBe(true);
+        expect(orbitcard.extractCreatedCardId(result.data)).toBe(77);
+        expect(JSON.parse(spy.mock.calls[0][0].data)).toEqual({ product_code: 'visa-1', amount: '100.00', quantity: 1 });
+        expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toBe('orbitcard-job-1');
+    });
 });

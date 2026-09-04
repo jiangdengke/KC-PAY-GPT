@@ -3139,6 +3139,21 @@ async function releaseOrbitcardCard(cardId) {
     );
 }
 
+/**
+ * Retire a newly-created Orbitcard card after its single order attempt.
+ * Retired cards are never selected by the reusable-card path.
+ */
+async function retireOrbitcardCard(cardId) {
+    const id = Number(cardId);
+    if (!Number.isInteger(id) || id <= 0) return;
+    await runExecute(
+        `UPDATE orbitcard_card_usage
+         SET status = 'RETIRED', in_use = 0, locked_at = NULL, locked_by = NULL
+         WHERE card_id = ?`,
+        [id]
+    );
+}
+
 async function recordOrbitcardCardUsage(cardId) {
     const id = Number(cardId);
     if (!Number.isInteger(id) || id <= 0) return { dailyUsageCount: 0, cooledDown: false };
@@ -3769,6 +3784,7 @@ module.exports = {
     releaseCard,
     reserveOrbitcardCard,
     releaseOrbitcardCard,
+    retireOrbitcardCard,
     recordOrbitcardCardUsage,
     markCardExhausted,
     recordCardUsage,

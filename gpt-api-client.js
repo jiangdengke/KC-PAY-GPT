@@ -590,10 +590,21 @@ async function testCardSource(cfg = {}) {
         api_secret: cfg.orbitcard_api_secret
     });
     if (!result.success) return result;
+    const planAmounts = {};
+    for (const planType of ['plus', 'pro_5x', 'pro_20x']) {
+        const selection = orbitcard.chooseProductForPlan(result.products, planType);
+        planAmounts[planType] = selection.success ? selection.amount : null;
+    }
     return {
         success: true,
-        data: { source: 'orbitcard', cardCount: result.cardCount, balance: result.balance },
-        message: result.message,
+        data: {
+            source: 'orbitcard',
+            cardCount: result.cardCount,
+            productCount: result.productCount,
+            balance: result.balance,
+            planAmounts
+        },
+        message: `${result.message}；新卡首充建议 Plus ${planAmounts.plus || '—'} USD、Pro 5x ${planAmounts.pro_5x || '—'} USD、Pro 20x ${planAmounts.pro_20x || '—'} USD`,
         cards: result.cards
     };
 }

@@ -3270,7 +3270,7 @@ function spawnCheckoutDebugWorker({ task, token, sessionRaw, planType, region, p
  *
  * 流程：
  * 1. 读取后台配置（base_url / api_key / plan_key / enabled）
- * 2. 从银行卡池预留一张卡；Desolate Open 的订单接口要求卡字段必填
+ * 2. Orbitcard 卡源按套餐产品目录新开一张卡；本地卡源预留一张现有卡
  * 3. 旧协议 POST /pay；Desolate Open POST /orders
  * 4. 轮询订单状态，直到终态（success / failed）
  * 5. 将结果写回 task_logs（含 gpt_api_order_id / gpt_api_task_id / gpt_api_raw）
@@ -3364,7 +3364,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             ? `第三方 API 协议代理 ${maskProxyForLog(proxy)}`
             : '第三方 API 使用平台启用代理池');
 
-        // Session 检查通过后才锁定卡源资产，避免无效 Session 占用卡片。
+        // Session 检查通过后才创建／锁定卡源资产，避免无效 Session 占用卡片。
         let newCard = null;
         const cardSource = String(cfg.card_source || 'local').trim().toLowerCase();
         if (cardSource === 'orbitcard') {
@@ -3373,15 +3373,32 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 api_key: cfg.orbitcard_api_key,
                 api_secret: cfg.orbitcard_api_secret
             };
-            const cardList = await orbitcard.getCardList(orbitCfg);
-            if (!cardList.success) throw new Error(`Orbitcard 卡列表查询失败: ${cardList.error}`);
-            reservedOrbitcard = await store.reserveOrbitcardCard(cardList.data, `gptapi_${jobKey}`);
+            await setProgress('running', 14, `正在查询 ${getPlanTypeLabel(planType)} 的可开卡产品...`);
+            const productResult = await orbitcard.getProductCode(orbitCfg);
+            if (!productResult.success) throw new Error(`Orbitcard 产品目录查询失败: ${productResult.error}`);
+            const selection = orbitcard.chooseProductForPlan(productResult.data, planType);
+            if (!selection.success) throw new Error(selection.error);
+
+            await setProgress('running', 17, `正在为 ${getPlanTypeLabel(planType)} 创建一次性卡（首充 ${selection.amount} USD）...`);
+            const createResult = await orbitcard.createCard(orbitCfg, {
+                productCode: selection.product.productCode,
+                amount: selection.amount,
+                quantity: 1,
+                idempotencyKey: `orbitcard-${jobKey}`
+            });
+            if (!createResult.success) throw new Error(`Orbitcard 开卡失败: ${createResult.error}`);
+            const createdCardId = orbitcard.extractCreatedCardId(createResult.data);
+            if (!createdCardId) {
+                throw new Error(`Orbitcard 开卡成功但未返回 card_id: ${JSON.stringify(createResult.data).slice(0, 300)}`);
+            }
+
+            reservedOrbitcard = await store.reserveOrbitcardCard([{ card_id: createdCardId, status: 'ACTIVE' }], `gptapi_${jobKey}`);
             if (!reservedOrbitcard) {
-                throw new Error('Orbitcard 暂无可用卡片，请检查卡片状态或冷却情况');
+                throw new Error('Orbitcard 新卡已创建，但本地锁定失败，请联系管理员核对卡片状态');
             }
             const detail = await orbitcard.getCardDetail(orbitCfg, reservedOrbitcard.orbitcard_id);
             if (!detail.success) {
-                await store.releaseOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
+                await store.retireOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
                 reservedOrbitcard = null;
                 throw new Error(detail.error || 'Orbitcard 卡详情查询失败');
             }
@@ -3394,7 +3411,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 name: detail.data.holder || 'API User',
                 country: cfg.country || 'PH'
             };
-            logTask(jobKey, `第三方 API 使用 Orbitcard 卡 ...${reservedOrbitcard.last4 || detail.data.cardNumber.slice(-4)}`);
+            logTask(jobKey, `第三方 API 新建 Orbitcard 卡 product=${selection.product.productCode} amount=${selection.amount} USD ...${reservedOrbitcard.last4 || detail.data.cardNumber.slice(-4)}`);
         } else {
             reservedCard = await store.reserveCard(`gptapi_${jobKey}`);
             if (!reservedCard) {
@@ -3534,7 +3551,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             await store.resetCdkFailure(cdk);
             if (reservedOrbitcard) {
                 await store.recordOrbitcardCardUsage(reservedOrbitcard.orbitcard_id);
-                await store.releaseOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
+                await store.retireOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
             } else {
                 await store.recordCardUsage(reservedCard?.id);
                 await store.releaseCard(reservedCard?.id).catch(() => { });
@@ -3542,7 +3559,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             notifyTaskOutcome({ event: 'success', email: accountEmail, cdk, jobKey, message: finalMessage });
         } else {
             if (reservedOrbitcard) {
-                await store.releaseOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
+                await store.retireOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
             } else {
                 await store.releaseCard(reservedCard?.id).catch(() => { });
             }
@@ -3552,7 +3569,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         console.error(`[GPT API Task Error] ${jobKey}:`, error);
         logTask(jobKey, `第三方代充任务异常: ${error.message}`, 'error');
         if (reservedOrbitcard) {
-            await store.releaseOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
+            await store.retireOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
         } else {
             await store.releaseCard(reservedCard?.id).catch(() => { });
         }
