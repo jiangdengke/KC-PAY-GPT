@@ -25,6 +25,9 @@ const DEFAULT_ADMIN_LOGIN_PATH = String(process.env.ADMIN_LOGIN_PATH || 'admin-l
 const DEFAULT_ADMIN_PANEL_PATH = String(process.env.ADMIN_PANEL_PATH || 'admin').trim().toLowerCase();
 const { normalizeAdminPaths } = require('./admin-paths');
 
+const DEFAULT_GPT_API_BASE_URL = 'https://recharge.desolate.run/api/v1/open';
+const DEFAULT_GPT_API_PLAN_KEY = 'chatgptplusplan';
+
 let pool = null;
 
 function getPool() {
@@ -259,9 +262,9 @@ async function ensureGptApiColumns() {
 async function ensureGptApiConfigDefaults() {
     const defaults = [
         ['gpt_api_enabled', '0'],
-        ['gpt_api_base_url', 'https://kc.vpss.eu.cc/'],
+        ['gpt_api_base_url', DEFAULT_GPT_API_BASE_URL],
         ['gpt_api_key', ''],
-        ['gpt_api_plan_key', 'plus'],
+        ['gpt_api_plan_key', DEFAULT_GPT_API_PLAN_KEY],
         ['gpt_api_country', 'PH'],
         ['gpt_api_currency', 'PHP']
     ];
@@ -285,10 +288,10 @@ async function getGptApiConfig() {
     const map = Object.fromEntries(rows.map((row) => [row.config_key, row.config_value]));
     return {
         enabled: String(map.gpt_api_enabled || '0') === '1',
-        base_url: String(map.gpt_api_base_url || 'https://kc.vpss.eu.cc/').trim()
-            || 'https://kc.vpss.eu.cc/',
+        base_url: String(map.gpt_api_base_url || DEFAULT_GPT_API_BASE_URL).trim()
+            || DEFAULT_GPT_API_BASE_URL,
         api_key: String(map.gpt_api_key || '').trim(),
-        plan_key: String(map.gpt_api_plan_key || 'plus').trim() || 'plus',
+        plan_key: String(map.gpt_api_plan_key || DEFAULT_GPT_API_PLAN_KEY).trim() || DEFAULT_GPT_API_PLAN_KEY,
         country: String(map.gpt_api_country || 'PH').trim().toUpperCase() || 'PH',
         currency: String(map.gpt_api_currency || 'PHP').trim().toUpperCase() || 'PHP'
     };
@@ -303,10 +306,10 @@ async function saveGptApiConfig(config = {}) {
          ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)`,
         [
             'gpt_api_enabled', config.enabled ? '1' : '0',
-            'gpt_api_base_url', String(config.base_url || existing.base_url || 'https://kc.vpss.eu.cc/').trim()
-                .replace(/\/+$/, '') || 'https://kc.vpss.eu.cc/',
+            'gpt_api_base_url', String(config.base_url || existing.base_url || DEFAULT_GPT_API_BASE_URL).trim()
+                .replace(/\/+$/, '') || DEFAULT_GPT_API_BASE_URL,
             'gpt_api_key', apiKey,
-            'gpt_api_plan_key', String(config.plan_key || existing.plan_key || 'plus').trim() || 'plus',
+            'gpt_api_plan_key', String(config.plan_key || existing.plan_key || DEFAULT_GPT_API_PLAN_KEY).trim() || DEFAULT_GPT_API_PLAN_KEY,
             'gpt_api_country', String(config.country || existing.country || 'PH').trim().toUpperCase() || 'PH',
             'gpt_api_currency', String(config.currency || existing.currency || 'PHP').trim().toUpperCase() || 'PHP'
         ]
@@ -2664,7 +2667,7 @@ async function deleteTaskLogByJobKey(jobKey) {
     return { deleted: Number(result.affectedRows || 0), mediaDeleted };
 }
 
-async function updateTaskLog(jobKey, { status, message, rawOutput, cdkCode, phone, cardLast4, progress, failureScreenshots, gptApiOrderId, gptApiTaskId, gptApiRaw, gptApiTopupCode }) {
+async function updateTaskLog(jobKey, { status, message, rawOutput, cdkCode, phone, cardLast4, progress, failureScreenshots, sessionPayload, gptApiOrderId, gptApiTaskId, gptApiRaw, gptApiTopupCode }) {
     const screenshotsJson = Array.isArray(failureScreenshots)
         ? JSON.stringify(failureScreenshots)
         : null;
@@ -2677,6 +2680,7 @@ async function updateTaskLog(jobKey, { status, message, rawOutput, cdkCode, phon
              cdk_code = COALESCE(?, cdk_code),
              phone = COALESCE(?, phone),
              card_last4 = COALESCE(?, card_last4),
+             session_payload = COALESCE(?, session_payload),
              failure_screenshots = COALESCE(?, failure_screenshots),
              gpt_api_order_id = COALESCE(?, gpt_api_order_id),
              gpt_api_task_id = COALESCE(?, gpt_api_task_id),
@@ -2691,6 +2695,7 @@ async function updateTaskLog(jobKey, { status, message, rawOutput, cdkCode, phon
             cdkCode || null,
             phone || null,
             cardLast4 || null,
+            sessionPayload || null,
             screenshotsJson,
             gptApiOrderId || null,
             gptApiTaskId || null,

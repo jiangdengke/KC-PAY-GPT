@@ -101,4 +101,90 @@ describe('gpt api client', () => {
         expect(balance).toMatchObject({ credits: 980, balance: 1250, balanceUsd: '12.50' });
     });
 
+    it('uses the Desolate Open account endpoint and X-API-Key auth', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: { code: 0, message: '成功', data: { accountId: 'usr_1', accountName: 'demo', email: 'demo@example.com', availablePoints: 20 } }
+        });
+        const out = await client.queryAccount({ base_url: 'https://recharge.desolate.run', api_key: 'ap_live_test' });
+        expect(out).toMatchObject({ success: true, availablePoints: 20 });
+        expect(spy.mock.calls[0][0]).toMatchObject({
+            url: 'https://recharge.desolate.run/api/v1/open/account',
+            headers: { 'X-API-Key': 'ap_live_test' }
+        });
+        expect(spy.mock.calls[0][0].headers.Authorization).toBeUndefined();
+    });
+
+    it('normalizes all supported Desolate Open base URL forms', () => {
+        expect(client.resolveBaseUrl({ base_url: 'https://recharge.desolate.run' })).toBe('https://recharge.desolate.run/api/v1/open');
+        expect(client.resolveBaseUrl({ base_url: 'https://recharge.desolate.run/api/v1' })).toBe('https://recharge.desolate.run/api/v1/open');
+        expect(client.resolveBaseUrl({ base_url: 'https://recharge.desolate.run/api/v1/open' })).toBe('https://recharge.desolate.run/api/v1/open');
+        expect(client.resolveOpenPlanCode('plus')).toBe('chatgptplusplan');
+    });
+
+    it('maps the Desolate Open order fields and unwraps its response envelope', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 201,
+            data: { code: 0, message: '成功', data: { orderId: 'ord_abc', status: 'pending', targetEmail: 'demo@example.com', planCode: 'chatgptplusplan', createdAt: '2026-09-03T00:00:00Z' } }
+        });
+        const session = {
+            user: { id: 'user_1', email: 'demo@example.com' },
+            account: { id: 'acct_1' },
+            accessToken: 'aaa.bbb.ccc',
+            sessionToken: 'opaque-cookie-token',
+            expires: '2099-12-31T00:00:00Z'
+        };
+        const out = await client.submitPay(
+            { base_url: 'https://recharge.desolate.run/api/v1/open', api_key: 'ap_live_test' },
+            { planKey: 'chatgptplusplan', session, newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' } }
+        );
+        expect(out).toMatchObject({ success: true, orderId: 'ord_abc', taskId: null });
+        expect(spy.mock.calls[0][0].url).toBe('https://recharge.desolate.run/api/v1/open/orders');
+        expect(spy.mock.calls[0][0].data).toEqual({
+            planCode: 'chatgptplusplan',
+            cardNumber: '4242424242424242',
+            expiryMonth: 12,
+            expiryYear: 2032,
+            securityCode: '123',
+            session
+        });
+    });
+
+    it('requires code zero for Desolate Open API success', async () => {
+        vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: { code: 40022, message: '套餐代码无效', data: null }
+        });
+        const out = await client.queryAccount({ base_url: 'https://recharge.desolate.run', api_key: 'ap_live_test' });
+        expect(out.success).toBe(false);
+        expect(out.error).toBe('套餐代码无效');
+    });
+
+    it('unwraps Desolate Open order status and preserves Retry-After', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            headers: { 'retry-after': '7' },
+            data: {
+                code: 0,
+                message: '成功',
+                data: {
+                    orderId: 'ord_abc',
+                    status: 'succeeded',
+                    targetEmail: 'demo@example.com',
+                    planCode: 'chatgptplusplan',
+                    subscriptionCancelled: true,
+                    createdAt: '2026-09-03T00:00:00Z',
+                    updatedAt: '2026-09-03T00:01:00Z'
+                }
+            }
+        });
+        const out = await client.queryOrder(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_live_test' },
+            'ord_abc'
+        );
+        expect(out).toMatchObject({ success: true, rawStatus: 'succeeded', retryAfterMs: 7000 });
+        expect(out.data.subscriptionCancelled).toBe(true);
+        expect(spy.mock.calls[0][0].url).toBe('https://recharge.desolate.run/api/v1/open/orders/ord_abc');
+    });
+
 });

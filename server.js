@@ -404,7 +404,31 @@ function normalizeSessionRaw(raw) {
 
 function buildStoredSessionPayload(rawSession, sessionJson, token) {
     if (sessionJson) {
-        return normalizeSessionRaw(rawSession) || JSON.stringify(sessionJson);
+        const enriched = { ...sessionJson };
+        const accessToken = String(enriched.accessToken || enriched.access_token || token || '').trim();
+        if (accessToken && !enriched.accessToken) enriched.accessToken = accessToken;
+
+        // The Open recharge API needs the opaque NextAuth cookie and account id in
+        // addition to accessToken. Browser exports commonly carry these only in
+        // cookies[] or in JWT claims, so fill the canonical fields once here.
+        if (!enriched.sessionToken) {
+            const cookieValue = extractSessionTokenFromPayload(enriched);
+            if (cookieValue) enriched.sessionToken = cookieValue;
+        }
+        let tokenClaims = null;
+        try {
+            const parts = accessToken.split('.');
+            tokenClaims = parts.length === 3 ? decodeJwtPart(parts[1]) : null;
+        } catch (_) { /* validation below reports malformed tokens */ }
+        const authClaims = tokenClaims?.['https://api.openai.com/auth'] || {};
+        const profileClaims = tokenClaims?.['https://api.openai.com/profile'] || {};
+        if (!enriched.user || typeof enriched.user !== 'object') enriched.user = {};
+        if (!enriched.user.id && authClaims.chatgpt_user_id) enriched.user.id = authClaims.chatgpt_user_id;
+        if (!enriched.user.email && profileClaims.email) enriched.user.email = profileClaims.email;
+        if (!enriched.account || typeof enriched.account !== 'object') enriched.account = {};
+        if (!enriched.account.id && authClaims.chatgpt_account_id) enriched.account.id = authClaims.chatgpt_account_id;
+        if (!enriched.expires) enriched.expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+        return JSON.stringify(enriched);
     }
     if (rawSession.startsWith('{')) {
         return rawSession;
@@ -417,6 +441,30 @@ function buildStoredSessionPayload(rawSession, sessionJson, token) {
         });
     }
     return rawSession;
+}
+
+function extractSessionTokenFromPayload(payload) {
+    const items = Array.isArray(payload?.cookies) ? payload.cookies : [];
+    const values = new Map();
+    for (const item of items) {
+        const name = String(item?.name || '').trim();
+        const value = String(item?.value || '').trim();
+        if (value && (name === '__Secure-next-auth.session-token' || /^__Secure-next-auth\.session-token\.\d+$/.test(name))) {
+            values.set(name, value);
+        }
+    }
+    if (values.has('__Secure-next-auth.session-token')) return values.get('__Secure-next-auth.session-token');
+    const chunks = [...values.entries()]
+        .filter(([name]) => name.includes('.'))
+        .sort((a, b) => Number(a[0].split('.').pop()) - Number(b[0].split('.').pop()));
+    if (chunks.length) return chunks.map(([, value]) => value).join('');
+
+    const headers = [payload?.cookieHeader, payload?.cookie_header].filter(Boolean);
+    for (const header of headers) {
+        const match = String(header).match(/(?:^|;\s*)__Secure-next-auth\.session-token=([^;]+)/);
+        if (match?.[1]) return match[1].trim();
+    }
+    return '';
 }
 
 function validateAccessToken(token) {
@@ -2438,13 +2486,21 @@ app.post('/api/admin/gpt-api/test', async (req, res) => {
         const saved = await store.getGptApiConfig();
         const merged = {
             base_url: String(body.base_url || '').trim() || saved.base_url,
-            api_key: String(body.api_key || '').trim() || saved.api_key
+            api_key: String(body.api_key || '').trim() || saved.api_key,
+            plan_key: String(body.plan_key || '').trim() || saved.plan_key
         };
         const result = await gptApi.testConnection(merged);
         if (!result.success) {
             return res.status(400).json({ success: false, message: result.error || '连接失败' });
         }
-        res.json({ success: true, message: result.message, plans: result.plans, balance: result.balance });
+        res.json({
+            success: true,
+            message: result.message,
+            plans: result.plans,
+            balance: result.balance,
+            account: result.account || null,
+            configured_plan: result.configuredPlan || null
+        });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -2480,6 +2536,8 @@ app.get('/api/admin/gpt-api/status', async (req, res) => {
             gpt_plans: plansResult.gptPlans,
             credit_plans: plansResult.creditPlans,
             balance: balanceResult.success ? balanceResult.data : null,
+            account: plansResult.account || balanceResult.account || null,
+            configured_plan: plansResult.configuredPlan || cfg.plan_key || null,
             balance_error: balanceResult.success ? null : balanceResult.error,
             recent_orders: orders
         });
@@ -3187,19 +3245,38 @@ function spawnCheckoutDebugWorker({ task, token, sessionRaw, planType, region, p
 }
 
 /**
- * 第三方 GPT 代充 API 任务 Worker（协议见 协议api.md）
+ * 第三方 GPT 代充 API 任务 Worker（兼容旧协议与 Desolate Open v1）
  *
  * 流程：
- * 1. 读取后台配置（base_url / api_key / plan_key / country / currency / enabled）
- * 2. 从银行卡池预留一张卡作为 new_card（可选，失败则跳过）
- * 3. POST /pay 提交代充（带 Idempotency-Key = `cdk-${cdk}`）
- * 4. 轮询订单/任务状态，直到终态（success / failed）
+ * 1. 读取后台配置（base_url / api_key / plan_key / enabled）
+ * 2. 从银行卡池预留一张卡；Desolate Open 的订单接口要求卡字段必填
+ * 3. 旧协议 POST /pay；Desolate Open POST /orders
+ * 4. 轮询订单状态，直到终态（success / failed）
  * 5. 将结果写回 task_logs（含 gpt_api_order_id / gpt_api_task_id / gpt_api_raw）
  */
 const GPT_API_PLAN_MAP = Object.freeze({ plus: 'plus', pro_5x: 'pro5x', pro_20x: 'pro20x' });
+const DESOLATE_PLAN_MAP = Object.freeze({ plus: 'chatgptplusplan', pro_5x: 'chatgptprolite', pro_20x: 'chatgptpro' });
 
-function mapGptApiPlanKey(planType) {
-    return GPT_API_PLAN_MAP[String(planType || '').trim()] || 'plus';
+function mapGptApiPlanKey(planType, cfg = {}) {
+    const type = String(planType || '').trim();
+    if (gptApi.isDesolateOpenProtocol(cfg)) {
+        const configured = String(cfg.plan_key || '').trim();
+        // plus/pro5x/pro20x are the legacy defaults; use the provider's
+        // documented plan codes unless the administrator supplied an override.
+        if (configured && !Object.values(GPT_API_PLAN_MAP).includes(configured)) return configured;
+        return DESOLATE_PLAN_MAP[type] || DESOLATE_PLAN_MAP.plus;
+    }
+    const configured = String(cfg.plan_key || '').trim();
+    if (configured && configured !== 'plus') return configured;
+    return GPT_API_PLAN_MAP[type] || 'plus';
+}
+
+function sanitizeGptApiRaw(data, openProtocol) {
+    if (!openProtocol || !data || typeof data !== 'object') return data;
+    if (Array.isArray(data)) return data.map((item) => sanitizeGptApiRaw(item, true));
+    const copy = { ...data };
+    delete copy.session;
+    return copy;
 }
 
 function parseCardExpiry(value) {
@@ -3211,7 +3288,7 @@ function parseCardExpiry(value) {
 
 async function runGptApiWorker({ task, token, session, cdk, planType }) {
     const { jobKey } = task;
-    const sessionPayload = session && typeof session === 'object'
+    let sessionPayload = session && typeof session === 'object'
         ? session
         : { access_token: token };
     const accountEmail = task.tokenPreview || '';
@@ -3239,7 +3316,8 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             throw new Error('第三方代充 API Key 未配置');
         }
 
-        const apiPlanKey = mapGptApiPlanKey(planType);
+        const openProtocol = gptApi.isDesolateOpenProtocol(cfg);
+        const apiPlanKey = mapGptApiPlanKey(planType, cfg);
         await setProgress('running', 10, '正在检查 Session 格式...');
         const inspect = await gptApi.inspectPay(cfg, {
             planKey: apiPlanKey,
@@ -3250,7 +3328,9 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             const detail = [inspect.error, inspect.reason, inspect.upstreamStatus ? `upstream ${inspect.upstreamStatus}` : ''].filter(Boolean).join(' / ');
             throw new Error(`Session 格式或有效期检查失败${statusText}: ${detail || 'session_invalid'}`);
         }
-        logTask(jobKey, 'Session 本機格式／有效期檢查通過；上游將於代充任務中驗證登入狀態');
+        logTask(jobKey, openProtocol
+            ? `Desolate Open Session 格式检查通过，套餐代码 ${apiPlanKey}`
+            : 'Session 本機格式／有效期檢查通過；上游將於代充任務中驗證登入狀態');
 
         const proxy = await store.getActiveProxy();
         logTask(jobKey, proxy
@@ -3304,7 +3384,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         await setProgress('running', 35, `代充订单已创建 ${orderId}，正在等待上游处理...`, {
             gptApiOrderId: orderId,
             gptApiTaskId: taskId,
-            gptApiRaw: JSON.stringify(submit.data),
+            gptApiRaw: JSON.stringify(sanitizeGptApiRaw(submit.data, openProtocol)),
             gptApiTopupCode: submit.topupCode
         });
 
@@ -3314,9 +3394,10 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         let lastRaw = submit.data;
         const maxPolls = Number(process.env.GPT_API_MAX_POLLS || 120);
         const pollIntervalMs = Number(process.env.GPT_API_POLL_INTERVAL_MS || 5000);
+        let nextPollDelayMs = pollIntervalMs;
 
         for (let poll = 1; poll <= maxPolls; poll += 1) {
-            await sleep(pollIntervalMs);
+            await sleep(nextPollDelayMs);
 
             let queryRes = null;
             if (taskId) {
@@ -3328,39 +3409,64 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
 
             if (!queryRes || !queryRes.success) {
                 logTask(jobKey, `状态轮询第 ${poll} 次失败: ${queryRes?.error || '未知错误'}`, 'warn');
+                nextPollDelayMs = Math.min(60000, Math.max(pollIntervalMs, Number(queryRes?.retryAfterMs || 0)));
                 continue;
             }
+            nextPollDelayMs = pollIntervalMs;
 
             lastRaw = queryRes.data;
+            let sessionUpdate = null;
+            if (openProtocol && lastRaw?.session && typeof lastRaw.session === 'object') {
+                // Preserve fields omitted by a partial provider refresh while
+                // atomically replacing the stored object in one DB update.
+                sessionPayload = {
+                    ...sessionPayload,
+                    ...lastRaw.session,
+                    user: { ...(sessionPayload.user || {}), ...(lastRaw.session.user || {}) },
+                    account: { ...(sessionPayload.account || {}), ...(lastRaw.session.account || {}) }
+                };
+                sessionUpdate = JSON.stringify(sessionPayload);
+            }
             const rawStatus = String(queryRes.rawStatus || '').toLowerCase();
             const progress = Math.min(95, 40 + poll);
 
             if (isTerminalGptApiStatus(rawStatus)) {
                 const businessResult = lastRaw && typeof lastRaw.result === 'object' ? lastRaw.result : {};
-                const succeeded = businessResult.ok === false ? false : isSuccessGptApiStatus(rawStatus);
-                const failureDetail = businessResult.error || lastRaw?.error || businessResult.status || rawStatus || 'unknown';
+                const succeeded = openProtocol
+                    ? rawStatus === 'succeeded'
+                    : (businessResult.ok === false ? false : isSuccessGptApiStatus(rawStatus));
+                const failureDetail = openProtocol
+                    ? (lastRaw?.failureMessage || lastRaw?.failureCode || rawStatus || 'unknown')
+                    : (businessResult.error || lastRaw?.error || businessResult.status || rawStatus || 'unknown');
                 finalStatus = succeeded ? 'success' : 'failed';
-                finalMessage = succeeded ? '第三方代充开通成功' : `第三方代充失败: ${failureDetail}`;
+                finalMessage = succeeded
+                    ? (openProtocol && lastRaw?.subscriptionCancelled === false
+                        ? '第三方代充开通成功，但自动续订取消状态未确认，请到目标账户账单页核对'
+                        : '第三方代充开通成功')
+                    : `第三方代充失败: ${failureDetail}`;
                 await setProgress(
                     finalStatus,
                     succeeded ? 100 : 99,
                     finalMessage,
                     {
-                        gptApiRaw: JSON.stringify(lastRaw),
-                        gptApiTopupCode: gptApi.extractTopupCode(lastRaw)
+                        gptApiRaw: JSON.stringify(sanitizeGptApiRaw(lastRaw, openProtocol)),
+                        gptApiTopupCode: gptApi.extractTopupCode(lastRaw),
+                        ...(sessionUpdate ? { sessionPayload: sessionUpdate } : {})
                     }
                 );
                 break;
             }
 
-            await setProgress('running', progress, `上游处理中 (${rawStatus || 'pending'})...`);
+            await setProgress('running', progress, `上游处理中 (${rawStatus || 'pending'})...`, {
+                ...(sessionUpdate ? { sessionPayload: sessionUpdate } : {})
+            });
         }
 
         if (finalStatus === 'running') {
             finalStatus = 'failed';
             finalMessage = '第三方代充超时未完成，请稍后在第三方平台查询订单状态';
             await setProgress(finalStatus, 99, finalMessage, {
-                gptApiRaw: JSON.stringify(lastRaw),
+                gptApiRaw: JSON.stringify(sanitizeGptApiRaw(lastRaw, openProtocol)),
                 gptApiTopupCode: gptApi.extractTopupCode(lastRaw)
             });
         }

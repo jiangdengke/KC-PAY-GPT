@@ -4,6 +4,8 @@
 # ============================================================
 FROM node:20-slim
 
+ARG BUILD_HCAPTCHA_SOLVER=0
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -29,15 +31,17 @@ WORKDIR /app
 
 # Node 依赖
 COPY package.json package-lock.json* ./
-RUN npm install --production --ignore-scripts
+RUN npm ci --omit=dev --ignore-scripts
 
 # Playwright Chromium（Node 自动化 + Python solver 共用同一路径）
-RUN npx playwright install chromium
+RUN npx playwright install --no-shell chromium
 
 # hCaptcha solver Python 依赖（CPU 版 PyTorch，体积较大，首次 build 需数分钟）
 COPY requirements-hcaptcha.txt ./
-RUN pip install -r requirements-hcaptcha.txt \
-    && python3 -m playwright install chromium
+RUN if [ "$BUILD_HCAPTCHA_SOLVER" = "1" ]; then \
+      pip install -r requirements-hcaptcha.txt \
+      && python3 -m playwright install chromium; \
+    fi
 
 # 复制源码（含 hcaptcha solver）
 COPY . .

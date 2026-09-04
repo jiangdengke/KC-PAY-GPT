@@ -2000,15 +2000,22 @@
                 </div>
                 <div class="form-group" style="margin-top: 18px;">
                     <label>API 基础地址（Base URL）</label>
-                    <input type="text" id="gpt_api_base_url" class="asset-input" placeholder="https://kc.vpss.eu.cc/">
+                    <input type="text" id="gpt_api_base_url" class="asset-input" placeholder="https://recharge.desolate.run/api/v1/open">
                 </div>
                 <div class="form-group" style="margin-top: 16px;">
                     <label>API Key</label>
-                    <input type="password" id="gpt_api_key" class="asset-input" placeholder="gptk_..." autocomplete="off">
+                    <input type="password" id="gpt_api_key" class="asset-input" placeholder="ap_live_..." autocomplete="off">
                     <p id="gpt_api_key_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
                 </div>
+                <div class="form-group" style="margin-top: 16px;">
+                    <label>套餐代码（可选覆盖）</label>
+                    <input type="text" id="gpt_api_plan_key" class="asset-input" placeholder="chatgptplusplan" autocomplete="off">
+                    <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
+                        留空时按 CDK 类型使用 chatgptplusplan / chatgptprolite / chatgptpro；填入后统一使用此代码。
+                    </p>
+                </div>
                 <p style="font-size: 12px; color: var(--text-dim); margin-top: 12px;">
-                    套餐（plan_key）将自动同步 CDK 的套餐类型；国家/币种使用协议默认值（PH / PHP），无需填写。
+                    Desolate Open 平台要求完整 Session（含 user、account、accessToken、sessionToken、expires）及银行卡池卡片；根域名会自动补全 /api/v1/open。
                 </p>
                 <div id="gpt_api_status" style="margin-top: 18px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary);">
                     <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
@@ -8044,11 +8051,13 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 const baseUrlEl = document.getElementById('gpt_api_base_url');
                 if (baseUrlEl) baseUrlEl.value = cfg.base_url || '';
                 const keyEl = document.getElementById('gpt_api_key');
+                const planKeyEl = document.getElementById('gpt_api_plan_key');
                 const keyHint = document.getElementById('gpt_api_key_hint');
                 if (keyEl) keyEl.value = '';
                 if (keyEl) keyEl.placeholder = cfg.api_key_saved
-                    ? `已保存（${cfg.api_key_preview || 'gptk_…'}）留空不修改`
-                    : 'gptk_...';
+                    ? `已保存（${cfg.api_key_preview || 'ap_live_…'}）留空不修改`
+                    : 'ap_live_...';
+                if (planKeyEl) planKeyEl.value = cfg.plan_key || '';
                 if (keyHint) {
                     keyHint.textContent = cfg.api_key_saved ? '✓ API Key 已保存' : '尚未配置 API Key';
                 }
@@ -8062,7 +8071,8 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             return {
                 enabled: Boolean(document.getElementById('gpt_api_enabled')?.checked),
                 base_url: document.getElementById('gpt_api_base_url')?.value.trim() || '',
-                api_key: document.getElementById('gpt_api_key')?.value.trim() || ''
+                api_key: document.getElementById('gpt_api_key')?.value.trim() || '',
+                plan_key: document.getElementById('gpt_api_plan_key')?.value.trim() || ''
             };
         }
 
@@ -8086,14 +8096,14 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
 
         function renderGptApiStatus(data) {
             const balance = data.balance || {};
-            document.getElementById('gpt_api_credits').textContent = balance.credits ?? '—';
+            document.getElementById('gpt_api_credits').textContent = balance.availablePoints ?? balance.credits ?? '—';
             document.getElementById('gpt_api_balance_usd').textContent = balance.balance_usd
                 ? `$${balance.balance_usd}`
                 : (balance.balance != null ? `${balance.balance} cents` : '—');
             const gptPlans = (data.gpt_plans || []).filter((p) => p.enabled !== 0 && p.enabled !== false);
             document.getElementById('gpt_api_plans').textContent = gptPlans.length
                 ? gptPlans.map((p) => `${p.name || p.key} (${p.key || '—'})`).join('、')
-                : '無可用套餐';
+                : (data.configured_plan ? `已配置代码：${data.configured_plan}` : '供应商未提供套餐列表');
             const creditPlans = data.credit_plans || [];
             document.getElementById('gpt_api_credit_plans').textContent = creditPlans.length
                 ? creditPlans.map((p) => `${p.name || p.id}: ${p.credits ?? '—'} 積分`).join('、')
@@ -8104,7 +8114,9 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 : '尚無失敗的第三方代充訂單';
             document.getElementById('gpt_api_status_hint').textContent = data.balance_error
                 ? `積分查詢失敗：${data.balance_error}`
-                : '資料來自供應商 /plans 與 /balance；完整卡密不會由接口回傳。';
+                : (data.account
+                    ? `账户：${data.account.email || data.account.accountName || '—'}；数据来自供应商账户接口，完整卡密不会由接口回传。`
+                    : '数据来自供应商账户接口；完整卡密不会由接口回传。');
         }
 
         async function readApiJson(response, fallbackMessage) {

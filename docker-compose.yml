@@ -31,14 +31,17 @@ services:
       start_period: 30s
 
   app:
-    build: .
+    build:
+      context: .
+      args:
+        BUILD_HCAPTCHA_SOLVER: ${BUILD_HCAPTCHA_SOLVER:-0}
     container_name: kc-gpt-pay2-app
     restart: unless-stopped
     depends_on:
       mysql:
         condition: service_healthy
     ports:
-      - "${PORT:-3100}:3000"
+      - "127.0.0.1:${PORT:-3100}:3000"
     environment:
       PORT: 3000
       DB_HOST: mysql
@@ -49,6 +52,7 @@ services:
       DB_POOL_LIMIT: 60
       HEADFUL: 0
       PROXY: ${PROXY:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@vru.cc}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       HCAPTCHA_CONFIG_FILE: /app/data/hcaptcha-config.json
       HCAPTCHA_VLM_API_KEY: ${HCAPTCHA_VLM_API_KEY:-}
@@ -57,7 +61,7 @@ services:
       HCAPTCHA_CAPTCHA_PLATFORM_API_KEY: ${HCAPTCHA_CAPTCHA_PLATFORM_API_KEY:-}
       HCAPTCHA_CAPTCHA_PLATFORM_API_URL: ${HCAPTCHA_CAPTCHA_PLATFORM_API_URL:-https://api.capsolver.com}
       HCAPTCHA_CAPTCHA_PLATFORM_TIMEOUT: ${HCAPTCHA_CAPTCHA_PLATFORM_TIMEOUT:-180}
-      HCAPTCHA_SOLVER_ENABLED: ${HCAPTCHA_SOLVER_ENABLED:-1}
+      HCAPTCHA_SOLVER_ENABLED: ${HCAPTCHA_SOLVER_ENABLED:-0}
       CHATGPT_SESSION_COOKIE: ${CHATGPT_SESSION_COOKIE:-}
       BROWSER_POOL: ${BROWSER_POOL:-1}
       BROWSER_POOL_SIZE: ${BROWSER_POOL_SIZE:-2}

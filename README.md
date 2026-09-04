@@ -84,7 +84,9 @@ BROWSER_POOL=0                              # 預設關閉瀏覽器池
 docker compose up -d
 ```
 
-首次构建镜像需数分钟（含 Playwright Chromium + hCaptcha Python 依赖）。启动成功后：
+首次构建镜像需数分钟（含 Playwright Chromium）。Oracle 等小磁盘主机默认关闭本地 hCaptcha ML solver；需要时在 `.env` 同时设置 `BUILD_HCAPTCHA_SOLVER=1` 与 `HCAPTCHA_SOLVER_ENABLED=1` 后执行 `docker compose up -d --build`。启动成功后：
+
+第三方代充可在后台「系统配置」中接入 Desolate Open：Base URL 填 `https://recharge.desolate.run`（程序会自动补全 `/api/v1/open`），API Key 使用供应商发放的 `ap_live_...`，套餐代码留空即可按 CDK 类型映射。订单会从本地银行卡池取卡，并要求提交完整 Session JSON（含 `user`、`account`、`accessToken`、`sessionToken`、`expires`）。
 
 | 地址 | 说明 |
 |------|------|

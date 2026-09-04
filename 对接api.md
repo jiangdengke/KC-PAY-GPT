@@ -1763,3 +1763,14 @@ def submit_and_wait(plan_key, chatgpt_session, card, business_id, proxy=None):
 | GET | `/virtual-card-requests` | `virtual_cards:read` | 虛擬卡申請列表 |
 | POST | `/virtual-card-requests` | `virtual_cards:write` | 建立虛擬卡申請 |
 | GET | `/virtual-card-requests/{request_id}` | `virtual_cards:read` | 虛擬卡申請詳情 |
+# Desolate Open v1（recharge.desolate.run）
+
+当前客户端会根据 Base URL 自动识别该协议。后台可填写 `https://recharge.desolate.run` 或完整的 `https://recharge.desolate.run/api/v1/open`，认证头为 `X-API-Key: ap_live_...`。
+
+- `GET /account`：检查 API Key 并读取 `availablePoints`。
+- `POST /orders`：提交 `planCode`、`cardNumber`、`expiryMonth`、`expiryYear`、`securityCode` 和完整 `session`。
+- `GET /orders/{orderId}`：轮询 `pending`、`processing`、`succeeded`、`failed`；若返回 `data.session`，服务端会更新任务中保存的 Session。
+
+只有 HTTP 2xx 且响应体 `code=0` 才算接口调用成功；创建订单的 HTTP 201 仅表示已受理，必须继续查询订单状态。该平台没有 `/plans` 或 `/balance` 接口，后台状态页显示账户积分和已配置套餐代码。
+
+---

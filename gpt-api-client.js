@@ -3,8 +3,9 @@
 /**
  * 第三方 GPT 代充 API 客户端（协议见 协议api.md）
  *
- * 基础 URL:   https://kc.vpss.eu.cc/
- * 认证:       Authorization: Bearer gptk_...
+ * 基础 URL:   旧协议可直接填写供应商地址；Desolate Open 平台可填写
+ *             https://recharge.desolate.run 或完整 /api/v1/open 地址
+ * 认证:       旧协议使用 Authorization: Bearer；Desolate Open 使用 X-API-Key
  * 幂等键:     Idempotency-Key（提交代充必须带上）
  *
  * 本模块仅做轻量封装：提交代充、查询订单/任务状态、查询套餐/余额、测试连通。
@@ -13,11 +14,47 @@
 const axios = require('axios');
 
 const DEFAULT_BASE_URL = 'https://kc.vpss.eu.cc/';
+const DEFAULT_OPEN_BASE_URL = 'https://recharge.desolate.run/api/v1/open';
+const OPEN_PROVIDER_HOST = 'recharge.desolate.run';
+const OPEN_PLAN_ALIASES = Object.freeze({
+    plus: 'chatgptplusplan',
+    pro5x: 'chatgptprolite',
+    pro_5x: 'chatgptprolite',
+    pro20x: 'chatgptpro',
+    pro_20x: 'chatgptpro'
+});
 
 function normalizeBaseUrl(raw) {
     const url = String(raw || '').trim().replace(/\/+$/, '');
     if (!url) return '';
     return url;
+}
+
+function isDesolateOpenProtocol(cfg = {}) {
+    if (String(cfg.protocol || '').trim().toLowerCase() === 'desolate_open') return true;
+    const raw = normalizeBaseUrl(cfg.base_url);
+    if (!raw) return false;
+    try {
+        const url = new URL(raw);
+        return url.hostname.toLowerCase() === OPEN_PROVIDER_HOST
+            || /\/api\/v1\/open$/i.test(url.pathname);
+    } catch (_) {
+        return /recharge\.desolate\.run|\/api\/v1\/open$/i.test(raw);
+    }
+}
+
+function resolveBaseUrl(cfg = {}) {
+    const raw = normalizeBaseUrl(cfg.base_url)
+        || (isDesolateOpenProtocol(cfg) ? DEFAULT_OPEN_BASE_URL : DEFAULT_BASE_URL);
+    if (!isDesolateOpenProtocol(cfg)) return raw;
+    if (/\/api\/v1\/open$/i.test(raw)) return raw;
+    if (/\/api\/v1$/i.test(raw)) return raw.replace(/\/api\/v1$/i, '/api/v1/open');
+    return `${raw}/api/v1/open`;
+}
+
+function resolveOpenPlanCode(planKey) {
+    const value = String(planKey || '').trim();
+    return OPEN_PLAN_ALIASES[value.toLowerCase()] || value || OPEN_PLAN_ALIASES.plus;
 }
 
 function maskApiKey(key) {
@@ -31,14 +68,15 @@ function maskApiKey(key) {
  * 统一请求封装，始终返回 { success, status?, data?, error? }
  */
 async function request(method, path, cfg, { body, headers: extraHeaders, timeoutMs } = {}) {
-    const base = normalizeBaseUrl(cfg?.base_url) || DEFAULT_BASE_URL;
+    const openProtocol = isDesolateOpenProtocol(cfg);
+    const base = resolveBaseUrl(cfg);
     const apiKey = String(cfg?.api_key || '').trim();
     if (!apiKey) {
         return { success: false, error: '缺少 API Key' };
     }
 
     const headers = {
-        Authorization: `Bearer ${apiKey}`,
+        ...(openProtocol ? { 'X-API-Key': apiKey } : { Authorization: `Bearer ${apiKey}` }),
         'Content-Type': 'application/json',
         Accept: 'application/json',
         ...(extraHeaders || {})
@@ -58,11 +96,19 @@ async function request(method, path, cfg, { body, headers: extraHeaders, timeout
         if (typeof data === 'string') {
             try { data = JSON.parse(data); } catch (_) { data = { _raw: data }; }
         }
-        const ok = response.status >= 200 && response.status < 300;
+        const ok = response.status >= 200 && response.status < 300
+            && (!openProtocol || data?.code === 0);
+        const responseHeaders = response.headers || {};
+        const retryAfterRaw = responseHeaders['retry-after'] ?? responseHeaders['Retry-After'];
+        const retryAfterSeconds = Number(retryAfterRaw);
         return {
             success: ok,
             status: response.status,
             data,
+            headers: responseHeaders,
+            retryAfterMs: Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
+                ? retryAfterSeconds * 1000
+                : null,
             error: ok ? undefined : extractErrorDetail(data, response.status)
         };
     } catch (error) {
@@ -76,6 +122,38 @@ async function request(method, path, cfg, { body, headers: extraHeaders, timeout
         }
         return { success: false, error: detail };
     }
+}
+
+function unwrapOpenResponse(data) {
+    return data && typeof data === 'object' && data.code === 0
+        && Object.prototype.hasOwnProperty.call(data, 'data')
+        ? data.data
+        : data;
+}
+
+function normalizeOpenSession(session, sessionToken) {
+    const source = session && typeof session === 'object' ? session : {};
+    const normalized = { ...source };
+    normalized.accessToken = String(normalized.accessToken || normalized.access_token || '').trim();
+    normalized.sessionToken = String(normalized.sessionToken || normalized.session_token || sessionToken || '').trim();
+    if (!normalized.user || typeof normalized.user !== 'object') normalized.user = {};
+    if (!normalized.account || typeof normalized.account !== 'object') normalized.account = {};
+    return normalized;
+}
+
+function validateOpenSession(session, sessionToken) {
+    const value = normalizeOpenSession(session, sessionToken);
+    const email = String(value.user?.email || '').trim();
+    const userId = String(value.user?.id || '').trim();
+    const accountId = String(value.account?.id || '').trim();
+    if (!email || !userId) return { valid: false, error: 'Session 缺少 user.id 或 user.email' };
+    if (!accountId) return { valid: false, error: 'Session 缺少 account.id' };
+    if (!/^[^.]+\.[^.]+\.[^.]+$/.test(value.accessToken)) return { valid: false, error: 'Session 的 accessToken 不是有效 JWT' };
+    if (!value.sessionToken) return { valid: false, error: 'Session 缺少 sessionToken，请导出完整 cookies' };
+    if (value.sessionToken === value.accessToken) return { valid: false, error: 'Session 的 sessionToken 不能与 accessToken 相同' };
+    if (!/^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/.test(value.sessionToken)) return { valid: false, error: 'Session 的 sessionToken 包含不支持的字符' };
+    if (!value.expires || Number.isNaN(Date.parse(value.expires))) return { valid: false, error: 'Session 缺少有效 expires' };
+    return { valid: true, session: value };
 }
 
 /**
@@ -109,6 +187,20 @@ function extractErrorDetail(data, status) {
  * 查询可用 GPT 套餐 (GET /plans)
  */
 async function fetchPlans(cfg) {
+    if (isDesolateOpenProtocol(cfg)) {
+        const account = await queryAccount(cfg);
+        if (!account.success) return account;
+        return {
+            success: true,
+            status: account.status,
+            plans: [],
+            gptPlans: [],
+            creditPlans: [],
+            configuredPlan: resolveOpenPlanCode(cfg.plan_key),
+            account: account.data,
+            raw: account.raw
+        };
+    }
     const res = await request('GET', '/plans', cfg);
     if (!res.success) return res;
     const raw = res.data;
@@ -130,6 +222,16 @@ async function fetchPlans(cfg) {
  * 建單前驗證 Session 與當前套餐 (POST /pay/inspect)
  */
 async function inspectPay(cfg, { planKey, session, sessionToken }) {
+    if (isDesolateOpenProtocol(cfg)) {
+        const checked = validateOpenSession(session, sessionToken);
+        return {
+            success: checked.valid,
+            status: checked.valid ? 204 : 400,
+            skipped: true,
+            data: checked.valid ? { verified: true, planCode: planKey } : null,
+            error: checked.valid ? undefined : checked.error
+        };
+    }
     const sessionBody = session && typeof session === 'object'
         ? session
         : (sessionToken ? { access_token: sessionToken } : {});
@@ -154,6 +256,43 @@ async function inspectPay(cfg, { planKey, session, sessionToken }) {
  * @returns { success, orderId?, taskId?, data, error? }
  */
 async function submitPay(cfg, { planKey, session, sessionToken, country, currency, newCard, cardId, cvc, acceptWarnings, billingAddress, proxy, clientRef, idempotencyKey }) {
+    if (isDesolateOpenProtocol(cfg)) {
+        const checked = validateOpenSession(session, sessionToken);
+        if (!checked.valid) return { success: false, status: 400, error: checked.error };
+        const card = newCard && typeof newCard === 'object' ? newCard : {};
+        const cardNumber = String(card.number || card.cardNumber || '').replace(/\s+/g, '');
+        const expiryMonth = Number(card.exp_month ?? card.expiryMonth);
+        const expiryYear = Number(card.exp_year ?? card.expiryYear);
+        const securityCode = String(card.cvc || card.securityCode || '').trim();
+        if (!/^\d{13,19}$/.test(cardNumber) || !Number.isInteger(expiryMonth) || !Number.isInteger(expiryYear) || !/^\d{3,4}$/.test(securityCode)) {
+            return { success: false, status: 400, error: '银行卡字段不完整或格式无效' };
+        }
+        const body = {
+            planCode: String(planKey || '').trim(),
+            cardNumber,
+            expiryMonth,
+            expiryYear,
+            securityCode,
+            session: checked.session
+        };
+        const headers = {};
+        if (idempotencyKey && /^[0-9a-f-]{16,}$/i.test(String(idempotencyKey))) {
+            headers['X-Request-ID'] = String(idempotencyKey);
+        }
+        const res = await request('POST', '/orders', cfg, { body, headers, timeoutMs: 60000 });
+        if (!res.success) return res;
+        const payload = unwrapOpenResponse(res.data) || {};
+        const orderId = payload.orderId || null;
+        return {
+            success: true,
+            status: res.status,
+            orderId,
+            taskId: null,
+            id: orderId,
+            data: payload,
+            raw: res.data
+        };
+    }
     const body = {
         plan_key: planKey,
         country: country || 'PH',
@@ -233,13 +372,18 @@ async function queryOrder(cfg, orderId) {
     if (!orderId) {
         return { success: false, error: '缺少订单号' };
     }
-    const res = await request('GET', `/pay/orders/${encodeURIComponent(orderId)}`, cfg);
+    const res = await request('GET', isDesolateOpenProtocol(cfg)
+        ? `/orders/${encodeURIComponent(orderId)}`
+        : `/pay/orders/${encodeURIComponent(orderId)}`, cfg);
     if (!res.success) return res;
+    const data = isDesolateOpenProtocol(cfg) ? (unwrapOpenResponse(res.data) || {}) : res.data;
     return {
         success: true,
         status: res.status,
-        data: res.data,
-        rawStatus: extractStatus(res.data)
+        data,
+        raw: res.data,
+        rawStatus: extractStatus(data),
+        retryAfterMs: res.retryAfterMs
     };
 }
 
@@ -250,13 +394,15 @@ async function queryTask(cfg, taskId) {
     if (!taskId) {
         return { success: false, error: '缺少任务号' };
     }
+    if (isDesolateOpenProtocol(cfg)) return { success: false, error: 'Desolate Open 平台不提供 task 接口' };
     const res = await request('GET', `/tasks/${encodeURIComponent(taskId)}`, cfg);
     if (!res.success) return res;
     return {
         success: true,
         status: res.status,
         data: res.data,
-        rawStatus: extractStatus(res.data)
+        rawStatus: extractStatus(res.data),
+        retryAfterMs: res.retryAfterMs
     };
 }
 
@@ -264,6 +410,20 @@ async function queryTask(cfg, taskId) {
  * 查询积分与账户余额 (GET /balance)
  */
 async function queryBalance(cfg) {
+    if (isDesolateOpenProtocol(cfg)) {
+        const account = await queryAccount(cfg);
+        if (!account.success) return account;
+        return {
+            success: true,
+            status: account.status,
+            data: account.data,
+            credits: account.data?.availablePoints ?? null,
+            availablePoints: account.data?.availablePoints ?? null,
+            balance: null,
+            balanceUsd: null,
+            raw: account.raw
+        };
+    }
     const res = await request('GET', '/balance', cfg);
     if (!res.success) return res;
     return {
@@ -274,6 +434,15 @@ async function queryBalance(cfg) {
         balance: res.data?.balance ?? null,
         balanceUsd: res.data?.balance_usd ?? null
     };
+}
+
+async function queryAccount(cfg) {
+    if (!isDesolateOpenProtocol(cfg)) return { success: false, error: '当前 API 不是 Desolate Open 协议' };
+    const res = await request('GET', '/account', cfg);
+    if (!res.success) return res;
+    const data = unwrapOpenResponse(res.data);
+    if (!data || typeof data !== 'object') return { success: false, status: res.status, error: '账户接口返回格式无效' };
+    return { success: true, status: res.status, data, raw: res.data, availablePoints: data.availablePoints ?? null };
 }
 
 function extractStatus(data) {
@@ -289,6 +458,22 @@ function extractStatus(data) {
  * 测试连接：查询套餐 + 余额，返回摘要
  */
 async function testConnection(cfg) {
+    if (isDesolateOpenProtocol(cfg)) {
+        const account = await queryAccount(cfg);
+        if (!account.success) return { success: false, error: `账户查询失败: ${account.error}` };
+        const plan = resolveOpenPlanCode(cfg.plan_key);
+        const points = account.data?.availablePoints;
+        return {
+            success: true,
+            message: `API 连接成功（可用积分 ${points == null ? '—' : points}，当前套餐代码 ${plan}）`,
+            plans: [],
+            gptPlans: [],
+            creditPlans: [],
+            configuredPlan: plan,
+            account: account.data,
+            balance: account.data
+        };
+    }
     const [plansRes, balanceRes] = await Promise.all([
         fetchPlans(cfg),
         queryBalance(cfg)
@@ -335,5 +520,10 @@ module.exports = {
     extractOrderId,
     extractTaskId,
     extractTopupCode,
-    extractStatus
+    extractStatus,
+    isDesolateOpenProtocol,
+    resolveBaseUrl,
+    resolveOpenPlanCode,
+    queryAccount,
+    validateOpenSession
 };
