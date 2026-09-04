@@ -100,6 +100,7 @@ describe('orbitcard client', () => {
         expect(orbitcard.getChannel3Priority({ productCode: 'amzkeys:400242001', bin: '400242001' })).toBe(1);
         expect(orbitcard.getProductSelectionsForPlan({ list: [
             { product_code: 'amzkeys:40041641', bin: '40041641', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },
+            { product_code: 'visa-40041641-duplicate', bin: '40041641', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '16.00' }] },
             { product_code: 'amzkeys:55565979', bin: '55565979', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },
             { product_code: 'amzkeys:400242001', bin: '400242001', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '15', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] }
         ] }, 'plus').map((item) => item.product.productCode)).toEqual([

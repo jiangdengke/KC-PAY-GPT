@@ -210,7 +210,14 @@ function rankProductsForPlan(data, planType = 'plus') {
 
     // When channel 3 products are present, keep fallback attempts within the
     // configured Mastercard/Visa sequence instead of silently using another channel.
-    const channel3Products = products.filter(({ product }) => getChannel3Priority(product) !== null);
+    const channel3Products = [];
+    const seenChannel3Priorities = new Set();
+    for (const item of products) {
+        const priority = getChannel3Priority(item.product);
+        if (priority === null || seenChannel3Priorities.has(priority)) continue;
+        seenChannel3Priorities.add(priority);
+        channel3Products.push(item);
+    }
     return channel3Products.length ? channel3Products : products;
 }
 
