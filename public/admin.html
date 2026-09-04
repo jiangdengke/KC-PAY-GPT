@@ -2014,8 +2014,30 @@
                         留空或使用标准代码时按 CDK 类型选择 chatgptplusplan / chatgptprolite / chatgptpro；只有填入自定义代码时才统一覆盖。
                     </p>
                 </div>
+                <div class="form-group" style="margin-top: 16px;">
+                    <label for="gpt_api_card_source">代充卡源</label>
+                    <select id="gpt_api_card_source" class="asset-input">
+                        <option value="local">本地卡池</option>
+                        <option value="orbitcard">Orbitcard 卡台</option>
+                    </select>
+                    <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
+                        第三方代充每笔订单从这里选择卡源；本地卡池沿用现有卡片，Orbitcard 会实时查询卡列表并读取单卡资料。
+                    </p>
+                </div>
+                <div id="orbitcard_config_fields" style="display:none;">
+                    <div class="form-group" style="margin-top: 16px;">
+                        <label>Orbitcard Base URL</label>
+                        <input type="text" id="orbitcard_base_url" class="asset-input" placeholder="https://orbitcard.cc">
+                    </div>
+                    <div class="form-group" style="margin-top: 16px;">
+                        <label>Orbitcard API Key</label>
+                        <input type="password" id="orbitcard_api_key" class="asset-input" placeholder="留空不修改" autocomplete="off">
+                        <p id="orbitcard_api_key_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
+                    </div>
+                    <p id="orbitcard_api_secret_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 16px;">Orbitcard Secret 由服务端环境变量 ORBITCARD_API_SECRET 提供，不经过浏览器或数据库。</p>
+                </div>
                 <p style="font-size: 12px; color: var(--text-dim); margin-top: 12px;">
-                    Desolate Open 平台要求完整 Session（含 user、account、accessToken、sessionToken、expires）及银行卡池卡片；根域名会自动补全 /api/v1/open。
+                    Desolate Open 平台要求完整 Session（含 user、account、accessToken、sessionToken、expires）；根域名会自动补全 /api/v1/open。
                 </p>
                 <div id="gpt_api_status" style="margin-top: 18px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary);">
                     <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
@@ -8056,11 +8078,24 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 const keyEl = document.getElementById('gpt_api_key');
                 const planKeyEl = document.getElementById('gpt_api_plan_key');
                 const keyHint = document.getElementById('gpt_api_key_hint');
+                const cardSourceEl = document.getElementById('gpt_api_card_source');
+                const orbitBaseEl = document.getElementById('orbitcard_base_url');
+                const orbitKeyEl = document.getElementById('orbitcard_api_key');
+                const orbitKeyHint = document.getElementById('orbitcard_api_key_hint');
+                const orbitSecretHint = document.getElementById('orbitcard_api_secret_hint');
                 if (keyEl) keyEl.value = '';
                 if (keyEl) keyEl.placeholder = cfg.api_key_saved
                     ? `已保存（${cfg.api_key_preview || 'ap_live_…'}）留空不修改`
                     : 'ap_live_...';
                 if (planKeyEl) planKeyEl.value = cfg.plan_key || '';
+                if (cardSourceEl) cardSourceEl.value = cfg.card_source || 'local';
+                if (orbitBaseEl) orbitBaseEl.value = cfg.orbitcard_base_url || 'https://orbitcard.cc';
+                if (orbitKeyEl) orbitKeyEl.value = '';
+                if (orbitKeyHint) orbitKeyHint.textContent = cfg.orbitcard_api_key_saved ? `✓ API Key 已保存（${cfg.orbitcard_api_key_preview || '已隐藏'}）` : '尚未配置 Orbitcard API Key';
+                if (orbitSecretHint) orbitSecretHint.textContent = cfg.orbitcard_api_secret_configured
+                    ? '✓ Orbitcard Secret 已由服务端环境变量注入'
+                    : 'Orbitcard Secret 未配置，请设置服务端环境变量 ORBITCARD_API_SECRET';
+                updateOrbitcardConfigVisibility();
                 if (keyHint) {
                     keyHint.textContent = cfg.api_key_saved ? '✓ API Key 已保存' : '尚未配置 API Key';
                 }
@@ -8075,8 +8110,17 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 enabled: Boolean(document.getElementById('gpt_api_enabled')?.checked),
                 base_url: document.getElementById('gpt_api_base_url')?.value.trim() || '',
                 api_key: document.getElementById('gpt_api_key')?.value.trim() || '',
-                plan_key: document.getElementById('gpt_api_plan_key')?.value.trim() || ''
+                plan_key: document.getElementById('gpt_api_plan_key')?.value.trim() || '',
+                card_source: document.getElementById('gpt_api_card_source')?.value || 'local',
+                orbitcard_base_url: document.getElementById('orbitcard_base_url')?.value.trim() || '',
+                orbitcard_api_key: document.getElementById('orbitcard_api_key')?.value.trim() || ''
             };
+        }
+
+        function updateOrbitcardConfigVisibility() {
+            const source = document.getElementById('gpt_api_card_source')?.value || 'local';
+            const fields = document.getElementById('orbitcard_config_fields');
+            if (fields) fields.style.display = source === 'orbitcard' ? 'block' : 'none';
         }
 
         async function saveGptApiConfig() {
@@ -8120,9 +8164,9 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 : '尚無失敗的第三方代充訂單';
             document.getElementById('gpt_api_status_hint').textContent = data.balance_error
                 ? `積分查詢失敗：${data.balance_error}`
-                : (data.account
+                : `${data.card_source_message || (data.card_source?.source === 'orbitcard' ? `Orbitcard 可用卡 ${data.card_source.cardCount ?? '—'} 张` : '卡源：本地卡池')}；${data.account
                     ? `账户：${data.account.email || data.account.accountName || '—'}；数据来自供应商账户接口，完整卡密不会由接口回传。`
-                    : '数据来自供应商账户接口；完整卡密不会由接口回传。');
+                    : '数据来自供应商账户接口；完整卡密不会由接口回传。'}`;
         }
 
         async function readApiJson(response, fallbackMessage) {
@@ -8172,6 +8216,8 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 showMessage(error.message || 'API 連線測試失敗', 'error');
             }
         }
+
+        document.getElementById('gpt_api_card_source')?.addEventListener('change', updateOrbitcardConfigVisibility);
 
         const US_TAX_FREE_STATE_NAMES = ['Oregon', 'Delaware', 'Montana', 'New Hampshire', 'Alaska'];
         const US_STATE_ABBR_MAP = { OR: 'Oregon', DE: 'Delaware', MT: 'Montana', NH: 'New Hampshire', AK: 'Alaska' };

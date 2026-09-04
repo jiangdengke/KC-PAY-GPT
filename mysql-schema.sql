@@ -46,6 +46,22 @@ CREATE TABLE IF NOT EXISTS card_assets (
     KEY idx_card_assets_pick (is_active, in_use, locked_at, usage_count)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS orbitcard_card_usage (
+    card_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+    usage_count INT NOT NULL DEFAULT 0,
+    daily_usage_count INT NOT NULL DEFAULT 0,
+    daily_usage_reset_at TIMESTAMP NULL DEFAULT NULL,
+    cooldown_until TIMESTAMP NULL DEFAULT NULL,
+    in_use TINYINT(1) NOT NULL DEFAULT 0,
+    locked_at TIMESTAMP NULL DEFAULT NULL,
+    locked_by VARCHAR(64) NULL DEFAULT NULL,
+    last_used_at TIMESTAMP NULL DEFAULT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_orbitcard_usage_pick (status, in_use, cooldown_until, usage_count, last_used_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS cdk_codes (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     cdk_code VARCHAR(32) NOT NULL,

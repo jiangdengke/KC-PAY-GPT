@@ -22,6 +22,7 @@ const browserPool = require('./browser-pool');
 const { buildWorkerRuntimeEnv } = require('./browser-runtime');
 const { querySubscriptionBySession, validateSessionTokenForQuery, cancelAutoRenew, resumeAutoRenew } = require('./subscription-check');
 const gptApi = require('./gpt-api-client');
+const orbitcard = require('./orbitcard-client');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -2453,7 +2454,12 @@ app.get('/api/admin/gpt-api', async (req, res) => {
                 api_key_preview: masked,
                 plan_key: cfg.plan_key,
                 country: cfg.country,
-                currency: cfg.currency
+                currency: cfg.currency,
+                card_source: cfg.card_source,
+                orbitcard_base_url: cfg.orbitcard_base_url,
+                orbitcard_api_key_saved: Boolean(cfg.orbitcard_api_key),
+                orbitcard_api_key_preview: orbitcard.maskApiKey(cfg.orbitcard_api_key),
+                orbitcard_api_secret_configured: Boolean(cfg.orbitcard_api_secret)
             }
         });
     } catch (error) {
@@ -2471,7 +2477,10 @@ app.post('/api/admin/gpt-api', async (req, res) => {
             api_key: body.api_key,
             plan_key: body.plan_key,
             country: body.country,
-            currency: body.currency
+            currency: body.currency,
+            card_source: body.card_source,
+            orbitcard_base_url: body.orbitcard_base_url,
+            orbitcard_api_key: body.orbitcard_api_key
         });
         res.json({ success: true, message: '第三方代充 API 配置已保存' });
     } catch (error) {
@@ -2487,7 +2496,11 @@ app.post('/api/admin/gpt-api/test', async (req, res) => {
         const merged = {
             base_url: String(body.base_url || '').trim() || saved.base_url,
             api_key: String(body.api_key || '').trim() || saved.api_key,
-            plan_key: String(body.plan_key || '').trim() || saved.plan_key
+            plan_key: String(body.plan_key || '').trim() || saved.plan_key,
+            card_source: String(body.card_source || '').trim() || saved.card_source,
+            orbitcard_base_url: String(body.orbitcard_base_url || '').trim() || saved.orbitcard_base_url,
+            orbitcard_api_key: String(body.orbitcard_api_key || '').trim() || saved.orbitcard_api_key,
+            orbitcard_api_secret: saved.orbitcard_api_secret
         };
         const result = await gptApi.testConnection(merged);
         if (!result.success) {
@@ -2500,7 +2513,9 @@ app.post('/api/admin/gpt-api/test', async (req, res) => {
             balance: result.balance,
             account: result.account || null,
             configured_plan: result.configuredPlan || null,
-            plan_mappings: result.planMappings || null
+            plan_mappings: result.planMappings || null,
+            card_source: result.cardSource || null,
+            card_source_message: result.cardSourceMessage || null
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -2540,6 +2555,8 @@ app.get('/api/admin/gpt-api/status', async (req, res) => {
             account: plansResult.account || balanceResult.account || null,
             configured_plan: plansResult.configuredPlan || cfg.plan_key || null,
             plan_mappings: plansResult.planMappings || null,
+            card_source: plansResult.cardSource || null,
+            card_source_message: plansResult.cardSourceMessage || null,
             balance_error: balanceResult.success ? null : balanceResult.error,
             recent_orders: orders
         });
@@ -3284,7 +3301,10 @@ function sanitizeGptApiRaw(data, openProtocol) {
 }
 
 function parseCardExpiry(value) {
-    const match = String(value || '').trim().match(/^(0?[1-9]|1[0-2])\s*\/?\s*(\d{2}|\d{4})$/);
+    const raw = String(value || '').trim();
+    const isoMatch = raw.match(/^(\d{4})[-/]((?:0?[1-9])|1[0-2])(?:[-/]\d{1,2})?$/);
+    if (isoMatch) return { month: Number(isoMatch[2]), year: Number(isoMatch[1]) };
+    const match = raw.match(/^(0?[1-9]|1[0-2])\s*\/?\s*(\d{2}|\d{4})$/);
     if (!match) throw new Error('银行卡有效期格式错误，应为 MMYY、MM/YY 或 MM/YYYY');
     const year = Number(match[2].length === 2 ? `20${match[2]}` : match[2]);
     return { month: Number(match[1]), year };
@@ -3298,6 +3318,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
     const accountEmail = task.tokenPreview || '';
     let shouldRollbackCdk = true;
     let reservedCard = null;
+    let reservedOrbitcard = null;
 
     const setProgress = async (status, progress, message, extra = {}) => {
         await store.updateTaskLog(jobKey, { status, progress, message, ...extra });
@@ -3341,22 +3362,53 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             ? `第三方 API 协议代理 ${maskProxyForLog(proxy)}`
             : '第三方 API 使用平台启用代理池');
 
-        // 本機检查通过后才从卡池预留一张卡，避免无效 Session 占用资产。
+        // Session 检查通过后才锁定卡源资产，避免无效 Session 占用卡片。
         let newCard = null;
-        reservedCard = await store.reserveCard(`gptapi_${jobKey}`);
-        if (!reservedCard) {
-            throw new Error('银行卡池暂无可用卡片，请在后台「银行卡池」导入银行卡后再试');
+        const cardSource = String(cfg.card_source || 'local').trim().toLowerCase();
+        if (cardSource === 'orbitcard') {
+            const orbitCfg = {
+                base_url: cfg.orbitcard_base_url,
+                api_key: cfg.orbitcard_api_key,
+                api_secret: cfg.orbitcard_api_secret
+            };
+            const cardList = await orbitcard.getCardList(orbitCfg);
+            if (!cardList.success) throw new Error(`Orbitcard 卡列表查询失败: ${cardList.error}`);
+            reservedOrbitcard = await store.reserveOrbitcardCard(cardList.data, `gptapi_${jobKey}`);
+            if (!reservedOrbitcard) {
+                throw new Error('Orbitcard 暂无可用卡片，请检查卡片状态或冷却情况');
+            }
+            const detail = await orbitcard.getCardDetail(orbitCfg, reservedOrbitcard.orbitcard_id);
+            if (!detail.success) {
+                await store.releaseOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
+                reservedOrbitcard = null;
+                throw new Error(detail.error || 'Orbitcard 卡详情查询失败');
+            }
+            const expiry = parseCardExpiry(detail.data.expiry);
+            newCard = {
+                number: detail.data.cardNumber,
+                exp_month: expiry.month,
+                exp_year: expiry.year,
+                cvc: detail.data.cvc,
+                name: detail.data.holder || 'API User',
+                country: cfg.country || 'PH'
+            };
+            logTask(jobKey, `第三方 API 使用 Orbitcard 卡 ...${reservedOrbitcard.last4 || detail.data.cardNumber.slice(-4)}`);
+        } else {
+            reservedCard = await store.reserveCard(`gptapi_${jobKey}`);
+            if (!reservedCard) {
+                throw new Error('银行卡池暂无可用卡片，请在后台「银行卡池」导入银行卡后再试');
+            }
+            const expiry = parseCardExpiry(reservedCard.card_expiry);
+            newCard = {
+                number: reservedCard.card_number,
+                exp_month: expiry.month,
+                exp_year: expiry.year,
+                cvc: reservedCard.card_cvc,
+                name: reservedCard.card_holder || 'API User',
+                country: cfg.country || 'PH'
+            };
+            logTask(jobKey, `第三方 API 使用本地卡池卡 ...${String(reservedCard.card_number || '').slice(-4)}`);
         }
-        const expiry = parseCardExpiry(reservedCard.card_expiry);
-        newCard = {
-            number: reservedCard.card_number,
-            exp_month: expiry.month,
-            exp_year: expiry.year,
-            cvc: reservedCard.card_cvc,
-            name: reservedCard.card_holder || 'API User',
-            country: cfg.country || 'PH'
-        };
-        logTask(jobKey, `第三方 API 使用卡池预留卡 ...${String(reservedCard.card_number || '').slice(-4)}`);
 
         // 套餐从 CDK 的 plan_type 同步；国家币种使用协议默认值（PH / PHP）
         await setProgress('running', 20, '正在提交代充订单...');
@@ -3478,17 +3530,30 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         if (finalStatus === 'success') {
             shouldRollbackCdk = false;
             await store.resetCdkFailure(cdk);
-            await store.recordCardUsage(reservedCard?.id);
-            await store.releaseCard(reservedCard?.id).catch(() => { });
+            if (reservedOrbitcard) {
+                await store.recordOrbitcardCardUsage(reservedOrbitcard.orbitcard_id);
+                await store.releaseOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
+            } else {
+                await store.recordCardUsage(reservedCard?.id);
+                await store.releaseCard(reservedCard?.id).catch(() => { });
+            }
             notifyTaskOutcome({ event: 'success', email: accountEmail, cdk, jobKey, message: finalMessage });
         } else {
-            await store.releaseCard(reservedCard?.id).catch(() => { });
+            if (reservedOrbitcard) {
+                await store.releaseOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
+            } else {
+                await store.releaseCard(reservedCard?.id).catch(() => { });
+            }
             notifyTaskOutcome({ event: 'failure', email: accountEmail, cdk, jobKey, message: finalMessage });
         }
     } catch (error) {
         console.error(`[GPT API Task Error] ${jobKey}:`, error);
         logTask(jobKey, `第三方代充任务异常: ${error.message}`, 'error');
-        await store.releaseCard(reservedCard?.id).catch(() => { });
+        if (reservedOrbitcard) {
+            await store.releaseOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
+        } else {
+            await store.releaseCard(reservedCard?.id).catch(() => { });
+        }
         await store.updateTaskLog(jobKey, {
             status: 'failed',
             message: error.message,

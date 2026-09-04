@@ -27,6 +27,7 @@ const { normalizeAdminPaths } = require('./admin-paths');
 
 const DEFAULT_GPT_API_BASE_URL = 'https://recharge.desolate.run/api/v1/open';
 const DEFAULT_GPT_API_PLAN_KEY = 'chatgptplusplan';
+const ORBITCARD_API_SECRET = String(process.env.ORBITCARD_API_SECRET || '').trim();
 
 let pool = null;
 
@@ -250,13 +251,36 @@ const GPT_API_CONFIG_KEYS = [
     'gpt_api_key',
     'gpt_api_plan_key',
     'gpt_api_country',
-    'gpt_api_currency'
+    'gpt_api_currency',
+    'gpt_api_card_source',
+    'orbitcard_base_url',
+    'orbitcard_api_key'
 ];
 
 async function ensureGptApiColumns() {
     await ensureColumn('task_logs', 'gpt_api_order_id', "VARCHAR(128) NULL DEFAULT NULL");
     await ensureColumn('task_logs', 'gpt_api_task_id', "VARCHAR(128) NULL DEFAULT NULL");
     await ensureColumn('task_logs', 'gpt_api_raw', "MEDIUMTEXT NULL");
+}
+
+async function ensureOrbitcardUsageTable() {
+    await runQuery(`
+        CREATE TABLE IF NOT EXISTS orbitcard_card_usage (
+            card_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+            usage_count INT NOT NULL DEFAULT 0,
+            daily_usage_count INT NOT NULL DEFAULT 0,
+            daily_usage_reset_at TIMESTAMP NULL DEFAULT NULL,
+            cooldown_until TIMESTAMP NULL DEFAULT NULL,
+            in_use TINYINT(1) NOT NULL DEFAULT 0,
+            locked_at TIMESTAMP NULL DEFAULT NULL,
+            locked_by VARCHAR(64) NULL DEFAULT NULL,
+            last_used_at TIMESTAMP NULL DEFAULT NULL,
+            status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            KEY idx_orbitcard_usage_pick (status, in_use, cooldown_until, usage_count, last_used_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
 }
 
 async function ensureGptApiConfigDefaults() {
@@ -266,7 +290,10 @@ async function ensureGptApiConfigDefaults() {
         ['gpt_api_key', ''],
         ['gpt_api_plan_key', DEFAULT_GPT_API_PLAN_KEY],
         ['gpt_api_country', 'PH'],
-        ['gpt_api_currency', 'PHP']
+        ['gpt_api_currency', 'PHP'],
+        ['gpt_api_card_source', 'local'],
+        ['orbitcard_base_url', 'https://orbitcard.cc'],
+        ['orbitcard_api_key', '']
     ];
     for (const [key, value] of defaults) {
         await runExecute(
@@ -293,7 +320,11 @@ async function getGptApiConfig() {
         api_key: String(map.gpt_api_key || '').trim(),
         plan_key: String(map.gpt_api_plan_key || DEFAULT_GPT_API_PLAN_KEY).trim() || DEFAULT_GPT_API_PLAN_KEY,
         country: String(map.gpt_api_country || 'PH').trim().toUpperCase() || 'PH',
-        currency: String(map.gpt_api_currency || 'PHP').trim().toUpperCase() || 'PHP'
+        currency: String(map.gpt_api_currency || 'PHP').trim().toUpperCase() || 'PHP',
+        card_source: String(map.gpt_api_card_source || 'local').trim().toLowerCase() === 'orbitcard' ? 'orbitcard' : 'local',
+        orbitcard_base_url: String(map.orbitcard_base_url || 'https://orbitcard.cc').trim().replace(/\/+$/, '') || 'https://orbitcard.cc',
+        orbitcard_api_key: String(map.orbitcard_api_key || '').trim(),
+        orbitcard_api_secret: ORBITCARD_API_SECRET
     };
 }
 
@@ -302,7 +333,7 @@ async function saveGptApiConfig(config = {}) {
     const apiKey = String(config.api_key || '').trim() || existing.api_key || '';
     await runExecute(
         `INSERT INTO app_config (config_key, config_value)
-         VALUES (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)
+         VALUES (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)
          ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)`,
         [
             'gpt_api_enabled', config.enabled ? '1' : '0',
@@ -311,7 +342,10 @@ async function saveGptApiConfig(config = {}) {
             'gpt_api_key', apiKey,
             'gpt_api_plan_key', String(config.plan_key || existing.plan_key || DEFAULT_GPT_API_PLAN_KEY).trim() || DEFAULT_GPT_API_PLAN_KEY,
             'gpt_api_country', String(config.country || existing.country || 'PH').trim().toUpperCase() || 'PH',
-            'gpt_api_currency', String(config.currency || existing.currency || 'PHP').trim().toUpperCase() || 'PHP'
+            'gpt_api_currency', String(config.currency || existing.currency || 'PHP').trim().toUpperCase() || 'PHP',
+            'gpt_api_card_source', String(config.card_source || existing.card_source || 'local').trim().toLowerCase() === 'orbitcard' ? 'orbitcard' : 'local',
+            'orbitcard_base_url', String(config.orbitcard_base_url || existing.orbitcard_base_url || 'https://orbitcard.cc').trim().replace(/\/+$/, '') || 'https://orbitcard.cc',
+            'orbitcard_api_key', String(config.orbitcard_api_key || existing.orbitcard_api_key || '').trim()
         ]
     );
 }
@@ -497,6 +531,7 @@ async function ensureReady() {
     await runQuery(schemaSql);
     await ensureLegacyColumns();
     await ensureGptApiColumns();
+    await ensureOrbitcardUsageTable();
     await initializeBaseData();
     await ensureAdminSecurityDefaults();
     await ensureHcaptchaConfigDefaults();
@@ -1498,7 +1533,7 @@ async function releaseRuntimeAssets({ phoneAssetId, cardAssetId } = {}) {
 // 兜底：把超过 ASSET_LOCK_STALE_MS 仍未释放的锁强制清理（任务进程崩溃后回收用）
 async function releaseStaleAssetLocks() {
     const staleThreshold = new Date(Date.now() - ASSET_LOCK_STALE_MS);
-    const [phoneResult, cardResult, poolResult] = await Promise.all([
+    const [phoneResult, cardResult, poolResult, orbitcardResult] = await Promise.all([
         runExecute(
             `UPDATE phone_assets
              SET in_use = 0, locked_at = NULL, locked_by = NULL
@@ -1514,9 +1549,15 @@ async function releaseStaleAssetLocks() {
         runExecute(
             `UPDATE pool_emails
              SET in_use = 0, locked_at = NULL, locked_by = NULL
-             WHERE registered = 0
+            WHERE registered = 0
                AND in_use = 1
                AND (locked_at IS NULL OR locked_at < ?)`,
+            [staleThreshold]
+        ),
+        runExecute(
+            `UPDATE orbitcard_card_usage
+             SET in_use = 0, locked_at = NULL, locked_by = NULL
+             WHERE in_use = 1 AND (locked_at IS NULL OR locked_at < ?)`,
             [staleThreshold]
         )
     ]);
@@ -1524,7 +1565,8 @@ async function releaseStaleAssetLocks() {
     return {
         phoneReleased: Number(phoneResult?.affectedRows || 0),
         cardReleased: Number(cardResult?.affectedRows || 0),
-        poolReleased: Number(poolResult?.affectedRows || 0)
+        poolReleased: Number(poolResult?.affectedRows || 0),
+        orbitcardReleased: Number(orbitcardResult?.affectedRows || 0)
     };
 }
 
@@ -1533,7 +1575,8 @@ async function resetAllAssetLocks() {
     await Promise.all([
         runExecute(`UPDATE phone_assets SET in_use = 0, locked_at = NULL, locked_by = NULL WHERE in_use = 1`),
         runExecute(`UPDATE card_assets SET in_use = 0, locked_at = NULL, locked_by = NULL WHERE in_use = 1`),
-        runExecute(`UPDATE pool_emails SET in_use = 0, locked_at = NULL, locked_by = NULL WHERE registered = 0 AND in_use = 1`)
+        runExecute(`UPDATE pool_emails SET in_use = 0, locked_at = NULL, locked_by = NULL WHERE registered = 0 AND in_use = 1`),
+        runExecute(`UPDATE orbitcard_card_usage SET in_use = 0, locked_at = NULL, locked_by = NULL WHERE in_use = 1`)
     ]);
 }
 
@@ -3027,6 +3070,100 @@ async function reserveCard(ownerKey) {
 }
 
 /**
+ * Reserve one card ID returned by Orbitcard and keep a local lock for concurrency.
+ * Sensitive card data is never persisted in this table.
+ */
+async function reserveOrbitcardCard(cards, ownerKey) {
+    const candidates = (Array.isArray(cards) ? cards : [])
+        .map((card) => ({
+            cardId: Number(card?.cardId ?? card?.card_id ?? card?.id),
+            last4: String(card?.last4 || card?.card_last4 || '').slice(-4),
+            status: String(card?.status || 'ACTIVE').trim().toUpperCase()
+        }))
+        .filter((card) => Number.isInteger(card.cardId) && card.cardId > 0 && card.status === 'ACTIVE');
+    if (!candidates.length) return null;
+
+    return withTransaction(async (connection) => {
+        for (const card of candidates) {
+            await connection.query(
+                `INSERT INTO orbitcard_card_usage (card_id, status)
+                 VALUES (?, ?)
+                 ON DUPLICATE KEY UPDATE status = VALUES(status)`,
+                [card.cardId, card.status]
+            );
+        }
+        const ids = candidates.map((card) => card.cardId);
+        const placeholders = ids.map(() => '?').join(', ');
+        const [rows] = await connection.query(
+            `SELECT card_id, usage_count, last_used_at
+             FROM orbitcard_card_usage
+             WHERE card_id IN (${placeholders})
+               AND status = 'ACTIVE'
+               AND in_use = 0
+               AND (cooldown_until IS NULL OR cooldown_until < NOW())
+             ORDER BY usage_count ASC, COALESCE(last_used_at, '1970-01-01') ASC, card_id ASC
+             LIMIT 1
+             FOR UPDATE SKIP LOCKED`,
+            ids
+        );
+        if (!rows.length) return null;
+        const row = rows[0];
+        await connection.query(
+            `UPDATE orbitcard_card_usage
+             SET in_use = 1, locked_at = CURRENT_TIMESTAMP, locked_by = ?
+             WHERE card_id = ?`,
+            [String(ownerKey || '').slice(0, 64) || null, row.card_id]
+        );
+        const source = candidates.find((card) => card.cardId === Number(row.card_id));
+        return {
+            id: Number(row.card_id),
+            orbitcard_id: Number(row.card_id),
+            last4: source?.last4 || '',
+            usage_count: Number(row.usage_count || 0)
+        };
+    });
+}
+
+async function releaseOrbitcardCard(cardId) {
+    const id = Number(cardId);
+    if (!Number.isInteger(id) || id <= 0) return;
+    await runExecute(
+        `UPDATE orbitcard_card_usage
+         SET in_use = 0, locked_at = NULL, locked_by = NULL
+         WHERE card_id = ?`,
+        [id]
+    );
+}
+
+async function recordOrbitcardCardUsage(cardId) {
+    const id = Number(cardId);
+    if (!Number.isInteger(id) || id <= 0) return { dailyUsageCount: 0, cooledDown: false };
+    return withTransaction(async (connection) => {
+        const [rows] = await connection.query(
+            `SELECT daily_usage_count, daily_usage_reset_at
+             FROM orbitcard_card_usage WHERE card_id = ? FOR UPDATE`,
+            [id]
+        );
+        if (!rows.length) return { dailyUsageCount: 0, cooledDown: false };
+        const row = rows[0];
+        const resetAt = row.daily_usage_reset_at ? new Date(row.daily_usage_reset_at) : null;
+        const expired = !resetAt || resetAt < new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const dailyUsageCount = expired ? 1 : Number(row.daily_usage_count || 0) + 1;
+        await connection.query(
+            `UPDATE orbitcard_card_usage
+             SET daily_usage_count = ?,
+                 daily_usage_reset_at = CASE WHEN ? = 1 THEN NOW() ELSE daily_usage_reset_at END,
+                 usage_count = usage_count + 1,
+                 last_used_at = NOW(),
+                 cooldown_until = CASE WHEN ? >= 3 THEN DATE_ADD(NOW(), INTERVAL 24 HOUR) ELSE cooldown_until END
+             WHERE card_id = ?`,
+            [dailyUsageCount, expired ? 1 : 0, dailyUsageCount, id]
+        );
+        return { dailyUsageCount, cooledDown: dailyUsageCount >= 3 };
+    });
+}
+
+/**
  * 释放卡片锁定。
  * @param {number} cardId - 卡片 ID
  */
@@ -3626,6 +3763,9 @@ module.exports = {
     reserveCard,
     hasAvailableCard,
     releaseCard,
+    reserveOrbitcardCard,
+    releaseOrbitcardCard,
+    recordOrbitcardCardUsage,
     markCardExhausted,
     recordCardUsage,
     bindCardPaymentProfile,

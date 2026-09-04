@@ -12,6 +12,7 @@
  */
 
 const axios = require('axios');
+const orbitcard = require('./orbitcard-client');
 
 const DEFAULT_BASE_URL = 'https://kc.vpss.eu.cc/';
 const DEFAULT_OPEN_BASE_URL = 'https://recharge.desolate.run/api/v1/open';
@@ -205,6 +206,8 @@ function extractErrorDetail(data, status) {
  * 查询可用 GPT 套餐 (GET /plans)
  */
 async function fetchPlans(cfg) {
+    const cardSource = await testCardSource(cfg);
+    if (!cardSource.success) return cardSource;
     if (isDesolateOpenProtocol(cfg)) {
         const account = await queryAccount(cfg);
         if (!account.success) return account;
@@ -218,7 +221,9 @@ async function fetchPlans(cfg) {
             configuredPlan: planMappings.plus,
             planMappings,
             account: account.data,
-            raw: account.raw
+            raw: account.raw,
+            cardSource: cardSource.data,
+            cardSourceMessage: cardSource.message
         };
     }
     const res = await request('GET', '/plans', cfg);
@@ -234,6 +239,8 @@ async function fetchPlans(cfg) {
         plans: Array.isArray(gptPlans) ? gptPlans : [],
         gptPlans: Array.isArray(gptPlans) ? gptPlans : [],
         creditPlans,
+        cardSource: cardSource.data,
+        cardSourceMessage: cardSource.message,
         raw
     };
 }
@@ -478,6 +485,8 @@ function extractStatus(data) {
  * 测试连接：查询套餐 + 余额，返回摘要
  */
 async function testConnection(cfg) {
+    const cardSource = await testCardSource(cfg);
+    if (!cardSource.success) return cardSource;
     if (isDesolateOpenProtocol(cfg)) {
         const account = await queryAccount(cfg);
         if (!account.success) return { success: false, error: `账户查询失败: ${account.error}` };
@@ -486,14 +495,16 @@ async function testConnection(cfg) {
         const mappingText = `Plus=${planMappings.plus}、Pro 5x=${planMappings.pro_5x}、Pro 20x=${planMappings.pro_20x}`;
         return {
             success: true,
-            message: `API 连接成功（可用积分 ${points == null ? '—' : points}；套餐映射 ${mappingText}）`,
+            message: `${cardSource.message}；API 连接成功（可用积分 ${points == null ? '—' : points}；套餐映射 ${mappingText}）`,
             plans: [],
             gptPlans: [],
             creditPlans: [],
             configuredPlan: planMappings.plus,
             planMappings,
             account: account.data,
-            balance: account.data
+            balance: account.data,
+            cardSource: cardSource.data,
+            cardSourceMessage: cardSource.message
         };
     }
     const [plansRes, balanceRes] = await Promise.all([
@@ -519,11 +530,36 @@ async function testConnection(cfg) {
 
     return {
         success: true,
-        message: `API 连接成功（${messages.join('，')}）`,
+        message: `${cardSource.message}；API 连接成功（${messages.join('，')}）`,
         plans: plansRes.plans || [],
         gptPlans: plansRes.gptPlans || [],
         creditPlans: plansRes.creditPlans || [],
-        balance: balanceRes.success ? balanceRes.data : null
+        balance: balanceRes.success ? balanceRes.data : null,
+        cardSource: cardSource.data,
+        cardSourceMessage: cardSource.message
+    };
+}
+
+async function testCardSource(cfg = {}) {
+    const source = String(cfg.card_source || 'local').trim().toLowerCase();
+    if (source !== 'orbitcard') {
+        return {
+            success: true,
+            data: { source: 'local' },
+            message: '卡源：本地卡池'
+        };
+    }
+    const result = await orbitcard.testConnection({
+        base_url: cfg.orbitcard_base_url,
+        api_key: cfg.orbitcard_api_key,
+        api_secret: cfg.orbitcard_api_secret
+    });
+    if (!result.success) return result;
+    return {
+        success: true,
+        data: { source: 'orbitcard', cardCount: result.cardCount, balance: result.balance },
+        message: result.message,
+        cards: result.cards
     };
 }
 
@@ -539,6 +575,7 @@ module.exports = {
     queryTask,
     queryBalance,
     testConnection,
+    testCardSource,
     extractOrderId,
     extractTaskId,
     extractTopupCode,
