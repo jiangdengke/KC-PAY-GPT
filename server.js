@@ -3403,21 +3403,41 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             if (!reservedOrbitcard) {
                 const productResult = await orbitcard.getProductCode(orbitCfg);
                 if (!productResult.success) throw new Error(`Orbitcard 产品目录查询失败: ${productResult.error}`);
-                selection = orbitcard.chooseProductForPlan(productResult.data, planType);
-                if (!selection.success) throw new Error(selection.error);
+                const selections = orbitcard.getProductSelectionsForPlan(productResult.data, planType);
+                if (!selections.length) throw new Error('Orbitcard 当前没有可开卡产品库存');
 
-                await setProgress('running', 17, `正在为 ${getPlanTypeLabel(planType)} 创建卡（首充 ${selection.amount} USD，最多使用 ${selection.maxUsageCount} 次）...`);
-                const createResult = await orbitcard.createCard(orbitCfg, {
-                    productCode: selection.product.productCode,
-                    amount: selection.amount,
-                    quantity: 1,
-                    idempotencyKey: `orbitcard-${jobKey}`
-                });
-                if (!createResult.success) throw new Error(`Orbitcard 开卡失败: ${createResult.error}`);
-                const createdCardId = orbitcard.extractCreatedCardId(createResult.data);
-                if (!createdCardId) {
-                    throw new Error(`Orbitcard 开卡成功但未返回 card_id: ${JSON.stringify(createResult.data).slice(0, 300)}`);
+                let createdCardId = null;
+                let lastCreateError = '';
+                for (let candidateIndex = 0; candidateIndex < selections.length; candidateIndex += 1) {
+                    const candidate = selections[candidateIndex];
+                    selection = candidate;
+                    const channelLabel = candidate.channel === 3
+                        ? `渠道 3 ${candidate.network || '卡'} BIN ${candidate.product.bin || candidate.product.productCode}`
+                        : candidate.product.productCode;
+                    await setProgress('running', 17, `正在为 ${getPlanTypeLabel(planType)} 创建卡（${channelLabel}，首充 ${candidate.amount} USD，最多使用 ${candidate.maxUsageCount} 次）...`);
+                    const createResult = await orbitcard.createCard(orbitCfg, {
+                        productCode: candidate.product.productCode,
+                        amount: candidate.amount,
+                        quantity: 1,
+                        idempotencyKey: `orbitcard-${jobKey}-${candidateIndex + 1}`
+                    });
+                    if (createResult.success) {
+                        createdCardId = orbitcard.extractCreatedCardId(createResult.data);
+                        if (!createdCardId) {
+                            throw new Error(`Orbitcard 开卡成功但未返回 card_id: ${JSON.stringify(createResult.data).slice(0, 300)}`);
+                        }
+                        break;
+                    }
+                    lastCreateError = createResult.error || '未知错误';
+                    // A transport failure leaves the outcome unknown; do not risk
+                    // opening a second card after an ambiguous upstream response.
+                    if (!createResult.status) break;
+                    if (candidateIndex < selections.length - 1) {
+                        const next = selections[candidateIndex + 1];
+                        logTask(jobKey, `Orbitcard ${channelLabel} 开卡失败，切换备用产品 ${next.product.productCode}: ${lastCreateError}`, 'warn');
+                    }
                 }
+                if (!createdCardId) throw new Error(`Orbitcard 开卡失败: ${lastCreateError || '当前渠道产品均不可用'}`);
 
                 reservedOrbitcard = await store.reserveOrbitcardCard([{ card_id: createdCardId, status: 'ACTIVE' }], `gptapi_${jobKey}`, {
                     planType,

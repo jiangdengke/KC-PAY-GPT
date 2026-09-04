@@ -187,13 +187,12 @@ function resolveProductPlanPrice(product, planType) {
     return null;
 }
 
-function chooseProductForPlan(data, planType = 'plus') {
+function rankProductsForPlan(data, planType = 'plus') {
     const products = normalizeProductList(data)
         .filter(isProductAvailable)
         .map((product) => ({ product, planPrice: resolveProductPlanPrice(product, planType) }));
-    if (!products.length) return { success: false, error: 'Orbitcard 当前没有可开卡产品库存' };
 
-    // Prefer a product with a live plan price, then the lowest current price.
+    // Prefer channel 3 products, then a live plan price, then the lowest current price.
     products.sort((a, b) => {
         const aChannelPriority = getChannel3Priority(a.product);
         const bChannelPriority = getChannel3Priority(b.product);
@@ -208,8 +207,14 @@ function chooseProductForPlan(data, planType = 'plus') {
         }
         return a.product.productCode.localeCompare(b.product.productCode);
     });
-    const selected = products[0];
-    const product = selected.product;
+
+    // When channel 3 products are present, keep fallback attempts within the
+    // configured Mastercard/Visa sequence instead of silently using another channel.
+    const channel3Products = products.filter(({ product }) => getChannel3Priority(product) !== null);
+    return channel3Products.length ? channel3Products : products;
+}
+
+function buildProductSelection(product, planPrice, planType) {
     const minimum = Number.isFinite(product.minInitialAmount) && product.minInitialAmount > 0
         ? product.minInitialAmount
         : 20;
@@ -218,30 +223,46 @@ function chooseProductForPlan(data, planType = 'plus') {
         : 0;
     const reuseLimit = getPlanReuseLimit(planType);
     const fallback = FALLBACK_CARD_AMOUNTS[String(planType || 'plus').trim()] || FALLBACK_CARD_AMOUNTS.plus;
-    const priceTarget = selected.planPrice
-        ? selected.planPrice.price * reuseLimit + retained + 1
+    const priceTarget = planPrice
+        ? planPrice.price * reuseLimit + retained + 1
         : (reuseLimit > 1 ? fallback * reuseLimit : fallback);
     const rawAmount = Math.max(minimum, priceTarget);
     const amount = (Math.ceil(rawAmount / 5) * 5).toFixed(2);
     return {
-        success: true,
         product,
-        planPrice: selected.planPrice,
+        planPrice,
         amount,
         maxUsageCount: reuseLimit,
         channel: getChannel3Priority(product) == null ? null : 3,
         channelPriority: getChannel3Priority(product),
-        candidates: products.map(({ product: item, planPrice }) => ({
-            productCode: item.productCode,
-            bin: item.bin,
-            network: item.network,
-            channel: getChannel3Priority(item) == null ? null : 3,
-            channelPriority: getChannel3Priority(item),
-            remainingOpenCardNum: item.remainingOpenCardNum,
-            minInitialAmount: item.minInitialAmount,
-            minRetainedBalance: item.minRetainedBalance,
+    };
+}
+
+function getProductSelectionsForPlan(data, planType = 'plus') {
+    return rankProductsForPlan(data, planType)
+        .map(({ product, planPrice }) => buildProductSelection(product, planPrice, planType));
+}
+
+function chooseProductForPlan(data, planType = 'plus') {
+    const selections = getProductSelectionsForPlan(data, planType);
+    if (!selections.length) return { success: false, error: 'Orbitcard 当前没有可开卡产品库存' };
+    const selected = selections[0];
+    return {
+        success: true,
+        ...selected,
+        candidates: selections.map(({ product, planPrice, amount, maxUsageCount, channel, channelPriority }) => ({
+            productCode: product.productCode,
+            bin: product.bin,
+            network: product.network,
+            channel,
+            channelPriority,
+            remainingOpenCardNum: product.remainingOpenCardNum,
+            minInitialAmount: product.minInitialAmount,
+            minRetainedBalance: product.minRetainedBalance,
             planPrice: planPrice?.price ?? null,
-            currency: planPrice?.currency || 'USD'
+            currency: planPrice?.currency || 'USD',
+            amount,
+            maxUsageCount
         }))
     };
 }
@@ -379,6 +400,8 @@ module.exports = {
     normalizeProduct,
     normalizeProductList,
     resolveProductPlanPrice,
+    rankProductsForPlan,
+    getProductSelectionsForPlan,
     chooseProductForPlan,
     createCard,
     extractCreatedCardId,
