@@ -604,7 +604,7 @@ async function testCardSource(cfg = {}) {
             balance: result.balance,
             planAmounts
         },
-        message: `${result.message}；新卡首充建议 Plus ${planAmounts.plus || '—'} USD、Pro 5x ${planAmounts.pro_5x || '—'} USD、Pro 20x ${planAmounts.pro_20x || '—'} USD`,
+        message: `${result.message}；首充建议 Plus ${planAmounts.plus || '—'} USD（最多 4 次）、Pro 5x ${planAmounts.pro_5x || '—'} USD、Pro 20x ${planAmounts.pro_20x || '—'} USD`,
         cards: result.cards
     };
 }

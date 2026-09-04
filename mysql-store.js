@@ -269,6 +269,9 @@ async function ensureOrbitcardUsageTable() {
         CREATE TABLE IF NOT EXISTS orbitcard_card_usage (
             card_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
             usage_count INT NOT NULL DEFAULT 0,
+            plan_type VARCHAR(32) NULL DEFAULT NULL,
+            max_usage_count INT NOT NULL DEFAULT 1,
+            initial_amount DECIMAL(12,2) NULL DEFAULT NULL,
             daily_usage_count INT NOT NULL DEFAULT 0,
             daily_usage_reset_at TIMESTAMP NULL DEFAULT NULL,
             cooldown_until TIMESTAMP NULL DEFAULT NULL,
@@ -282,6 +285,31 @@ async function ensureOrbitcardUsageTable() {
             KEY idx_orbitcard_usage_pick (status, in_use, cooldown_until, usage_count, last_used_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+    await ensureColumn('orbitcard_card_usage', 'plan_type', 'VARCHAR(32) NULL DEFAULT NULL');
+    await ensureColumn('orbitcard_card_usage', 'max_usage_count', 'INT NOT NULL DEFAULT 1');
+    await ensureColumn('orbitcard_card_usage', 'initial_amount', 'DECIMAL(12,2) NULL DEFAULT NULL');
+    await runQuery(`
+        CREATE TABLE IF NOT EXISTS orbitcard_card_recharges (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            card_id BIGINT UNSIGNED NOT NULL,
+            job_key VARCHAR(128) NOT NULL,
+            plan_type VARCHAR(32) NOT NULL DEFAULT 'plus',
+            card_last4 VARCHAR(4) NOT NULL DEFAULT '',
+            account_email VARCHAR(255) NOT NULL DEFAULT '',
+            use_number INT NOT NULL DEFAULT 1,
+            max_usage_count INT NOT NULL DEFAULT 1,
+            initial_amount DECIMAL(12,2) NULL DEFAULT NULL,
+            order_id VARCHAR(128) NULL DEFAULT NULL,
+            status VARCHAR(32) NOT NULL DEFAULT 'running',
+            message VARCHAR(255) NULL DEFAULT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_orbitcard_recharge_job (job_key),
+            KEY idx_orbitcard_recharge_card (card_id, created_at),
+            KEY idx_orbitcard_recharge_status (status, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    await ensureColumn('orbitcard_card_recharges', 'card_last4', "VARCHAR(4) NOT NULL DEFAULT ''");
 }
 
 async function ensureGptApiConfigDefaults() {
@@ -3077,7 +3105,11 @@ async function reserveCard(ownerKey) {
  * Reserve one card ID returned by Orbitcard and keep a local lock for concurrency.
  * Sensitive card data is never persisted in this table.
  */
-async function reserveOrbitcardCard(cards, ownerKey) {
+async function reserveOrbitcardCard(cards, ownerKey, options = {}) {
+    const planType = String(options.planType || '').trim() || null;
+    const maxUsageCount = Math.max(1, Number(options.maxUsageCount) || 1);
+    const initialAmount = Number.isFinite(Number(options.initialAmount)) ? Number(options.initialAmount) : null;
+    const persistMetadata = options.persistMetadata === true;
     const candidates = (Array.isArray(cards) ? cards : [])
         .map((card) => ({
             cardId: Number(card?.cardId ?? card?.card_id ?? card?.id),
@@ -3090,25 +3122,28 @@ async function reserveOrbitcardCard(cards, ownerKey) {
     return withTransaction(async (connection) => {
         for (const card of candidates) {
             await connection.query(
-                `INSERT INTO orbitcard_card_usage (card_id, status)
-                 VALUES (?, ?)
-                 ON DUPLICATE KEY UPDATE status = VALUES(status)`,
-                [card.cardId, card.status]
+                `INSERT INTO orbitcard_card_usage (card_id, status, plan_type, max_usage_count, initial_amount)
+                 VALUES (?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE
+                    status = CASE WHEN orbitcard_card_usage.status = 'RETIRED' THEN orbitcard_card_usage.status ELSE VALUES(status) END`,
+                [card.cardId, card.status, persistMetadata ? planType : null, persistMetadata ? maxUsageCount : 1, persistMetadata ? initialAmount : null]
             );
         }
         const ids = candidates.map((card) => card.cardId);
         const placeholders = ids.map(() => '?').join(', ');
         const [rows] = await connection.query(
-            `SELECT card_id, usage_count, last_used_at
+            `SELECT card_id, usage_count, max_usage_count, plan_type, initial_amount, last_used_at
              FROM orbitcard_card_usage
              WHERE card_id IN (${placeholders})
                AND status = 'ACTIVE'
                AND in_use = 0
+               AND usage_count < max_usage_count
+               AND (? IS NULL OR plan_type = ?)
                AND (cooldown_until IS NULL OR cooldown_until < NOW())
              ORDER BY usage_count ASC, COALESCE(last_used_at, '1970-01-01') ASC, card_id ASC
              LIMIT 1
              FOR UPDATE SKIP LOCKED`,
-            ids
+            [...ids, planType, planType]
         );
         if (!rows.length) return null;
         const row = rows[0];
@@ -3123,7 +3158,10 @@ async function reserveOrbitcardCard(cards, ownerKey) {
             id: Number(row.card_id),
             orbitcard_id: Number(row.card_id),
             last4: source?.last4 || '',
-            usage_count: Number(row.usage_count || 0)
+            usage_count: Number(row.usage_count || 0),
+            max_usage_count: Number(row.max_usage_count || maxUsageCount),
+            plan_type: row.plan_type || planType,
+            initial_amount: row.initial_amount == null ? initialAmount : Number(row.initial_amount)
         };
     });
 }
@@ -3140,7 +3178,7 @@ async function releaseOrbitcardCard(cardId) {
 }
 
 /**
- * Retire a newly-created Orbitcard card after its single order attempt.
+ * Retire an Orbitcard card after its reuse limit or an uncertain order result.
  * Retired cards are never selected by the reusable-card path.
  */
 async function retireOrbitcardCard(cardId) {
@@ -3154,12 +3192,121 @@ async function retireOrbitcardCard(cardId) {
     );
 }
 
+async function createOrbitcardRecharge({
+    cardId,
+    jobKey,
+    planType = 'plus',
+    cardLast4 = '',
+    accountEmail = '',
+    useNumber = 1,
+    maxUsageCount = 1,
+    initialAmount = null
+} = {}) {
+    const id = Number(cardId);
+    const key = String(jobKey || '').trim();
+    if (!Number.isInteger(id) || id <= 0 || !key) return false;
+    await runExecute(
+        `INSERT INTO orbitcard_card_recharges
+            (card_id, job_key, plan_type, card_last4, account_email, use_number, max_usage_count, initial_amount, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running')
+         ON DUPLICATE KEY UPDATE
+            card_id = VALUES(card_id), plan_type = VALUES(plan_type), card_last4 = VALUES(card_last4), account_email = VALUES(account_email),
+            use_number = VALUES(use_number), max_usage_count = VALUES(max_usage_count), initial_amount = VALUES(initial_amount)`,
+        [
+            id,
+            key,
+            String(planType || 'plus').trim() || 'plus',
+            String(cardLast4 || '').replace(/\D/g, '').slice(-4),
+            String(accountEmail || '').trim().slice(0, 255),
+            Math.max(1, Number(useNumber) || 1),
+            Math.max(1, Number(maxUsageCount) || 1),
+            Number.isFinite(Number(initialAmount)) ? Number(initialAmount) : null
+        ]
+    );
+    return true;
+}
+
+async function updateOrbitcardRecharge(jobKey, {
+    status,
+    orderId,
+    message
+} = {}) {
+    const key = String(jobKey || '').trim();
+    if (!key) return;
+    await runExecute(
+        `UPDATE orbitcard_card_recharges
+         SET status = COALESCE(?, status),
+             order_id = COALESCE(?, order_id),
+             message = COALESCE(?, message)
+         WHERE job_key = ?`,
+        [status ? String(status).trim() : null, orderId ? String(orderId).trim().slice(0, 128) : null, message ? String(message).trim().slice(0, 255) : null, key]
+    );
+}
+
+async function listOrbitcardUsage(limit = 200) {
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
+    const cards = await runQuery(
+        `SELECT card_id, usage_count, plan_type, max_usage_count, initial_amount,
+                daily_usage_count, cooldown_until, in_use, locked_at, locked_by,
+                last_used_at, status, created_at, updated_at
+         FROM orbitcard_card_usage
+         ORDER BY updated_at DESC, card_id DESC
+         LIMIT ?`,
+        [safeLimit]
+    );
+    const recharges = await runQuery(
+        `SELECT card_id, job_key, plan_type, card_last4, account_email, use_number, max_usage_count,
+                initial_amount, order_id, status, message, created_at, updated_at
+         FROM orbitcard_card_recharges
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        [Math.min(2000, safeLimit * 8)]
+    );
+    const historyByCard = new Map();
+    for (const row of recharges) {
+        const key = String(row.card_id);
+        if (!historyByCard.has(key)) historyByCard.set(key, []);
+        historyByCard.get(key).push({
+            jobKey: row.job_key,
+            planType: row.plan_type || 'plus',
+            cardLast4: row.card_last4 || '',
+            accountEmail: row.account_email || '',
+            useNumber: Number(row.use_number || 0),
+            maxUsageCount: Number(row.max_usage_count || 1),
+            initialAmount: row.initial_amount == null ? null : Number(row.initial_amount),
+            orderId: row.order_id || null,
+            status: row.status || 'running',
+            message: row.message || '',
+            createdAt: row.created_at,
+            updatedAt: row.updated_at
+        });
+    }
+    return cards.map((row) => ({
+        cardId: Number(row.card_id),
+        cardLast4: historyByCard.get(String(row.card_id))?.find((item) => item.cardLast4)?.cardLast4 || '',
+        planType: row.plan_type || null,
+        usageCount: Number(row.usage_count || 0),
+        maxUsageCount: Math.max(1, Number(row.max_usage_count || 1)),
+        initialAmount: row.initial_amount == null ? null : Number(row.initial_amount),
+        dailyUsageCount: Number(row.daily_usage_count || 0),
+        cooldownUntil: row.cooldown_until || null,
+        inUse: Boolean(row.in_use),
+        lockedAt: row.locked_at || null,
+        lockedBy: row.locked_by || null,
+        lastUsedAt: row.last_used_at || null,
+        status: row.status || 'ACTIVE',
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        recharges: historyByCard.get(String(row.card_id)) || []
+    }));
+}
+
 async function recordOrbitcardCardUsage(cardId) {
     const id = Number(cardId);
     if (!Number.isInteger(id) || id <= 0) return { dailyUsageCount: 0, cooledDown: false };
     return withTransaction(async (connection) => {
         const [rows] = await connection.query(
-            `SELECT daily_usage_count, daily_usage_reset_at
+            `SELECT daily_usage_count, daily_usage_reset_at, usage_count, max_usage_count
              FROM orbitcard_card_usage WHERE card_id = ? FOR UPDATE`,
             [id]
         );
@@ -3168,17 +3315,20 @@ async function recordOrbitcardCardUsage(cardId) {
         const resetAt = row.daily_usage_reset_at ? new Date(row.daily_usage_reset_at) : null;
         const expired = !resetAt || resetAt < new Date(Date.now() - 24 * 60 * 60 * 1000);
         const dailyUsageCount = expired ? 1 : Number(row.daily_usage_count || 0) + 1;
+        const usageCount = Number(row.usage_count || 0) + 1;
+        const maxUsageCount = Math.max(1, Number(row.max_usage_count || 1));
+        const cooldownThreshold = Math.max(3, maxUsageCount);
         await connection.query(
             `UPDATE orbitcard_card_usage
              SET daily_usage_count = ?,
                  daily_usage_reset_at = CASE WHEN ? = 1 THEN NOW() ELSE daily_usage_reset_at END,
-                 usage_count = usage_count + 1,
+                 usage_count = ?,
                  last_used_at = NOW(),
-                 cooldown_until = CASE WHEN ? >= 3 THEN DATE_ADD(NOW(), INTERVAL 24 HOUR) ELSE cooldown_until END
+                 cooldown_until = CASE WHEN ? >= ? THEN DATE_ADD(NOW(), INTERVAL 24 HOUR) ELSE cooldown_until END
              WHERE card_id = ?`,
-            [dailyUsageCount, expired ? 1 : 0, dailyUsageCount, id]
+            [dailyUsageCount, expired ? 1 : 0, usageCount, dailyUsageCount, cooldownThreshold, id]
         );
-        return { dailyUsageCount, cooledDown: dailyUsageCount >= 3 };
+        return { dailyUsageCount, usageCount, maxUsageCount, cooledDown: dailyUsageCount >= cooldownThreshold };
     });
 }
 
@@ -3785,6 +3935,9 @@ module.exports = {
     reserveOrbitcardCard,
     releaseOrbitcardCard,
     retireOrbitcardCard,
+    createOrbitcardRecharge,
+    updateOrbitcardRecharge,
+    listOrbitcardUsage,
     recordOrbitcardCardUsage,
     markCardExhausted,
     recordCardUsage,

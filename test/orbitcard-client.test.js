@@ -70,6 +70,21 @@ describe('orbitcard client', () => {
         ] }, 'pro_20x').amount).toBe('145.00');
     });
 
+    it('budgets a Plus card for four sequential charges', () => {
+        const selection = orbitcard.chooseProductForPlan({ list: [
+            {
+                product_code: 'visa-plus',
+                remaining_open_card_num: 2,
+                min_initial_amount: '20',
+                min_retained_balance: '0.10',
+                gpt_plan_prices: [{ id: 'plus', price: '15.75', currency: 'USD' }]
+            }
+        ] }, 'plus');
+        expect(selection).toMatchObject({ success: true, amount: '65.00', maxUsageCount: 4 });
+        expect(orbitcard.getPlanReuseLimit('pro_5x')).toBe(1);
+        expect(orbitcard.getPlanReuseLimit('pro_20x')).toBe(1);
+    });
+
     it('creates exactly one card with the documented idempotency key', async () => {
         const spy = vi.spyOn(axios, 'request').mockResolvedValue({
             status: 201,

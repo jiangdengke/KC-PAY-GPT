@@ -2813,6 +2813,36 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     </table>
                 </div>
             </div>
+
+            <div class="panel">
+                <div class="panel-header">
+                    <h2 class="panel-title">Orbitcard 用卡记录</h2>
+                    <button type="button" class="btn btn-primary" onclick="loadOrbitcardUsage(true)">
+                        <i data-lucide="refresh-cw"></i>
+                        刷新记录
+                    </button>
+                </div>
+                <p id="orbitcard_usage_hint" style="font-size:13px; color:var(--text-dim); margin:0 0 12px;">
+                    Plus 卡最多使用 4 次；Pro 5x 和 Pro 20x 默认每张卡使用 1 次。这里仅显示卡 ID、后四位和账号记录，不显示完整卡密。
+                </p>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th width="110px">卡 ID</th>
+                                <th width="90px">后四位</th>
+                                <th width="100px">套餐</th>
+                                <th width="110px" style="text-align:center">已用/上限</th>
+                                <th width="110px">首充金额</th>
+                                <th width="100px">状态</th>
+                                <th>充值账号与订单</th>
+                                <th width="150px">最近使用</th>
+                            </tr>
+                        </thead>
+                        <tbody id="orbitcard_usage_body"></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <!-- CDK 管理 -->
@@ -4859,6 +4889,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
 
             if (pId === 'cards') {
                 loadCardPoolList();
+                loadOrbitcardUsage();
             }
 
             if (pId === 'checkout_debug') {
@@ -6178,6 +6209,73 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 console.error('loadCardPoolList failed', e);
                 showMessage('加载卡池列表失败', 'error');
             }
+        }
+
+        let orbitcardUsageList = [];
+
+        async function loadOrbitcardUsage(showToast = false) {
+            const tbody = document.getElementById('orbitcard_usage_body');
+            if (!tbody) return;
+            try {
+                const res = await authFetch('/api/admin/orbitcard/usage?limit=200');
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || '加载 Orbitcard 用卡记录失败');
+                orbitcardUsageList = Array.isArray(data.cards) ? data.cards : [];
+                renderOrbitcardUsageTable();
+                if (showToast) showMessage('Orbitcard 用卡记录已刷新', 'success');
+            } catch (error) {
+                console.error('loadOrbitcardUsage failed', error);
+                tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--error); padding:36px 0;">${escapeHtml(error.message || '加载失败')}</td></tr>`;
+                if (showToast) showMessage(error.message || '加载 Orbitcard 记录失败', 'error');
+            }
+            lucide.createIcons();
+        }
+
+        function formatOrbitcardPlan(planType) {
+            return { plus: 'Plus', pro_5x: 'Pro 5x', pro_20x: 'Pro 20x' }[planType] || planType || '-';
+        }
+
+        function formatOrbitcardRechargeStatus(status) {
+            const labels = { success: '成功', succeeded: '成功', processing: '处理中', running: '进行中', failed: '失败' };
+            const label = labels[String(status || '').toLowerCase()] || String(status || '-');
+            const cls = ['success', 'succeeded'].includes(String(status || '').toLowerCase())
+                ? 'status-success'
+                : (['failed', 'error'].includes(String(status || '').toLowerCase()) ? 'status-failed' : 'status-running');
+            return `<span class="status-badge ${cls}">${escapeHtml(label)}</span>`;
+        }
+
+        function renderOrbitcardUsageTable() {
+            const tbody = document.getElementById('orbitcard_usage_body');
+            if (!tbody) return;
+            if (!orbitcardUsageList.length) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--text-dim); padding:36px 0;">暂无 Orbitcard 用卡记录</td></tr>';
+                return;
+            }
+            tbody.innerHTML = orbitcardUsageList.map((card) => {
+                const histories = Array.isArray(card.recharges) ? card.recharges : [];
+                const historyHtml = histories.length
+                    ? histories.map((item) => `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:3px 0; border-bottom:1px solid var(--border);">
+                        <span>${escapeHtml(item.accountEmail || '账号未返回')}</span>
+                        <span style="color:var(--text-dim);">${escapeHtml(formatOrbitcardPlan(item.planType))} #${Number(item.useNumber || 0)}</span>
+                        ${formatOrbitcardRechargeStatus(item.status)}
+                        <span style="color:var(--text-dim);">${escapeHtml(formatTimeShort(item.createdAt))}</span>
+                    </div>`).join('')
+                    : '<span style="color:var(--text-dim);">暂无账号记录</span>';
+                const status = String(card.status || '').toUpperCase();
+                const statusLabel = status === 'RETIRED' ? '已退役' : (card.inUse ? '使用中' : '可复用');
+                const statusClass = status === 'RETIRED' ? 'status-failed' : (card.inUse ? 'status-warning' : 'status-success');
+                return `<tr>
+                    <td><code>${escapeHtml(card.cardId)}</code></td>
+                    <td><code>${escapeHtml(card.cardLast4 || '****')}</code></td>
+                    <td>${escapeHtml(formatOrbitcardPlan(card.planType))}</td>
+                    <td style="text-align:center; font-weight:600;">${Number(card.usageCount || 0)}/${Number(card.maxUsageCount || 1)}</td>
+                    <td>${card.initialAmount == null ? '-' : `${Number(card.initialAmount).toFixed(2)} USD`}</td>
+                    <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+                    <td style="min-width:300px; font-size:13px;">${historyHtml}</td>
+                    <td>${escapeHtml(formatTimeShort(card.lastUsedAt))}</td>
+                </tr>`;
+            }).join('');
+            lucide.createIcons();
         }
 
         function renderCardPoolStats() {

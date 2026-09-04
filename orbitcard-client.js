@@ -113,6 +113,17 @@ const FALLBACK_CARD_AMOUNTS = Object.freeze({
     pro_20x: 150
 });
 
+const PLAN_REUSE_LIMITS = Object.freeze({
+    plus: 4,
+    pro_5x: 1,
+    pro_20x: 1
+});
+
+function getPlanReuseLimit(planType) {
+    const key = String(planType || 'plus').trim();
+    return PLAN_REUSE_LIMITS[key] || PLAN_REUSE_LIMITS.plus;
+}
+
 function normalizeProduct(row = {}) {
     const prices = Array.isArray(row.gpt_plan_prices)
         ? row.gpt_plan_prices.map((price) => ({
@@ -176,8 +187,11 @@ function chooseProductForPlan(data, planType = 'plus') {
     const retained = Number.isFinite(product.minRetainedBalance) && product.minRetainedBalance > 0
         ? product.minRetainedBalance
         : 0;
+    const reuseLimit = getPlanReuseLimit(planType);
     const fallback = FALLBACK_CARD_AMOUNTS[String(planType || 'plus').trim()] || FALLBACK_CARD_AMOUNTS.plus;
-    const priceTarget = selected.planPrice ? selected.planPrice.price + retained + 1 : fallback;
+    const priceTarget = selected.planPrice
+        ? selected.planPrice.price * reuseLimit + retained + 1
+        : (reuseLimit > 1 ? fallback * reuseLimit : fallback);
     const rawAmount = Math.max(minimum, priceTarget);
     const amount = (Math.ceil(rawAmount / 5) * 5).toFixed(2);
     return {
@@ -185,6 +199,7 @@ function chooseProductForPlan(data, planType = 'plus') {
         product,
         planPrice: selected.planPrice,
         amount,
+        maxUsageCount: reuseLimit,
         candidates: products.map(({ product: item, planPrice }) => ({
             productCode: item.productCode,
             remainingOpenCardNum: item.remainingOpenCardNum,
@@ -316,6 +331,8 @@ module.exports = {
     request,
     getAccountBalance,
     getProductCode,
+    PLAN_REUSE_LIMITS,
+    getPlanReuseLimit,
     normalizeProduct,
     normalizeProductList,
     resolveProductPlanPrice,
