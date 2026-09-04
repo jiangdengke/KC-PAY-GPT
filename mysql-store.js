@@ -254,7 +254,8 @@ const GPT_API_CONFIG_KEYS = [
     'gpt_api_currency',
     'gpt_api_card_source',
     'orbitcard_base_url',
-    'orbitcard_api_key'
+    'orbitcard_api_key',
+    'orbitcard_api_secret'
 ];
 
 async function ensureGptApiColumns() {
@@ -293,7 +294,8 @@ async function ensureGptApiConfigDefaults() {
         ['gpt_api_currency', 'PHP'],
         ['gpt_api_card_source', 'local'],
         ['orbitcard_base_url', 'https://orbitcard.cc'],
-        ['orbitcard_api_key', '']
+        ['orbitcard_api_key', ''],
+        ['orbitcard_api_secret', '']
     ];
     for (const [key, value] of defaults) {
         await runExecute(
@@ -324,16 +326,17 @@ async function getGptApiConfig() {
         card_source: String(map.gpt_api_card_source || 'local').trim().toLowerCase() === 'orbitcard' ? 'orbitcard' : 'local',
         orbitcard_base_url: String(map.orbitcard_base_url || 'https://orbitcard.cc').trim().replace(/\/+$/, '') || 'https://orbitcard.cc',
         orbitcard_api_key: String(map.orbitcard_api_key || '').trim(),
-        orbitcard_api_secret: ORBITCARD_API_SECRET
+        orbitcard_api_secret: String(map.orbitcard_api_secret || ORBITCARD_API_SECRET || '').trim()
     };
 }
 
 async function saveGptApiConfig(config = {}) {
     const existing = await getGptApiConfig();
     const apiKey = String(config.api_key || '').trim() || existing.api_key || '';
+    const orbitcardApiSecret = String(config.orbitcard_api_secret || '').trim() || existing.orbitcard_api_secret || '';
     await runExecute(
         `INSERT INTO app_config (config_key, config_value)
-         VALUES (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)
+         VALUES (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)
          ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)`,
         [
             'gpt_api_enabled', config.enabled ? '1' : '0',
@@ -345,7 +348,8 @@ async function saveGptApiConfig(config = {}) {
             'gpt_api_currency', String(config.currency || existing.currency || 'PHP').trim().toUpperCase() || 'PHP',
             'gpt_api_card_source', String(config.card_source || existing.card_source || 'local').trim().toLowerCase() === 'orbitcard' ? 'orbitcard' : 'local',
             'orbitcard_base_url', String(config.orbitcard_base_url || existing.orbitcard_base_url || 'https://orbitcard.cc').trim().replace(/\/+$/, '') || 'https://orbitcard.cc',
-            'orbitcard_api_key', String(config.orbitcard_api_key || existing.orbitcard_api_key || '').trim()
+            'orbitcard_api_key', String(config.orbitcard_api_key || existing.orbitcard_api_key || '').trim(),
+            'orbitcard_api_secret', orbitcardApiSecret
         ]
     );
 }

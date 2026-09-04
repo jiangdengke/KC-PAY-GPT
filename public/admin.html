@@ -2034,7 +2034,11 @@
                         <input type="password" id="orbitcard_api_key" class="asset-input" placeholder="留空不修改" autocomplete="off">
                         <p id="orbitcard_api_key_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
                     </div>
-                    <p id="orbitcard_api_secret_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 16px;">Orbitcard Secret 由服务端环境变量 ORBITCARD_API_SECRET 提供，不经过浏览器或数据库。</p>
+                    <div class="form-group" style="margin-top: 16px;">
+                        <label>Orbitcard Secret</label>
+                        <input type="password" id="orbitcard_api_secret" class="asset-input" placeholder="留空不修改" autocomplete="off">
+                        <p id="orbitcard_api_secret_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
+                    </div>
                 </div>
                 <p style="font-size: 12px; color: var(--text-dim); margin-top: 12px;">
                     Desolate Open 平台要求完整 Session（含 user、account、accessToken、sessionToken、expires）；根域名会自动补全 /api/v1/open。
@@ -8082,6 +8086,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 const orbitBaseEl = document.getElementById('orbitcard_base_url');
                 const orbitKeyEl = document.getElementById('orbitcard_api_key');
                 const orbitKeyHint = document.getElementById('orbitcard_api_key_hint');
+                const orbitSecretEl = document.getElementById('orbitcard_api_secret');
                 const orbitSecretHint = document.getElementById('orbitcard_api_secret_hint');
                 if (keyEl) keyEl.value = '';
                 if (keyEl) keyEl.placeholder = cfg.api_key_saved
@@ -8092,9 +8097,13 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 if (orbitBaseEl) orbitBaseEl.value = cfg.orbitcard_base_url || 'https://orbitcard.cc';
                 if (orbitKeyEl) orbitKeyEl.value = '';
                 if (orbitKeyHint) orbitKeyHint.textContent = cfg.orbitcard_api_key_saved ? `✓ API Key 已保存（${cfg.orbitcard_api_key_preview || '已隐藏'}）` : '尚未配置 Orbitcard API Key';
+                if (orbitSecretEl) {
+                    orbitSecretEl.value = '';
+                    orbitSecretEl.placeholder = cfg.orbitcard_api_secret_configured ? `已保存（${cfg.orbitcard_api_secret_preview || '已隐藏'}）留空不修改` : '填写 Orbitcard Secret';
+                }
                 if (orbitSecretHint) orbitSecretHint.textContent = cfg.orbitcard_api_secret_configured
-                    ? '✓ Orbitcard Secret 已由服务端环境变量注入'
-                    : 'Orbitcard Secret 未配置，请设置服务端环境变量 ORBITCARD_API_SECRET';
+                    ? '✓ Orbitcard Secret 已保存，留空不修改'
+                    : '尚未配置 Orbitcard Secret';
                 updateOrbitcardConfigVisibility();
                 if (keyHint) {
                     keyHint.textContent = cfg.api_key_saved ? '✓ API Key 已保存' : '尚未配置 API Key';
@@ -8113,7 +8122,8 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 plan_key: document.getElementById('gpt_api_plan_key')?.value.trim() || '',
                 card_source: document.getElementById('gpt_api_card_source')?.value || 'local',
                 orbitcard_base_url: document.getElementById('orbitcard_base_url')?.value.trim() || '',
-                orbitcard_api_key: document.getElementById('orbitcard_api_key')?.value.trim() || ''
+                orbitcard_api_key: document.getElementById('orbitcard_api_key')?.value.trim() || '',
+                orbitcard_api_secret: document.getElementById('orbitcard_api_secret')?.value.trim() || ''
             };
         }
 

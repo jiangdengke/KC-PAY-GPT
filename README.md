@@ -88,7 +88,7 @@ docker compose up -d
 
 第三方代充可在后台「系统配置」中接入 Desolate Open：Base URL 填 `https://recharge.desolate.run`（程序会自动补全 `/api/v1/open`），API Key 使用供应商发放的 `ap_live_...`，套餐代码留空即可按 CDK 类型映射。订单会按「代充卡源」选择本地银行卡池或 Orbitcard 卡台，并要求提交完整 Session JSON（含 `user`、`account`、`accessToken`、`sessionToken`、`expires`）。
 
-Orbitcard 卡台使用 Open API V1 的 HMAC-SHA256 签名。后台填写 Orbitcard Base URL 和 API Key；API Secret 只放在服务端环境变量 `ORBITCARD_API_SECRET`，并为 API Key 授予 `cards:read` 与 `cards:sensitive` Scope。任务会先查询 `getCardList`，再按卡 ID 调用 `cardDetail(reveal_sensitive=true)` 读取本次订单卡资料；卡 ID 的锁定、使用次数和 24 小时冷却记录在本地，不保存 Orbitcard 完整卡号或 CVV。
+Orbitcard 卡台使用 Open API V1 的 HMAC-SHA256 签名。后台填写 Orbitcard Base URL、API Key 和 Secret；Secret 会保存到应用配置中，也可通过服务端环境变量 `ORBITCARD_API_SECRET` 注入（数据库配置优先）。并为 API Key 授予 `cards:read` 与 `cards:sensitive` Scope。任务会先查询 `getCardList`，再按卡 ID 调用 `cardDetail(reveal_sensitive=true)` 读取本次订单卡资料；卡 ID 的锁定、使用次数和 24 小时冷却记录在本地，不保存 Orbitcard 完整卡号或 CVV。
 
 | 地址 | 说明 |
 |------|------|

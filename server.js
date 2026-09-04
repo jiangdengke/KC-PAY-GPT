@@ -2459,7 +2459,8 @@ app.get('/api/admin/gpt-api', async (req, res) => {
                 orbitcard_base_url: cfg.orbitcard_base_url,
                 orbitcard_api_key_saved: Boolean(cfg.orbitcard_api_key),
                 orbitcard_api_key_preview: orbitcard.maskApiKey(cfg.orbitcard_api_key),
-                orbitcard_api_secret_configured: Boolean(cfg.orbitcard_api_secret)
+                orbitcard_api_secret_configured: Boolean(cfg.orbitcard_api_secret),
+                orbitcard_api_secret_preview: orbitcard.maskApiKey(cfg.orbitcard_api_secret)
             }
         });
     } catch (error) {
@@ -2480,7 +2481,8 @@ app.post('/api/admin/gpt-api', async (req, res) => {
             currency: body.currency,
             card_source: body.card_source,
             orbitcard_base_url: body.orbitcard_base_url,
-            orbitcard_api_key: body.orbitcard_api_key
+            orbitcard_api_key: body.orbitcard_api_key,
+            orbitcard_api_secret: body.orbitcard_api_secret
         });
         res.json({ success: true, message: '第三方代充 API 配置已保存' });
     } catch (error) {
@@ -2500,7 +2502,7 @@ app.post('/api/admin/gpt-api/test', async (req, res) => {
             card_source: String(body.card_source || '').trim() || saved.card_source,
             orbitcard_base_url: String(body.orbitcard_base_url || '').trim() || saved.orbitcard_base_url,
             orbitcard_api_key: String(body.orbitcard_api_key || '').trim() || saved.orbitcard_api_key,
-            orbitcard_api_secret: saved.orbitcard_api_secret
+            orbitcard_api_secret: String(body.orbitcard_api_secret || '').trim() || saved.orbitcard_api_secret
         };
         const result = await gptApi.testConnection(merged);
         if (!result.success) {
