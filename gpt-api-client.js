@@ -481,6 +481,41 @@ function extractStatus(data) {
     return outer;
 }
 
+const IN_PROGRESS_STATUS_MESSAGES = Object.freeze({
+    queued: '订单已进入上游队列，等待处理',
+    pending: '订单已进入上游队列，等待处理',
+    waiting: '订单已进入上游队列，等待处理',
+    accepted: '订单已受理，等待上游处理',
+    processing: '上游正在处理订单',
+    running: '上游正在处理订单',
+    in_progress: '上游正在处理订单',
+    requires_cvc: '上游需要补充验证信息，订单暂未完成',
+    system_error: '上游暂时异常，系统正在重试',
+    stalled: '上游处理较慢，系统仍在等待结果'
+});
+
+/**
+ * 将供应商订单状态转换为面向用户的进度提示，不把原始英文状态直接展示。
+ */
+function formatProgressMessage(data, pollCount = 0) {
+    const source = data && typeof data === 'object' ? data : {};
+    const result = source.result && typeof source.result === 'object' ? source.result : {};
+    const displayStatus = String(
+        source.display_status
+        ?? source.displayStatus
+        ?? source.queue_status
+        ?? result.display_status
+        ?? result.displayStatus
+        ?? result.queue_status
+        ?? ''
+    ).trim().toLowerCase();
+    const businessStatus = String(source.status ?? source.state ?? result.status ?? '').trim().toLowerCase();
+    const key = displayStatus || businessStatus;
+    const message = IN_PROGRESS_STATUS_MESSAGES[key] || '上游已收到订单，正在同步最新状态';
+    const count = Number(pollCount);
+    return Number.isFinite(count) && count > 0 ? `${message}（已查询 ${Math.floor(count)} 次）` : message;
+}
+
 /**
  * 测试连接：查询套餐 + 余额，返回摘要
  */
@@ -580,6 +615,7 @@ module.exports = {
     extractTaskId,
     extractTopupCode,
     extractStatus,
+    formatProgressMessage,
     isDesolateOpenProtocol,
     resolveBaseUrl,
     resolveOpenPlanCode,

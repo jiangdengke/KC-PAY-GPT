@@ -75,6 +75,17 @@ describe('gpt api client', () => {
         expect(client.extractStatus({ status: 'done', result: { ok: true, status: 'success' } })).toBe('success');
     });
 
+    it('formats provider queue and processing states for end users', () => {
+        expect(client.formatProgressMessage({ status: 'pending', display_status: 'queued' }, 1))
+            .toBe('订单已进入上游队列，等待处理（已查询 1 次）');
+        expect(client.formatProgressMessage({ status: 'processing' }, 4))
+            .toBe('上游正在处理订单（已查询 4 次）');
+        expect(client.formatProgressMessage({ status: 'running', queue_status: 'stalled' }, 2))
+            .toBe('上游处理较慢，系统仍在等待结果（已查询 2 次）');
+        expect(client.formatProgressMessage({ status: 'unknown' }, 3))
+            .toBe('上游已收到订单，正在同步最新状态（已查询 3 次）');
+    });
+
     it('sends documented client reference and saved-card fields', async () => {
         const spy = vi.spyOn(axios, 'request').mockResolvedValue({
             status: 200,

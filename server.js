@@ -3515,7 +3515,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 break;
             }
 
-            await setProgress('running', progress, `上游处理中 (${rawStatus || 'pending'})...`, {
+            await setProgress('running', progress, gptApi.formatProgressMessage(lastRaw, poll), {
                 ...(sessionUpdate ? { sessionPayload: sessionUpdate } : {})
             });
         }
