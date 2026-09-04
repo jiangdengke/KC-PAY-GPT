@@ -591,9 +591,20 @@ async function testCardSource(cfg = {}) {
     });
     if (!result.success) return result;
     const planAmounts = {};
+    const planProducts = {};
     for (const planType of ['plus', 'pro_5x', 'pro_20x']) {
         const selection = orbitcard.chooseProductForPlan(result.products, planType);
         planAmounts[planType] = selection.success ? selection.amount : null;
+        planProducts[planType] = selection.success
+            ? {
+                productCode: selection.product.productCode,
+                bin: selection.product.bin,
+                network: selection.product.network,
+                channel: selection.channel,
+                channelPriority: selection.channelPriority,
+                maxUsageCount: selection.maxUsageCount
+            }
+            : null;
     }
     return {
         success: true,
@@ -602,9 +613,10 @@ async function testCardSource(cfg = {}) {
             cardCount: result.cardCount,
             productCount: result.productCount,
             balance: result.balance,
-            planAmounts
+            planAmounts,
+            planProducts
         },
-        message: `${result.message}；首充建议 Plus ${planAmounts.plus || '—'} USD（最多 4 次）、Pro 5x ${planAmounts.pro_5x || '—'} USD、Pro 20x ${planAmounts.pro_20x || '—'} USD`,
+        message: `${result.message}；渠道 3 Mastercard 优先，Visa 为备选；首充建议 Plus ${planAmounts.plus || '—'} USD（最多 4 次）、Pro 5x ${planAmounts.pro_5x || '—'} USD、Pro 20x ${planAmounts.pro_20x || '—'} USD`,
         cards: result.cards
     };
 }

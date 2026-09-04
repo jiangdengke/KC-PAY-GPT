@@ -119,6 +119,12 @@ const PLAN_REUSE_LIMITS = Object.freeze({
     pro_20x: 1
 });
 
+const CHANNEL3_PRODUCT_PRIORITY = Object.freeze([
+    { bin: '55565979', network: 'MASTERCARD', label: '渠道 3 Mastercard' },
+    { bin: '400242001', network: 'VISA', label: '渠道 3 Visa 1' },
+    { bin: '40041641', network: 'VISA', label: '渠道 3 Visa 2' }
+]);
+
 function getPlanReuseLimit(planType) {
     const key = String(planType || 'plus').trim();
     return PLAN_REUSE_LIMITS[key] || PLAN_REUSE_LIMITS.plus;
@@ -136,6 +142,7 @@ function normalizeProduct(row = {}) {
     const remaining = Number(row.remaining_open_card_num);
     return {
         productCode: String(row.product_code || row.productCode || '').trim(),
+        bin: String(row.bin || '').replace(/\s+/g, '').trim(),
         minInitialAmount: Number(row.min_initial_amount),
         minRetainedBalance: Number(row.min_retained_balance),
         remainingOpenCardNum: Number.isFinite(remaining) ? remaining : null,
@@ -146,6 +153,21 @@ function normalizeProduct(row = {}) {
         prices,
         raw: row
     };
+}
+
+function getChannel3Priority(product) {
+    const code = String(product?.productCode || '').trim().toLowerCase();
+    const bin = String(product?.bin || '').replace(/\s+/g, '').trim();
+    const index = CHANNEL3_PRODUCT_PRIORITY.findIndex((item) => (
+        (bin && bin === item.bin) || code === `amzkeys:${item.bin}`
+    ));
+    return index >= 0 ? index : null;
+}
+
+function isProductAvailable(product) {
+    if (product.remainingOpenCardNum == null || product.remainingOpenCardNum > 0) return true;
+    // Provider-validated products expose 0 when the card table checks stock at open time.
+    return product.inventoryMode === 'provider_validated' && getChannel3Priority(product) != null;
 }
 
 function normalizeProductList(data) {
@@ -167,12 +189,19 @@ function resolveProductPlanPrice(product, planType) {
 
 function chooseProductForPlan(data, planType = 'plus') {
     const products = normalizeProductList(data)
-        .filter((product) => product.remainingOpenCardNum == null || product.remainingOpenCardNum > 0)
+        .filter(isProductAvailable)
         .map((product) => ({ product, planPrice: resolveProductPlanPrice(product, planType) }));
     if (!products.length) return { success: false, error: 'Orbitcard 当前没有可开卡产品库存' };
 
     // Prefer a product with a live plan price, then the lowest current price.
     products.sort((a, b) => {
+        const aChannelPriority = getChannel3Priority(a.product);
+        const bChannelPriority = getChannel3Priority(b.product);
+        if (aChannelPriority !== null || bChannelPriority !== null) {
+            if (aChannelPriority === null) return 1;
+            if (bChannelPriority === null) return -1;
+            if (aChannelPriority !== bChannelPriority) return aChannelPriority - bChannelPriority;
+        }
         if (Boolean(a.planPrice) !== Boolean(b.planPrice)) return a.planPrice ? -1 : 1;
         if (a.planPrice && b.planPrice && a.planPrice.price !== b.planPrice.price) {
             return a.planPrice.price - b.planPrice.price;
@@ -200,8 +229,14 @@ function chooseProductForPlan(data, planType = 'plus') {
         planPrice: selected.planPrice,
         amount,
         maxUsageCount: reuseLimit,
+        channel: getChannel3Priority(product) == null ? null : 3,
+        channelPriority: getChannel3Priority(product),
         candidates: products.map(({ product: item, planPrice }) => ({
             productCode: item.productCode,
+            bin: item.bin,
+            network: item.network,
+            channel: getChannel3Priority(item) == null ? null : 3,
+            channelPriority: getChannel3Priority(item),
             remainingOpenCardNum: item.remainingOpenCardNum,
             minInitialAmount: item.minInitialAmount,
             minRetainedBalance: item.minRetainedBalance,
@@ -315,6 +350,11 @@ async function testConnection(cfg) {
         productCount: productList.length,
         products: productList.map((product) => ({
             productCode: product.productCode,
+            bin: product.bin,
+            network: product.network,
+            inventoryMode: product.inventoryMode,
+            channel: getChannel3Priority(product) == null ? null : 3,
+            channelPriority: getChannel3Priority(product),
             remainingOpenCardNum: product.remainingOpenCardNum,
             minInitialAmount: product.minInitialAmount,
             minRetainedBalance: product.minRetainedBalance,
@@ -332,7 +372,10 @@ module.exports = {
     getAccountBalance,
     getProductCode,
     PLAN_REUSE_LIMITS,
+    CHANNEL3_PRODUCT_PRIORITY,
     getPlanReuseLimit,
+    getChannel3Priority,
+    isProductAvailable,
     normalizeProduct,
     normalizeProductList,
     resolveProductPlanPrice,

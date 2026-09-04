@@ -85,6 +85,21 @@ describe('orbitcard client', () => {
         expect(orbitcard.getPlanReuseLimit('pro_20x')).toBe(1);
     });
 
+    it('prefers channel 3 Mastercard, then its Visa fallbacks', () => {
+        const selection = orbitcard.chooseProductForPlan({ list: [
+            { product_code: 'tracked-cheap', bin: '555659', network: 'MASTERCARD', remaining_open_card_num: 500, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },
+            { product_code: 'amzkeys:40041641', bin: '40041641', network: 'UNKNOWN', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },
+            { product_code: 'amzkeys:55565979', bin: '55565979', network: 'UNKNOWN', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] }
+        ] }, 'plus');
+        expect(selection).toMatchObject({
+            success: true,
+            product: { productCode: 'amzkeys:55565979' },
+            channel: 3,
+            channelPriority: 0
+        });
+        expect(orbitcard.getChannel3Priority({ productCode: 'amzkeys:400242001', bin: '400242001' })).toBe(1);
+    });
+
     it('creates exactly one card with the documented idempotency key', async () => {
         const spy = vi.spyOn(axios, 'request').mockResolvedValue({
             status: 201,

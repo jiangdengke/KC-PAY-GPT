@@ -88,7 +88,7 @@ docker compose up -d
 
 第三方代充可在后台「系统配置」中接入 Desolate Open：Base URL 填 `https://recharge.desolate.run`（程序会自动补全 `/api/v1/open`），API Key 使用供应商发放的 `ap_live_...`，套餐代码留空即可按 CDK 类型映射。订单会按「代充卡源」选择本地银行卡池或 Orbitcard 卡台，并要求提交完整 Session JSON（含 `user`、`account`、`accessToken`、`sessionToken`、`expires`）。
 
-Orbitcard 卡台使用 Open API V1 的 HMAC-SHA256 签名。后台填写 Orbitcard Base URL、API Key 和 Secret；Secret 会保存到应用配置中，也可通过服务端环境变量 `ORBITCARD_API_SECRET` 注入（数据库配置优先）。API Key 需要 `products:read`、`cards:create`、`cards:read` 与 `cards:sensitive` Scope，另加 `account:read` 用于余额测试。任务会先查询产品目录：Plus 卡按实时价格计算首充金额并最多复用 4 次，Pro 5x/Pro 20x 每张卡使用 1 次；没有可复用卡时以 `quantity=1` 调用 `createCard`，再按卡 ID 调用 `cardDetail(reveal_sensitive=true)` 读取卡资料。完成上限次数或遇到异常后卡会标记为已退役，不再复用。本地数据库记录卡 ID、使用次数、首充金额和每次代充账号/订单，不保存 Orbitcard 完整卡号或 CVV。
+Orbitcard 卡台使用 Open API V1 的 HMAC-SHA256 签名。后台填写 Orbitcard Base URL、API Key 和 Secret；Secret 会保存到应用配置中，也可通过服务端环境变量 `ORBITCARD_API_SECRET` 注入（数据库配置优先）。API Key 需要 `products:read`、`cards:create`、`cards:read` 与 `cards:sensitive` Scope，另加 `account:read` 用于余额测试。任务会先查询产品目录，渠道 3 按 BIN 优先选择 Mastercard `55565979`，再选择 Visa `400242001`、`40041641`；Plus 卡按实时价格计算首充金额并最多复用 4 次，Pro 5x/Pro 20x 每张卡使用 1 次。没有可复用卡时以 `quantity=1` 调用 `createCard`，再按卡 ID 调用 `cardDetail(reveal_sensitive=true)` 读取卡资料。完成上限次数或遇到异常后卡会标记为已退役，不再复用。本地数据库记录卡 ID、使用次数、首充金额和每次代充账号/订单，不保存 Orbitcard 完整卡号或 CVV。
 
 | 地址 | 说明 |
 |------|------|
