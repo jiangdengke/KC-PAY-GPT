@@ -3261,9 +3261,11 @@ function mapGptApiPlanKey(planType, cfg = {}) {
     const type = String(planType || '').trim();
     if (gptApi.isDesolateOpenProtocol(cfg)) {
         const configured = String(cfg.plan_key || '').trim();
-        // plus/pro5x/pro20x are the legacy defaults; use the provider's
-        // documented plan codes unless the administrator supplied an override.
-        if (configured && !Object.values(GPT_API_PLAN_MAP).includes(configured)) return configured;
+        // Standard Open plan codes follow the CDK type. A custom value can still
+        // override all types, but the stored Plus default must not swallow Pro.
+        const standardCodes = new Set(Object.values(DESOLATE_PLAN_MAP));
+        const legacyAliases = new Set([...Object.values(GPT_API_PLAN_MAP), 'plus']);
+        if (configured && !standardCodes.has(configured) && !legacyAliases.has(configured)) return configured;
         return DESOLATE_PLAN_MAP[type] || DESOLATE_PLAN_MAP.plus;
     }
     const configured = String(cfg.plan_key || '').trim();

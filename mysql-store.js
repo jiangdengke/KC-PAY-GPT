@@ -3198,18 +3198,25 @@ async function importCards(cards) {
     const failures = []; // { index, errors }
     const validCards = [];  // { index, card_number, card_expiry, card_cvc, card_holder }
 
-    // Step 1: Validate each card
+    // Step 1: Normalize common exports, then validate each card.
     for (let i = 0; i < cards.length; i++) {
-        const card = cards[i];
+        const source = cards[i] || {};
+        const rawExpiry = String(source.card_expiry || '').trim();
+        const card = {
+            ...source,
+            card_number: String(source.card_number || '').replace(/[\s-]+/g, ''),
+            card_expiry: /^\d{4}$/.test(rawExpiry) ? `${rawExpiry.slice(0, 2)}/${rawExpiry.slice(2)}` : rawExpiry,
+            card_cvc: String(source.card_cvc || '').trim()
+        };
         const result = validateCard(card);
         if (!result.valid) {
             failures.push({ index: i, errors: result.errors });
         } else {
             validCards.push({
                 index: i,
-                card_number: String(card.card_number).trim(),
-                card_expiry: String(card.card_expiry).trim(),
-                card_cvc: String(card.card_cvc).trim(),
+                card_number: card.card_number,
+                card_expiry: card.card_expiry,
+                card_cvc: card.card_cvc,
                 card_holder: String(card.card_holder || '').trim()
             });
         }

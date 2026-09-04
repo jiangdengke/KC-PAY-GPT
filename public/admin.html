@@ -2011,7 +2011,7 @@
                     <label>套餐代码（可选覆盖）</label>
                     <input type="text" id="gpt_api_plan_key" class="asset-input" placeholder="chatgptplusplan" autocomplete="off">
                     <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
-                        留空时按 CDK 类型使用 chatgptplusplan / chatgptprolite / chatgptpro；填入后统一使用此代码。
+                        留空或使用标准代码时按 CDK 类型选择 chatgptplusplan / chatgptprolite / chatgptpro；只有填入自定义代码时才统一覆盖。
                     </p>
                 </div>
                 <p style="font-size: 12px; color: var(--text-dim); margin-top: 12px;">
@@ -6309,7 +6309,10 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     const imported = data.imported || 0;
                     const skipped = data.skipped || 0;
                     const failed = data.failed || 0;
-                    resultEl.textContent = `导入完成：成功 ${imported}，跳过 ${skipped}，失败 ${failed}`;
+                    const failureHint = Array.isArray(data.failures) && data.failures.length
+                        ? `；示例错误：${data.failures.slice(0, 3).map((item) => `第 ${(item.index || 0) + 1} 行 ${Array.isArray(item.errors) ? item.errors.join('、') : ''}`).join('；')}`
+                        : '';
+                    resultEl.textContent = `导入完成：成功 ${imported}，跳过 ${skipped}，失败 ${failed}${failureHint}`;
                     resultEl.style.color = imported > 0 ? 'var(--success)' : 'var(--text-dim)';
                     showMessage(`成功导入 ${imported} 张卡片`, 'success');
                     textarea.value = '';
