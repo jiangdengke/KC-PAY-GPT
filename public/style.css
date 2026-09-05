@@ -588,6 +588,125 @@ button::after {
     color: var(--text-muted);
 }
 
+.query-mode-nav {
+    display: inline-flex;
+    gap: 4px;
+    margin-bottom: 18px;
+    padding: 3px;
+    background: var(--surface-soft);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+}
+
+.query-mode-btn {
+    padding: 7px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: none;
+}
+
+.query-mode-btn.active {
+    background: var(--surface);
+    color: var(--primary);
+    box-shadow: var(--shadow-sm);
+    font-weight: 600;
+}
+
+.batch-query-input {
+    min-height: 160px;
+    font-family: 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+}
+
+.batch-query-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.batch-query-actions button {
+    gap: 8px;
+}
+
+.batch-query-actions button svg {
+    width: 16px;
+    height: 16px;
+}
+
+.batch-query-count-error {
+    color: var(--error) !important;
+}
+
+.batch-query-results {
+    margin-top: 18px;
+    overflow: hidden;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    background: var(--surface-soft);
+}
+
+.batch-query-summary {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--divider);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.batch-query-row {
+    display: grid;
+    grid-template-columns: minmax(150px, 1.5fr) minmax(58px, .6fr) minmax(100px, 1fr) minmax(130px, 1fr);
+    gap: 12px;
+    align-items: center;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--divider);
+    font-size: 13px;
+}
+
+.batch-query-row:last-child {
+    border-bottom: 0;
+}
+
+.batch-query-row code {
+    color: var(--text-main);
+    font-family: 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+    overflow-wrap: anywhere;
+}
+
+.batch-query-plan,
+.batch-query-time {
+    color: var(--text-dim);
+}
+
+@media (max-width: 640px) {
+    .batch-query-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .batch-query-actions button {
+        width: 100%;
+    }
+
+    .batch-query-row {
+        grid-template-columns: 1fr auto;
+        gap: 6px 12px;
+    }
+
+    .batch-query-row code {
+        grid-column: 1 / -1;
+    }
+
+    .batch-query-time {
+        text-align: right;
+    }
+}
+
 /* ============ 查询结果 ============ */
 .query-result-box {
     margin-top: 20px;

@@ -4161,6 +4161,31 @@ app.post('/api/verify-cdk', async (req, res) => {
     }
 });
 
+async function queryCdkStatus(cdk) {
+    const cdkData = await store.verifyCdkDetails(cdk);
+    if (!cdkData) {
+        return { cdk, status: '未找到', type: null, planType: null, planLabel: null, createdAt: null, jobKey: null, usedAt: null };
+    }
+
+    const runningTask = await store.getRunningTaskByCdk(cdk);
+    const status = runningTask
+        ? '开通中'
+        : (cdkData.used_at ? '已使用' : '未使用');
+    const planType = cdkData.plan_type || 'plus';
+    return {
+        cdk,
+        status,
+        type: cdkData.type || '自助',
+        planType,
+        planLabel: getPlanTypeLabel(planType),
+        createdAt: cdkData.created_at,
+        jobKey: runningTask?.job_key || null,
+        usedAt: cdkData.used_at
+            ? new Date(cdkData.used_at).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+            : null
+    };
+}
+
 app.get('/api/cdk/query', async (req, res) => {
     const cdk = String(req.query.cdk || '').trim();
     if (!cdk) {
@@ -4169,30 +4194,42 @@ app.get('/api/cdk/query', async (req, res) => {
 
     try {
         await ensureStoreReady();
-        const cdkData = await store.verifyCdkDetails(cdk);
-        if (!cdkData) {
+        const data = await queryCdkStatus(cdk);
+        if (data.status === '未找到') {
             return res.status(404).json({ success: false, message: '未找到该激活码记录' });
         }
-
-        const runningTask = await store.getRunningTaskByCdk(cdk);
-        const cdkStatus = runningTask
-            ? '开通中'
-            : (cdkData.used_at ? '已使用' : '未使用');
-
-        res.json({
-            success: true,
-            data: {
-                status: cdkStatus,
-                type: cdkData.type || '自助',
-                createdAt: cdkData.created_at,
-                jobKey: runningTask?.job_key || null,
-                usedAt: cdkData.used_at
-                    ? new Date(cdkData.used_at).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
-                    : null
-            }
-        });
+        return res.json({ success: true, data });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/cdk/query-batch', async (req, res) => {
+    const rawCodes = Array.isArray(req.body?.cdks)
+        ? req.body.cdks.join('\n')
+        : String(req.body?.cdks || req.body?.codes || '');
+    const cdks = [...new Set(rawCodes
+        .split(/[\s,，;；]+/)
+        .map((code) => code.trim())
+        .filter(Boolean))];
+    if (!cdks.length) {
+        return res.status(400).json({ success: false, message: '请输入要查询的卡密，每行一个' });
+    }
+    if (cdks.length > 100) {
+        return res.status(400).json({ success: false, message: '一次最多查询 100 个卡密' });
+    }
+
+    try {
+        await ensureStoreReady();
+        const results = await Promise.all(cdks.map((cdk) => queryCdkStatus(cdk)));
+        const summary = results.reduce((counts, item) => {
+            const key = item.status === '未找到' ? 'notFound' : item.status === '未使用' ? 'unused' : item.status === '开通中' ? 'processing' : 'used';
+            counts[key] += 1;
+            return counts;
+        }, { total: results.length, unused: 0, processing: 0, used: 0, notFound: 0 });
+        return res.json({ success: true, data: { summary, results } });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
     }
 });
 

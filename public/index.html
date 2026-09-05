@@ -112,12 +112,31 @@
             </div>
 
             <div id="querySection" style="display: none;">
-                <label class="field-label" for="queryInput">输入卡密查询状态</label>
-                <section class="input-group">
-                    <input type="text" id="queryInput" placeholder="请输入要查询的激活码" maxlength="32">
-                    <button id="queryBtn" class="btn-primary"><span class="btn-text">查询状态</span>
-                        <div class="loader"></div>
-                    </button>
+                <div class="query-mode-nav" role="tablist" aria-label="卡密查询方式">
+                    <button type="button" class="query-mode-btn active" data-query-mode="single" role="tab">单个查询</button>
+                    <button type="button" class="query-mode-btn" data-query-mode="batch" role="tab">批量查询</button>
+                </div>
+                <section id="singleQueryPanel">
+                    <label class="field-label" for="queryInput">输入卡密查询状态</label>
+                    <section class="input-group">
+                        <input type="text" id="queryInput" placeholder="请输入要查询的激活码" maxlength="32">
+                        <button id="queryBtn" class="btn-primary"><span class="btn-text">查询状态</span>
+                            <div class="loader"></div>
+                        </button>
+                    </section>
+                </section>
+                <section id="batchQueryPanel" style="display: none;">
+                    <label class="field-label" for="batchQueryInput">批量输入卡密</label>
+                    <textarea id="batchQueryInput" class="batch-query-input" rows="8"
+                        placeholder="每行输入一个卡密，也支持用空格、逗号或分号分隔\n最多查询 100 个"></textarea>
+                    <div class="batch-query-actions">
+                        <span id="batchQueryCount" class="field-hint">已输入 0 个</span>
+                        <button id="batchQueryBtn" type="button" class="btn-primary">
+                            <i data-lucide="search"></i><span class="btn-text">批量查询</span>
+                            <div class="loader"></div>
+                        </button>
+                    </div>
+                    <div id="batchQueryResults" class="batch-query-results" style="display: none;"></div>
                 </section>
             </div>
 
@@ -155,8 +174,15 @@
         const statusMsg = document.getElementById('statusMessage');
         const queryBtn = document.getElementById('queryBtn');
         const queryInput = document.getElementById('queryInput');
+        const batchQueryInput = document.getElementById('batchQueryInput');
+        const batchQueryBtn = document.getElementById('batchQueryBtn');
+        const batchQueryCount = document.getElementById('batchQueryCount');
+        const batchQueryResults = document.getElementById('batchQueryResults');
         const redeemSection = document.getElementById('redeemSection');
         const querySection = document.getElementById('querySection');
+        const singleQueryPanel = document.getElementById('singleQueryPanel');
+        const batchQueryPanel = document.getElementById('batchQueryPanel');
+        const queryModeButtons = Array.from(document.querySelectorAll('.query-mode-btn'));
         const backToStep1 = document.getElementById('backToStep1');
         const taskProgress = document.getElementById('taskProgress');
         const taskProgressBar = document.getElementById('taskProgressBar');
@@ -288,9 +314,94 @@
                     redeemSection.style.display = 'none';
                     querySection.style.display = 'block';
                     hideProgress();
+                    setQueryMode('single');
                 }
                 statusMsg.style.display = 'none';
             });
+        });
+
+        function parseBatchQueryCodes() {
+            return [...new Set(String(batchQueryInput?.value || '')
+                .split(/[\s,，;；]+/)
+                .map((code) => code.trim())
+                .filter(Boolean))];
+        }
+
+        function updateBatchQueryCount() {
+            const count = parseBatchQueryCodes().length;
+            if (batchQueryCount) {
+                batchQueryCount.textContent = `已输入 ${count} 个${count > 100 ? '，超过上限' : ''}`;
+                batchQueryCount.classList.toggle('batch-query-count-error', count > 100);
+            }
+        }
+
+        function setQueryMode(mode) {
+            const isBatch = mode === 'batch';
+            queryModeButtons.forEach((button) => {
+                const active = button.dataset.queryMode === mode;
+                button.classList.toggle('active', active);
+                button.setAttribute('aria-selected', active ? 'true' : 'false');
+            });
+            if (singleQueryPanel) singleQueryPanel.style.display = isBatch ? 'none' : 'block';
+            if (batchQueryPanel) batchQueryPanel.style.display = isBatch ? 'block' : 'none';
+            if (!isBatch && batchQueryResults) batchQueryResults.style.display = 'none';
+        }
+
+        queryModeButtons.forEach((button) => {
+            button.addEventListener('click', () => {
+                setQueryMode(button.dataset.queryMode || 'single');
+                statusMsg.style.display = 'none';
+            });
+        });
+
+        batchQueryInput?.addEventListener('input', updateBatchQueryCount);
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+            })[char]);
+        }
+
+        function getBatchStatusClass(status) {
+            if (status === '未使用') return 'unused';
+            if (status === '已使用' || status === '未找到') return 'used';
+            return 'processing';
+        }
+
+        function renderBatchQueryResults(data) {
+            const summary = data?.summary || {};
+            const results = Array.isArray(data?.results) ? data.results : [];
+            const summaryText = `共 ${summary.total || results.length} 个：未使用 ${summary.unused || 0}，开通中 ${summary.processing || 0}，已使用 ${summary.used || 0}，未找到 ${summary.notFound || 0}`;
+            batchQueryResults.innerHTML = `<div class="batch-query-summary">${summaryText}</div>${results.map((item) => `
+                <div class="batch-query-row">
+                    <code>${escapeHtml(item.cdk)}</code>
+                    <span class="status-${getBatchStatusClass(item.status)}">${escapeHtml(item.status)}</span>
+                    <span class="batch-query-plan">${escapeHtml(item.planLabel || item.type || '-')}</span>
+                    <span class="batch-query-time">${escapeHtml(item.usedAt || '')}</span>
+                </div>`).join('')}`;
+            batchQueryResults.style.display = 'block';
+        }
+
+        batchQueryBtn?.addEventListener('click', async () => {
+            const cdks = parseBatchQueryCodes();
+            if (!cdks.length) return showStatus('请输入要查询的卡密，每行一个', 'error');
+            if (cdks.length > 100) return showStatus('一次最多查询 100 个卡密', 'error');
+            toggleLoading(batchQueryBtn, true);
+            statusMsg.style.display = 'none';
+            try {
+                const response = await fetch('/api/cdk/query-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cdks })
+                });
+                const data = await response.json();
+                if (!data.success) return showStatus(data.message || '批量查询失败', 'error');
+                renderBatchQueryResults(data.data);
+            } catch (_) {
+                showStatus('网络请求失败', 'error');
+            } finally {
+                toggleLoading(batchQueryBtn, false);
+            }
         });
 
         queryBtn.addEventListener('click', async () => {
