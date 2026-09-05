@@ -423,6 +423,7 @@
                     const resultHtml = `
                         <div class="query-result-card">
                             <div class="query-row"><span>CDK 类型</span><strong>自助激活码</strong></div>
+                            <div class="query-row"><span>充值套餐</span><strong>${escapeHtml(data.data.planLabel || data.data.planType || '-')}</strong></div>
                             <div class="query-row"><span>当前状态</span><strong class="status-${statusClass}">${statusText}</strong></div>
                             ${data.data.accountEmail ? `<div class="query-row"><span>充值账号</span><strong>${escapeHtml(data.data.accountEmail)}</strong></div>` : ''}
                             ${isUsed ? `<div class="query-row"><span>使用时间</span><strong>${data.data.usedAt || '-'}</strong></div>` : ''}
