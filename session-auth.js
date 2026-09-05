@@ -703,6 +703,14 @@ function extractSessionPreview(raw) {
 }
 
 function extractEmailFromSession(raw) {
+    if (raw && typeof raw === 'object') {
+        return String(
+            raw.user?.email
+            || raw.profile?.email
+            || extractProfileFromToken(raw.accessToken || raw.access_token).email
+            || ''
+        ).trim();
+    }
     const resolved = resolveSessionInput(raw);
     if (!resolved) {
         return '';

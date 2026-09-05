@@ -2267,8 +2267,8 @@ function fireTelegramNotification(event, payload) {
     });
 }
 
-function notifyTaskOutcome({ event, email, cdk, jobKey, message }) {
-    fireTelegramNotification(event, { email, cdk, jobKey, message });
+function notifyTaskOutcome({ event, email, planType, cdk, jobKey, message }) {
+    fireTelegramNotification(event, { email, planType, cdk, jobKey, message });
 }
 
 app.post('/api/admin/telegram', async (req, res) => {
@@ -3327,7 +3327,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
     let sessionPayload = session && typeof session === 'object'
         ? session
         : { access_token: token };
-    const accountEmail = extractEmailFromSession(sessionPayload) || task.tokenPreview || '';
+    const accountEmail = extractEmailFromSession(sessionPayload) || '';
     let shouldRollbackCdk = true;
     let reservedCard = null;
     let reservedOrbitcard = null;
@@ -3643,7 +3643,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 await store.recordCardUsage(reservedCard?.id);
                 await store.releaseCard(reservedCard?.id).catch(() => { });
             }
-            notifyTaskOutcome({ event: 'success', email: accountEmail, cdk, jobKey, message: finalMessage });
+            notifyTaskOutcome({ event: 'success', email: accountEmail, planType, cdk, jobKey, message: finalMessage });
         } else {
             if (reservedOrbitcard) {
                 await store.retireOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
@@ -3653,7 +3653,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             if (orbitcardRechargeRecorded) {
                 await store.updateOrbitcardRecharge(jobKey, { status: finalStatus, orderId, message: finalMessage });
             }
-            notifyTaskOutcome({ event: 'failure', email: accountEmail, cdk, jobKey, message: finalMessage });
+            notifyTaskOutcome({ event: 'failure', email: accountEmail, planType, cdk, jobKey, message: finalMessage });
         }
     } catch (error) {
         console.error(`[GPT API Task Error] ${jobKey}:`, error);
@@ -3680,7 +3680,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             cdkCode: cdk,
             progress: 0
         });
-        notifyTaskOutcome({ event: 'failure', email: accountEmail, cdk, jobKey, message: error.message });
+        notifyTaskOutcome({ event: 'failure', email: accountEmail, planType, cdk, jobKey, message: error.message });
     } finally {
         releaseForegroundSlot(jobKey);
         if (shouldRollbackCdk) {
@@ -3728,7 +3728,7 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
         const allOutputs = [];
         let shouldRollbackCdk = true;
         let lastProgress = 0;
-        const accountEmail = extractEmailFromSession(sessionRaw) || task.tokenPreview || '';
+        const accountEmail = extractEmailFromSession(sessionRaw) || '';
 
         try {
             for (let attempt = 1; attempt <= MAX_PROCESS_ATTEMPTS; attempt += 1) {
@@ -3876,6 +3876,7 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
                 notifyTaskOutcome({
                     event: 'success',
                     email: accountEmail,
+                    planType: cdkDetails.plan_type || 'plus',
                     cdk,
                     jobKey: task.jobKey,
                     message: normalizedAnalysis?.message || '激活成功'
@@ -3884,6 +3885,7 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
                 notifyTaskOutcome({
                     event: 'card_pool_empty',
                     email: accountEmail,
+                    planType: cdkDetails.plan_type || 'plus',
                     cdk,
                     jobKey: task.jobKey,
                     message: normalizedAnalysis?.message || '卡池资产枯竭'
@@ -3892,6 +3894,7 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
                 notifyTaskOutcome({
                     event: 'failure',
                     email: accountEmail,
+                    planType: cdkDetails.plan_type || 'plus',
                     cdk,
                     jobKey: task.jobKey,
                     message: normalizedAnalysis?.message || '激活失败'
@@ -3958,6 +3961,7 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
             notifyTaskOutcome({
                 event: 'failure',
                 email: accountEmail,
+                planType: cdkDetails.plan_type || 'plus',
                 cdk,
                 jobKey: task.jobKey,
                 message: bgError.message
@@ -4049,6 +4053,7 @@ async function handleActivationRequest(req, res) {
                 const poolEmail = extractEmailFromSession(rawSession);
                 fireTelegramNotification('card_pool_empty', {
                     email: poolEmail,
+                    planType: cdkDetails.plan_type || 'plus',
                     cdk,
                     message: '银行卡池暂无可用卡片，任务未启动'
                 });

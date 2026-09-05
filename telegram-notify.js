@@ -12,6 +12,12 @@ const EVENT_LABELS = {
     admin_secondary_success: '🔒 敏感模块已解锁'
 };
 
+const PLAN_LABELS = Object.freeze({
+    plus: 'ChatGPT Plus',
+    pro_5x: 'ChatGPT Pro 5x',
+    pro_20x: 'ChatGPT Pro 20x'
+});
+
 function escapeHtml(text) {
     return String(text || '')
         .replace(/&/g, '&amp;')
@@ -19,12 +25,17 @@ function escapeHtml(text) {
         .replace(/>/g, '&gt;');
 }
 
-function formatTelegramMessage(event, { email, cdk, jobKey, message, ip, fingerprint, userAgent, method }) {
+function formatTelegramMessage(event, { email, planType, planLabel, cdk, jobKey, message, ip, fingerprint, userAgent, method }) {
     const title = EVENT_LABELS[event] || '📢 系统通知';
     const lines = [title, ''];
+    const isTaskEvent = ['success', 'failure', 'card_pool_empty'].includes(event);
 
-    if (email) {
-        lines.push(`账号: ${escapeHtml(email)}`);
+    if (isTaskEvent || email) {
+        lines.push(`账号: ${escapeHtml(email || '未识别')}`);
+    }
+    if (isTaskEvent || planType || planLabel) {
+        const label = String(planLabel || PLAN_LABELS[String(planType || '').trim()] || planType || '未识别').trim();
+        lines.push(`套餐: ${escapeHtml(label)}`);
     }
     if (ip) {
         lines.push(`IP: ${escapeHtml(ip)}`);
@@ -179,6 +190,7 @@ async function sendTelegramTest(store, payload = {}) {
 
     const text = formatTelegramMessage('success', {
         email: payload.email || 'test@example.com',
+        planType: payload.planType || 'plus',
         cdk: payload.cdk || 'TEST-CDK-DEMO',
         jobKey: payload.jobKey || 'test-job',
         message: '这是一条 Telegram 通知测试消息'
