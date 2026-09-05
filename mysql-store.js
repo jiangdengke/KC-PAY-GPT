@@ -2722,6 +2722,18 @@ async function getRunningTaskByCdk(cdk) {
     return rows[0] || null;
 }
 
+async function getLatestTaskByCdk(cdk) {
+    const rows = await runQuery(
+        `SELECT job_key, token_preview, session_payload, status, created_at
+         FROM task_logs
+         WHERE cdk_code = ?
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`,
+        [String(cdk)]
+    );
+    return rows[0] || null;
+}
+
 async function deleteTaskLogByJobKey(jobKey) {
     const key = String(jobKey || '').trim();
     if (!key) {
@@ -3913,6 +3925,7 @@ module.exports = {
     getBillingOverviewStats,
     getTaskStatus,
     getRunningTaskByCdk,
+    getLatestTaskByCdk,
     updateTaskLog,
     listRecentGptApiOrders,
     listProducts,

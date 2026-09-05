@@ -377,6 +377,7 @@
                     <code>${escapeHtml(item.cdk)}</code>
                     <span class="status-${getBatchStatusClass(item.status)}">${escapeHtml(item.status)}</span>
                     <span class="batch-query-plan">${escapeHtml(item.planLabel || item.type || '-')}</span>
+                    <span class="batch-query-account">${escapeHtml(item.accountEmail || '-')}</span>
                     <span class="batch-query-time">${escapeHtml(item.usedAt || '')}</span>
                 </div>`).join('')}`;
             batchQueryResults.style.display = 'block';
@@ -423,6 +424,7 @@
                         <div class="query-result-card">
                             <div class="query-row"><span>CDK 类型</span><strong>自助激活码</strong></div>
                             <div class="query-row"><span>当前状态</span><strong class="status-${statusClass}">${statusText}</strong></div>
+                            ${data.data.accountEmail ? `<div class="query-row"><span>充值账号</span><strong>${escapeHtml(data.data.accountEmail)}</strong></div>` : ''}
                             ${isUsed ? `<div class="query-row"><span>使用时间</span><strong>${data.data.usedAt || '-'}</strong></div>` : ''}
                         </div>
                     `;

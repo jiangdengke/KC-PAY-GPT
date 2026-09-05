@@ -4169,14 +4169,29 @@ app.post('/api/verify-cdk', async (req, res) => {
 async function queryCdkStatus(cdk) {
     const cdkData = await store.verifyCdkDetails(cdk);
     if (!cdkData) {
-        return { cdk, status: '未找到', type: null, planType: null, planLabel: null, createdAt: null, jobKey: null, usedAt: null };
+        return {
+            cdk,
+            status: '未找到',
+            type: null,
+            planType: null,
+            planLabel: null,
+            createdAt: null,
+            jobKey: null,
+            usedAt: null,
+            accountEmail: null
+        };
     }
 
     const runningTask = await store.getRunningTaskByCdk(cdk);
+    const latestTask = await store.getLatestTaskByCdk(cdk);
     const status = runningTask
         ? '开通中'
         : (cdkData.used_at ? '已使用' : '未使用');
     const planType = cdkData.plan_type || 'plus';
+    const accountEmail = extractEmailFromSession(latestTask?.session_payload)
+        || (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(latestTask?.token_preview || '').trim())
+            ? String(latestTask.token_preview).trim()
+            : null);
     return {
         cdk,
         status,
@@ -4187,7 +4202,8 @@ async function queryCdkStatus(cdk) {
         jobKey: runningTask?.job_key || null,
         usedAt: cdkData.used_at
             ? new Date(cdkData.used_at).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
-            : null
+            : null,
+        accountEmail
     };
 }
 

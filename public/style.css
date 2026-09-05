@@ -660,7 +660,7 @@ button::after {
 
 .batch-query-row {
     display: grid;
-    grid-template-columns: minmax(150px, 1.5fr) minmax(58px, .6fr) minmax(100px, 1fr) minmax(130px, 1fr);
+    grid-template-columns: minmax(150px, 1.35fr) minmax(58px, .6fr) minmax(100px, 1fr) minmax(170px, 1.35fr) minmax(130px, 1fr);
     gap: 12px;
     align-items: center;
     padding: 11px 14px;
@@ -679,6 +679,7 @@ button::after {
 }
 
 .batch-query-plan,
+.batch-query-account,
 .batch-query-time {
     color: var(--text-dim);
 }
