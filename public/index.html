@@ -537,6 +537,7 @@
                         step1.style.display = 'none';
                         step2.style.display = 'block';
                         initWebSocket(data.data.jobKey);
+                        startTaskStatusPolling(data.data.jobKey);
                         return;
                     }
 
@@ -580,8 +581,41 @@
         let socketHeartbeatTimeout = null;
         let activeJobKey = '';
         let taskCompleted = false;
+        let taskStatusPollTimer = null;
         const WS_HEARTBEAT_INTERVAL_MS = 15000;
         const WS_HEARTBEAT_TIMEOUT_MS = 45000;
+
+        function clearTaskStatusPolling() {
+            clearTimeout(taskStatusPollTimer);
+            taskStatusPollTimer = null;
+        }
+
+        async function pollTaskStatus(jobKey) {
+            if (!jobKey || taskCompleted || activeJobKey !== jobKey) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/task-status/${encodeURIComponent(jobKey)}`, {
+                    cache: 'no-store'
+                });
+                const data = await response.json();
+                if (data.success && data.data && activeJobKey === jobKey) {
+                    applyTaskState({ ...data.data, type: 'snapshot' });
+                }
+            } catch (_) {
+                // WebSocket remains the primary channel; retry polling on transient errors.
+            } finally {
+                if (activeJobKey === jobKey && !taskCompleted) {
+                    taskStatusPollTimer = setTimeout(() => pollTaskStatus(jobKey), 5000);
+                }
+            }
+        }
+
+        function startTaskStatusPolling(jobKey) {
+            clearTaskStatusPolling();
+            if (jobKey) pollTaskStatus(jobKey);
+        }
 
         function clearSocketHeartbeat() {
             clearInterval(socketHeartbeatInterval);
@@ -628,6 +662,7 @@
 
         function resetRedeemFlow(options = {}) {
             const preserveStatus = Boolean(options.preserveStatus);
+            clearTaskStatusPolling();
             closeTaskSocket();
             taskCompleted = false;
             setActivationLock(false);
@@ -667,6 +702,7 @@
 
             if (status === 'success') {
                 taskCompleted = true;
+                clearTaskStatusPolling();
                 closeTaskSocket();
                 setActivationLock(false);
                 setProgress(100, message || '激活成功', 'success', { force: true });
@@ -680,6 +716,7 @@
 
             if (status === 'failed' || status === 'maintenance' || status === 'manual') {
                 taskCompleted = true;
+                clearTaskStatusPolling();
                 closeTaskSocket();
                 setActivationLock(false);
                 const failPct = Number.isFinite(progress) && progress > 0 ? progress : Math.max(taskProgressValue, 1);
@@ -800,6 +837,7 @@
                     setProgress(8, '任务已启动，正在开通中...');
                     showStatus('任务已启动，正在为您开通中...', 'success');
                     initWebSocket(data.jobKey);
+                    startTaskStatusPolling(data.jobKey);
                 } else {
                     hideProgress();
                     updateFlowUI(2, 'failed');

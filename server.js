@@ -4254,6 +4254,36 @@ app.post('/api/cdk/query-batch', async (req, res) => {
     }
 });
 
+app.get('/api/task-status/:jobKey', async (req, res) => {
+    const jobKey = String(req.params.jobKey || '').trim();
+    if (!jobKey || jobKey.length > 128) {
+        return res.status(400).json({ success: false, message: '缺少有效任务编号' });
+    }
+
+    try {
+        await ensureStoreReady();
+        const task = await store.getTaskStatus(jobKey);
+        if (!task) {
+            return res.status(404).json({ success: false, message: '未找到该任务' });
+        }
+        return res.json({
+            success: true,
+            data: {
+                jobKey,
+                status: task.status,
+                message: task.message || '',
+                progress: Number(task.progress || 0),
+                cdkCode: task.cdk_code || null,
+                phone: task.phone || null,
+                cardLast4: task.card_last4 || null,
+                isTerminal: TERMINAL_TASK_STATUSES.has(task.status)
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 app.get('/api/cdk/download', async (req, res) => {
     return res.status(410).send('成品号下载功能已移除，仅支持自助开通');
 });
