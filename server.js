@@ -11,7 +11,7 @@ const runtimeLog = require('./runtime-log');
 const { REGION_CONFIG, isSupportedRegion, getPlanTypeLabel } = require('./region-config');
 const taxFreeAddress = require('./tax-free-address');
 const { testProxyUrl, normalizeProxyLines } = require('./proxy-pool');
-const { extractSessionPreview, extractAccessTokenFromRaw, parseSessionJson, extractEmailFromSession } = require('./session-auth');
+const { extractSessionPreview, extractAccessTokenFromRaw, parseSessionJson, extractEmailFromSession, extractAccountIdFromSession } = require('./session-auth');
 const { notifyTelegramEvent, notifyAdminSecurityEvent, sendTelegramLoginCode, sendTelegramTest, isCardPoolExhaustedIssue } = require('./telegram-notify');
 const adminAuth = require('./admin-auth');
 const { buildAdminLoginUrl, buildAdminPanelUrl } = require('./admin-paths');
@@ -29,7 +29,8 @@ const PORT = Number(process.env.PORT || 3000);
 const ADMIN_TOKEN_TTL_MS = adminAuth.ADMIN_TOKEN_TTL_MS;
 const ADMIN_REFRESH_AFTER_MS = adminAuth.ADMIN_REFRESH_AFTER_MS;
 const PROCESS_IDLE_TIMEOUT_MS = Number(process.env.PROCESS_IDLE_TIMEOUT_MS) || (3 * 60 * 1000);
-const MAX_PROCESS_ATTEMPTS = Number(process.env.MAX_PROCESS_ATTEMPTS) || 1;
+// 失败任务转人工审核；不在后台自动重试，以免重复开卡和重复扣费。
+const MAX_PROCESS_ATTEMPTS = 1;
 const WS_HEARTBEAT_PING_TYPE = 'ping';
 const WS_HEARTBEAT_PONG_TYPE = 'pong';
 const ACCESS_DEACTIVATED_MESSAGES_URL = '';
@@ -54,7 +55,7 @@ function cleanupProcesses() {
 
 // WebSocket 客户端映射: jobKey -> Set<WebSocket>
 const taskClients = new Map();
-const TERMINAL_TASK_STATUSES = new Set(['success', 'failed', 'maintenance']);
+const TERMINAL_TASK_STATUSES = new Set(['success', 'failed', 'manual', 'maintenance']);
 const activeForegroundJobs = new Set();
 
 let systemMetricsCache = {
@@ -77,6 +78,20 @@ function getTotalActiveJobs() {
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getActivationAccountKey(rawSession, token = '') {
+    const accountId = extractAccountIdFromSession(rawSession) || extractAccountIdFromSession(token);
+    if (accountId) {
+        return `account:${accountId}`;
+    }
+    const email = extractEmailFromSession(rawSession).toLowerCase();
+    return email ? `email:${email}` : '';
+}
+
+function getManualReviewMessage(message) {
+    const base = String(message || '开通失败').trim() || '开通失败';
+    return base.includes('人工确认') ? base : `${base}；已转人工确认，请联系客服处理后再试`;
 }
 
 async function getSystemMetrics() {
@@ -1926,6 +1941,46 @@ app.get('/api/admin/task-logs', async (req, res) => {
     }
 });
 
+app.get('/api/admin/activation-manual-holds', async (req, res) => {
+    try {
+        await ensureStoreReady();
+        const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
+        const holds = await store.listActivationManualHolds(limit);
+        res.json({
+            success: true,
+            holds: holds.map((hold) => ({
+                id: Number(hold.id),
+                accountEmail: hold.account_email || '',
+                planType: hold.plan_type || 'plus',
+                failedJobKey: hold.failed_job_key || '',
+                cdkCode: hold.cdk_code || '',
+                reason: hold.reason || '',
+                createdAt: hold.created_at,
+                updatedAt: hold.updated_at
+            }))
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/admin/activation-manual-holds/:id/resolve', async (req, res) => {
+    try {
+        await ensureStoreReady();
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) {
+            return res.status(400).json({ success: false, message: '人工审核记录编号无效' });
+        }
+        const resolved = await store.resolveActivationManualHold(id, req.admin?.email || 'admin');
+        if (!resolved) {
+            return res.status(404).json({ success: false, message: '记录不存在或已解除' });
+        }
+        return res.json({ success: true, message: '人工审核已解除，该账号可重新提交' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 app.get('/api/admin/data', async (req, res) => {
     try {
         await ensureStoreReady();
@@ -3328,6 +3383,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         ? session
         : { access_token: token };
     const accountEmail = extractEmailFromSession(sessionPayload) || '';
+    const accountKey = getActivationAccountKey(sessionPayload, token);
     let shouldRollbackCdk = true;
     let reservedCard = null;
     let reservedOrbitcard = null;
@@ -3595,6 +3651,17 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                         ? '第三方代充开通成功，但自动续订取消状态未确认，请到目标账户账单页核对'
                         : '第三方代充开通成功')
                     : `第三方代充失败: ${failureDetail}`;
+                if (!succeeded) {
+                    finalMessage = getManualReviewMessage(finalMessage);
+                    await store.createActivationManualHold({
+                        accountKey,
+                        accountEmail,
+                        planType,
+                        failedJobKey: jobKey,
+                        cdkCode: cdk,
+                        reason: finalMessage
+                    });
+                }
                 await setProgress(
                     finalStatus,
                     succeeded ? 100 : 99,
@@ -3619,6 +3686,15 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         if (finalStatus === 'running') {
             finalStatus = 'failed';
             finalMessage = '第三方代充超时未完成，请稍后在第三方平台查询订单状态';
+            finalMessage = getManualReviewMessage(finalMessage);
+            await store.createActivationManualHold({
+                accountKey,
+                accountEmail,
+                planType,
+                failedJobKey: jobKey,
+                cdkCode: cdk,
+                reason: finalMessage
+            });
             await setProgress(finalStatus, 99, finalMessage, {
                 gptApiRaw: JSON.stringify(sanitizeGptApiRaw(lastRaw, openProtocol)),
                 gptApiTopupCode: gptApi.extractTopupCode(lastRaw)
@@ -3645,6 +3721,18 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             }
             notifyTaskOutcome({ event: 'success', email: accountEmail, planType, cdk, jobKey, message: finalMessage });
         } else {
+            const reviewMessage = getManualReviewMessage(finalMessage);
+            if (reviewMessage !== finalMessage) {
+                finalMessage = reviewMessage;
+            }
+            await store.createActivationManualHold({
+                accountKey,
+                accountEmail,
+                planType,
+                failedJobKey: jobKey,
+                cdkCode: cdk,
+                reason: finalMessage
+            });
             if (reservedOrbitcard) {
                 await store.retireOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
             } else {
@@ -3657,6 +3745,17 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         }
     } catch (error) {
         console.error(`[GPT API Task Error] ${jobKey}:`, error);
+        const manualReviewMessage = getManualReviewMessage(error.message);
+        await store.createActivationManualHold({
+            accountKey,
+            accountEmail,
+            planType,
+            failedJobKey: jobKey,
+            cdkCode: cdk,
+            reason: manualReviewMessage
+        }).catch((holdError) => {
+            console.warn(`[GPT API Task] 人工审核记录写入失败: ${holdError.message}`);
+        });
         logTask(jobKey, `第三方代充任务异常: ${error.message}`, 'error');
         if (reservedOrbitcard) {
             await store.retireOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
@@ -3668,7 +3767,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         }
         await store.updateTaskLog(jobKey, {
             status: 'failed',
-            message: error.message,
+            message: manualReviewMessage,
             progress: 0,
             cdkCode: cdk
         });
@@ -3676,11 +3775,11 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             type: 'status',
             jobKey,
             status: 'failed',
-            message: error.message,
+            message: manualReviewMessage,
             cdkCode: cdk,
             progress: 0
         });
-        notifyTaskOutcome({ event: 'failure', email: accountEmail, planType, cdk, jobKey, message: error.message });
+        notifyTaskOutcome({ event: 'failure', email: accountEmail, planType, cdk, jobKey, message: manualReviewMessage });
     } finally {
         releaseForegroundSlot(jobKey);
         if (shouldRollbackCdk) {
@@ -3729,6 +3828,8 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
         let shouldRollbackCdk = true;
         let lastProgress = 0;
         const accountEmail = extractEmailFromSession(sessionRaw) || '';
+        const accountKey = getActivationAccountKey(sessionRaw, token);
+        const planType = cdkDetails.plan_type || 'plus';
 
         try {
             for (let attempt = 1; attempt <= MAX_PROCESS_ATTEMPTS; attempt += 1) {
@@ -3838,13 +3939,27 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
                 ? { ...finalRun.analysis, status: 'failed', message: String(finalRun.analysis.message || '激活失败').replace('，准备重试', '') }
                 : finalRun?.analysis;
             const finalStatus = normalizedAnalysis?.status || 'failed';
+            const finalMessage = finalStatus === 'success'
+                ? (normalizedAnalysis?.message || '激活成功')
+                : getManualReviewMessage(normalizedAnalysis?.message || '激活失败');
+
+            if (finalStatus !== 'success') {
+                await store.createActivationManualHold({
+                    accountKey,
+                    accountEmail,
+                    planType,
+                    failedJobKey: task.jobKey,
+                    cdkCode: cdk,
+                    reason: finalMessage
+                });
+            }
 
             const finalProgress = normalizeTaskProgress(finalStatus === 'success' ? 100 : lastProgress, finalStatus, lastProgress);
             const taskMedia = extractTaskMediaFromOutput(rawOutput);
             const failureScreenshots = [...taskMedia.screenshots, ...taskMedia.videos];
             await store.updateTaskLog(task.jobKey, {
                 status: finalStatus,
-                message: normalizedAnalysis?.message || null,
+                message: finalMessage,
                 rawOutput,
                 cdkCode: cdk,
                 progress: finalProgress,
@@ -3855,7 +3970,7 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
                 type: 'status',
                 jobKey: task.jobKey,
                 status: finalStatus,
-                message: normalizedAnalysis?.message,
+                message: finalMessage,
                 cdkCode: cdk,
                 progress: finalProgress,
                 screenshots: taskMedia.screenshots,
@@ -3876,28 +3991,28 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
                 notifyTaskOutcome({
                     event: 'success',
                     email: accountEmail,
-                    planType: cdkDetails.plan_type || 'plus',
+                    planType,
                     cdk,
                     jobKey: task.jobKey,
-                    message: normalizedAnalysis?.message || '激活成功'
+                    message: finalMessage
                 });
             } else if (isCardPoolExhaustedIssue(rawOutput, normalizedAnalysis)) {
                 notifyTaskOutcome({
                     event: 'card_pool_empty',
                     email: accountEmail,
-                    planType: cdkDetails.plan_type || 'plus',
+                    planType,
                     cdk,
                     jobKey: task.jobKey,
-                    message: normalizedAnalysis?.message || '卡池资产枯竭'
+                    message: finalMessage
                 });
             } else if (finalStatus === 'failed' || finalStatus === 'manual') {
                 notifyTaskOutcome({
                     event: 'failure',
                     email: accountEmail,
-                    planType: cdkDetails.plan_type || 'plus',
+                    planType,
                     cdk,
                     jobKey: task.jobKey,
-                    message: normalizedAnalysis?.message || '激活失败'
+                    message: finalMessage
                 });
             }
 
@@ -3945,7 +4060,7 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
             logTask(task.jobKey, `后台任务异常: ${bgError.message}`, 'error');
             await store.updateTaskLog(task.jobKey, {
                 status: 'failed',
-                message: bgError.message,
+                message: getManualReviewMessage(bgError.message),
                 rawOutput: bgError.message,
                 cdkCode: cdk,
                 progress: normalizeTaskProgress(lastProgress, 'failed', lastProgress)
@@ -3954,17 +4069,27 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
                 type: 'status',
                 jobKey: task.jobKey,
                 status: 'failed',
-                message: bgError.message,
+                message: getManualReviewMessage(bgError.message),
                 cdkCode: cdk,
                 progress: normalizeTaskProgress(lastProgress, 'failed', lastProgress)
             });
             notifyTaskOutcome({
                 event: 'failure',
                 email: accountEmail,
-                planType: cdkDetails.plan_type || 'plus',
+                planType,
                 cdk,
                 jobKey: task.jobKey,
-                message: bgError.message
+                message: getManualReviewMessage(bgError.message)
+            });
+            await store.createActivationManualHold({
+                accountKey,
+                accountEmail,
+                planType,
+                failedJobKey: task.jobKey,
+                cdkCode: cdk,
+                reason: getManualReviewMessage(bgError.message)
+            }).catch((holdError) => {
+                console.warn(`[Background Task] 人工审核记录写入失败: ${holdError.message}`);
             });
             if (shouldRollbackCdk) {
                 await store.markCdkUnused(cdk);
@@ -4022,6 +4147,20 @@ async function handleActivationRequest(req, res) {
         }
         if (!cdkDetails || cdkDetails.used_at || cdkDetails.type !== '自助') {
             return res.status(403).json({ success: false, message: 'CDK 无效、已使用或非自助激活码' });
+        }
+
+        const planType = cdkDetails.plan_type || 'plus';
+        const accountKey = getActivationAccountKey(rawSession, token);
+        const manualHold = accountKey
+            ? await store.getActivationManualHold(accountKey, planType)
+            : null;
+        if (manualHold) {
+            return res.status(409).json({
+                success: false,
+                code: 'manual_review_required',
+                manualReview: true,
+                message: `该账号的 ${getPlanTypeLabel(planType)} 上一次开通失败，已转人工确认，请联系客服处理后再试`
+            });
         }
 
         const cdkCooldownMinutes = getRemainingCooldownMinutes(cdkDetails.cooldown_until);

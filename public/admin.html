@@ -3082,6 +3082,34 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 </div>
                 <div id="log_pagination" class="table-footer"></div>
             </div>
+            <div class="panel" style="margin-top: 18px;">
+                <div class="runtime-log-toolbar log-page-toolbar">
+                    <div>
+                        <h2 style="margin:0 0 4px;">待人工确认</h2>
+                        <span class="log-page-toolbar-hint">失败后同账号同套餐会被锁定，不会再次开卡；确认处理后在这里解除。</span>
+                    </div>
+                    <button type="button" class="btn btn-secondary" onclick="loadActivationManualHolds(true)">
+                        <i data-lucide="refresh-cw"></i>
+                        刷新
+                    </button>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>账号</th>
+                                <th>套餐</th>
+                                <th>失败任务</th>
+                                <th>激活码</th>
+                                <th>失败原因</th>
+                                <th>时间</th>
+                                <th width="100px" style="text-align:center">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="activation_manual_hold_body"></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <div id="automation_tasks" class="page-view">
@@ -5217,6 +5245,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 window.__adminLogs = data.logs || [];
                 renderLogTable(window.__adminLogs);
                 renderAutomationTable(window.__adminLogs);
+                loadActivationManualHolds(false).catch(() => { });
 
                 try {
                     await loadCdkList();
@@ -6458,6 +6487,69 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
         }
 
         // ============ End Card Pool Management ============
+
+        let activationManualHolds = [];
+
+        function formatManualHoldPlan(planType) {
+            return { plus: 'Plus', pro_5x: 'Pro 5x', pro_20x: 'Pro 20x' }[String(planType || '')] || String(planType || '-');
+        }
+
+        function renderActivationManualHolds() {
+            const tbody = document.getElementById('activation_manual_hold_body');
+            if (!tbody) return;
+            if (!activationManualHolds.length) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-dim); padding:28px 0;">暂无待人工确认记录</td></tr>';
+                return;
+            }
+            tbody.innerHTML = activationManualHolds.map((hold) => `
+                <tr>
+                    <td>${escapeHtml(hold.accountEmail || '账号未返回')}</td>
+                    <td>${escapeHtml(formatManualHoldPlan(hold.planType))}</td>
+                    <td><code title="${escapeHtml(hold.failedJobKey || '')}">${escapeHtml(shortenJobKey(hold.failedJobKey || '-'))}</code></td>
+                    <td><code>${escapeHtml(hold.cdkCode || '-')}</code></td>
+                    <td style="max-width:320px; white-space:normal;">${escapeHtml(hold.reason || '-')}</td>
+                    <td>${escapeHtml(formatTimeShort(hold.createdAt))}</td>
+                    <td style="text-align:center;"><button type="button" class="btn btn-success" style="padding:5px 9px; font-size:12px;" onclick="resolveActivationManualHold(${Number(hold.id)})">解除</button></td>
+                </tr>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        async function loadActivationManualHolds(showToast = false) {
+            const tbody = document.getElementById('activation_manual_hold_body');
+            if (!tbody) return;
+            try {
+                const res = await authFetch('/api/admin/activation-manual-holds?limit=200');
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || '加载人工审核记录失败');
+                activationManualHolds = Array.isArray(data.holds) ? data.holds : [];
+                renderActivationManualHolds();
+                if (showToast) showMessage('人工审核记录已刷新', 'success');
+            } catch (error) {
+                if (!activationManualHolds.length) {
+                    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--error); padding:28px 0;">${escapeHtml(error.message || '加载失败')}</td></tr>`;
+                }
+                if (showToast) showMessage(error.message || '加载人工审核记录失败', 'error');
+            }
+            lucide.createIcons();
+        }
+
+        async function resolveActivationManualHold(id) {
+            const hold = activationManualHolds.find((item) => Number(item.id) === Number(id));
+            const account = hold?.accountEmail || '该账号';
+            const plan = formatManualHoldPlan(hold?.planType);
+            const ok = await showAdminConfirm(`确认已处理 ${account} 的 ${plan} 失败任务，并允许重新提交吗？`, '解除人工审核');
+            if (!ok) return;
+            try {
+                const res = await authFetch(`/api/admin/activation-manual-holds/${encodeURIComponent(id)}/resolve`, { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || '解除失败');
+                showMessage(data.message || '人工审核已解除', 'success');
+                await loadActivationManualHolds(false);
+            } catch (error) {
+                showMessage(error.message || '解除人工审核失败', 'error');
+            }
+        }
 
         function renderLogTable(logs) {
             const tbody = document.getElementById('log_body');

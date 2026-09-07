@@ -723,6 +723,32 @@ function extractEmailFromSession(raw) {
     ).trim();
 }
 
+function extractAccountIdFromSession(raw) {
+    if (raw && typeof raw === 'object') {
+        return String(
+            raw.account?.id
+            || raw.account?.account_id
+            || raw.account_id
+            || raw.user?.account_id
+            || raw.user?.id
+            || extractProfileFromToken(raw.accessToken || raw.access_token).accountId
+            || ''
+        ).trim();
+    }
+    const resolved = resolveSessionInput(raw);
+    if (!resolved) {
+        return '';
+    }
+    return String(
+        resolved.sessionData?.account?.id
+        || resolved.sessionData?.account?.account_id
+        || resolved.sessionJson?.account?.id
+        || resolved.sessionJson?.account?.account_id
+        || extractProfileFromToken(resolved.accessToken).accountId
+        || ''
+    ).trim();
+}
+
 module.exports = {
     CHATGPT_ORIGIN,
     installChatGptSession,
@@ -735,6 +761,7 @@ module.exports = {
     extractProfileFromToken,
     extractSessionPreview,
     extractEmailFromSession,
+    extractAccountIdFromSession,
     buildSessionPayload,
     isLoginRedirectUrl,
     isHardLoginRedirectUrl,

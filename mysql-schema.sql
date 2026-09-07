@@ -109,6 +109,22 @@ CREATE TABLE IF NOT EXISTS activation_attempt_limits (
     KEY idx_activation_attempt_cooldown (cooldown_until)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS activation_manual_holds (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    account_key VARCHAR(255) NOT NULL,
+    account_email VARCHAR(255) NOT NULL DEFAULT '',
+    plan_type VARCHAR(16) NOT NULL DEFAULT 'plus',
+    failed_job_key VARCHAR(64) NULL DEFAULT NULL,
+    cdk_code VARCHAR(32) NULL DEFAULT NULL,
+    reason VARCHAR(512) NOT NULL DEFAULT '',
+    resolved_at TIMESTAMP NULL DEFAULT NULL,
+    resolved_by VARCHAR(128) NULL DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_activation_manual_hold_lookup (account_key, plan_type, resolved_at),
+    KEY idx_activation_manual_hold_status (resolved_at, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS product_assets (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     email VARCHAR(255) NOT NULL,

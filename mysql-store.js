@@ -312,6 +312,26 @@ async function ensureOrbitcardUsageTable() {
     await ensureColumn('orbitcard_card_recharges', 'card_last4', "VARCHAR(4) NOT NULL DEFAULT ''");
 }
 
+async function ensureActivationManualHoldTable() {
+    await runQuery(`
+        CREATE TABLE IF NOT EXISTS activation_manual_holds (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            account_key VARCHAR(255) NOT NULL,
+            account_email VARCHAR(255) NOT NULL DEFAULT '',
+            plan_type VARCHAR(16) NOT NULL DEFAULT 'plus',
+            failed_job_key VARCHAR(64) NULL DEFAULT NULL,
+            cdk_code VARCHAR(32) NULL DEFAULT NULL,
+            reason VARCHAR(512) NOT NULL DEFAULT '',
+            resolved_at TIMESTAMP NULL DEFAULT NULL,
+            resolved_by VARCHAR(128) NULL DEFAULT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            KEY idx_activation_manual_hold_lookup (account_key, plan_type, resolved_at),
+            KEY idx_activation_manual_hold_status (resolved_at, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+}
+
 async function ensureGptApiConfigDefaults() {
     const defaults = [
         ['gpt_api_enabled', '0'],
@@ -564,6 +584,7 @@ async function ensureReady() {
     await ensureLegacyColumns();
     await ensureGptApiColumns();
     await ensureOrbitcardUsageTable();
+    await ensureActivationManualHoldTable();
     await initializeBaseData();
     await ensureAdminSecurityDefaults();
     await ensureHcaptchaConfigDefaults();
@@ -1423,6 +1444,72 @@ async function resetActivationAttemptFailure(scopeType, scopeKey) {
            AND scope_key = ?`,
         [String(scopeType), String(scopeKey)]
     );
+}
+
+async function getActivationManualHold(accountKey, planType) {
+    const rows = await runQuery(
+        `SELECT id, account_key, account_email, plan_type, failed_job_key, cdk_code,
+                reason, created_at, updated_at
+         FROM activation_manual_holds
+         WHERE account_key = ?
+           AND plan_type = ?
+           AND resolved_at IS NULL
+         ORDER BY id DESC
+         LIMIT 1`,
+        [String(accountKey), String(planType || 'plus')]
+    );
+    return rows[0] || null;
+}
+
+async function createActivationManualHold({ accountKey, accountEmail, planType, failedJobKey, cdkCode, reason }) {
+    const key = String(accountKey || '').trim();
+    if (!key) {
+        return null;
+    }
+    const type = String(planType || 'plus').trim() || 'plus';
+    const existing = await getActivationManualHold(key, type);
+    if (existing) {
+        return existing;
+    }
+    await runExecute(
+        `INSERT INTO activation_manual_holds
+            (account_key, account_email, plan_type, failed_job_key, cdk_code, reason)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+            key,
+            String(accountEmail || '').trim(),
+            type,
+            String(failedJobKey || '').trim() || null,
+            String(cdkCode || '').trim() || null,
+            String(reason || '').trim().slice(0, 512)
+        ]
+    );
+    return getActivationManualHold(key, type);
+}
+
+async function listActivationManualHolds(limit = 200) {
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
+    return runQuery(
+        `SELECT id, account_key, account_email, plan_type, failed_job_key, cdk_code,
+                reason, created_at, updated_at
+         FROM activation_manual_holds
+         WHERE resolved_at IS NULL
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`,
+        [safeLimit]
+    );
+}
+
+async function resolveActivationManualHold(id, resolvedBy = '') {
+    const result = await runExecute(
+        `UPDATE activation_manual_holds
+         SET resolved_at = CURRENT_TIMESTAMP,
+             resolved_by = ?
+         WHERE id = ?
+           AND resolved_at IS NULL`,
+        [String(resolvedBy || '').trim().slice(0, 128) || 'admin', Number(id)]
+    );
+    return Number(result.affectedRows || 0) > 0;
 }
 
 async function markCdkUsed(cdk) {
@@ -3881,6 +3968,10 @@ module.exports = {
     getActivationAttemptLimit,
     recordActivationAttemptFailure,
     resetActivationAttemptFailure,
+    getActivationManualHold,
+    createActivationManualHold,
+    listActivationManualHolds,
+    resolveActivationManualHold,
     deletePhoneAsset,
     deleteCardAsset,
     bulkImportPoolEmails,
