@@ -147,6 +147,40 @@ function normalizeCdks(cdks) {
     return [...new Set((cdks || []).filter(Boolean).map((item) => String(item).trim()))];
 }
 
+function parseTaskTimestamp(value) {
+    if (value instanceof Date) {
+        return Number.isFinite(value.getTime()) ? value : null;
+    }
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    const legacy = raw.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (legacy) {
+        return new Date(Date.UTC(
+            Number(legacy[1]), Number(legacy[2]) - 1, Number(legacy[3]),
+            Number(legacy[4]), Number(legacy[5]), Number(legacy[6] || 0)
+        ));
+    }
+    const parsed = new Date(raw);
+    return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+function formatTaskDisplayTime(value, fallback = '') {
+    const date = parseTaskTimestamp(value) || parseTaskTimestamp(fallback);
+    if (!date) return String(fallback || '');
+    const parts = new Intl.DateTimeFormat('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23'
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}/${values.month}/${values.day} ${values.hour}:${values.minute}:${values.second}`;
+}
+
 async function initializeBaseData() {
     await runExecute(
         `INSERT INTO app_config (config_key, config_value)
@@ -865,7 +899,7 @@ function formatAdminTaskLogRow(row) {
     return {
         id: row.job_key,
         jobKey: row.job_key,
-        time: row.display_time,
+        time: formatTaskDisplayTime(row.created_at, row.display_time),
         token: row.token_preview,
         cdk: row.cdk_code || '',
         phone: row.phone,
@@ -881,7 +915,7 @@ function formatAdminTaskLogRow(row) {
 
 async function listAdminTaskLogs(limit = 200) {
     const rows = await runQuery(
-        `SELECT l.job_key, l.display_time, l.token_preview, l.cdk_code, l.phone, l.card_last4,
+        `SELECT l.job_key, l.display_time, l.created_at, l.token_preview, l.cdk_code, l.phone, l.card_last4,
                 l.status, l.message, l.progress, l.failure_screenshots, l.raw_output, c.type AS cdk_type
          FROM task_logs l
          LEFT JOIN cdk_codes c ON l.cdk_code = c.cdk_code
@@ -2760,7 +2794,7 @@ async function updateAdminPassword(password) {
 
 async function createTaskLog({ tokenPreview, sessionPayload, cdkCode, phone, cardLast4, status, progress = 0 }) {
     const now = new Date();
-    const displayTime = now.toLocaleString('zh-CN', { hour12: false });
+    const displayTime = formatTaskDisplayTime(now);
     const jobKey = `${now.getTime()}-${Math.random().toString(36).slice(2, 10)}`;
     const message = String(status) === 'running' ? '正在开通中' : null;
 
