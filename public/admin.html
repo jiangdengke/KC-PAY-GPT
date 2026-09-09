@@ -2823,7 +2823,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     </button>
                 </div>
                 <p id="orbitcard_usage_hint" style="font-size:13px; color:var(--text-dim); margin:0 0 12px;">
-                    开卡优先渠道 3 Mastercard（BIN 55565979），再依次使用 Visa（BIN 400242001、40041641）；Plus 卡最多使用 4 次；Pro 5x 和 Pro 20x 默认每张卡使用 1 次。点击“刷新记录”会向 Orbitcard 查询余额并保存最近结果；失败卡在确认未扣款后可手动恢复，达到使用上限的卡不能恢复。
+                    开卡优先渠道 3 Mastercard（BIN 55565979），再依次使用 Visa（BIN 400242001、40041641）；Plus 卡最多使用 4 次；Pro 5x 和 Pro 20x 默认每张卡使用 1 次。点击“刷新记录”会查询余额并对照 Orbitcard 卡列表；上游列表中缺失的卡会标记为“上游已删除”，失败卡在确认未扣款后可手动恢复。
                 </p>
                 <div class="table-container">
                     <table>
@@ -6295,11 +6295,11 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     </div>`).join('')
                     : '<span style="color:var(--text-dim);">暂无账号记录</span>';
                 const status = String(card.status || '').toUpperCase();
-                const statusLabel = status === 'RETIRED' ? '已退役' : (card.inUse ? '使用中' : '可复用');
-                const statusClass = status === 'RETIRED' ? 'status-failed' : (card.inUse ? 'status-warning' : 'status-success');
+                const statusLabel = status === 'PROVIDER_DELETED' ? '上游已删除' : (status === 'RETIRED' ? '已退役' : (card.inUse ? '使用中' : '可复用'));
+                const statusClass = ['PROVIDER_DELETED', 'RETIRED'].includes(status) ? 'status-failed' : (card.inUse ? 'status-warning' : 'status-success');
                 const balanceTitle = card.balanceUpdatedAt ? `最近查询：${formatTimeShort(card.balanceUpdatedAt)}` : '';
                 const balanceText = card.balance == null
-                    ? (card.balanceError ? `<span title="${escapeHtml(card.balanceError)}" style="color:var(--error);">${escapeHtml(card.balanceError === '上游未提供单卡余额' ? '上游未提供' : '查询失败')}</span>` : '<span style="color:var(--text-dim);">未查询</span>')
+                    ? (status === 'PROVIDER_DELETED' ? '<span style="color:var(--error);">上游已删除</span>' : (card.balanceError ? `<span title="${escapeHtml(card.balanceError)}" style="color:var(--error);">${escapeHtml(card.balanceError === '上游未提供单卡余额' ? '上游未返回' : '查询失败')}</span>` : '<span style="color:var(--text-dim);">未查询</span>'))
                     : `<span title="${escapeHtml(balanceTitle)}">${Number(card.balance).toFixed(2)} ${escapeHtml(card.balanceCurrency || 'USD')}</span>${card.balanceError ? `<br><small title="${escapeHtml(card.balanceError)}" style="color:var(--error);">${escapeHtml(card.balanceError === '上游未提供单卡余额' ? '上游未提供新余额' : '刷新失败')}</small>` : ''}`;
                 const canRestore = status === 'RETIRED' && !card.inUse && Number(card.usageCount || 0) < Number(card.maxUsageCount || 1);
                 return `<tr>

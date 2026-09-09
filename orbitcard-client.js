@@ -353,15 +353,17 @@ function extractCardCurrency(row = {}) {
     ).trim().toUpperCase();
 }
 
-async function getCardList(cfg, { pageSize = 100 } = {}) {
+async function getCardList(cfg, { pageSize = 100, status = 'ACTIVE' } = {}) {
     const safePageSize = Math.max(1, Math.min(Number(pageSize) || 100, 100));
+    const requestedStatus = String(status || '').trim().toUpperCase();
     const list = [];
     for (let page = 1; page <= 100; page += 1) {
-        const result = await request('/api/open/v1/getCardList', cfg, {
+        const body = {
             page,
-            page_size: safePageSize,
-            status: 'ACTIVE'
-        });
+            page_size: safePageSize
+        };
+        if (requestedStatus) body.status = requestedStatus;
+        const result = await request('/api/open/v1/getCardList', cfg, body);
         if (!result.success) return result;
         const data = result.data || {};
         const rows = Array.isArray(data)

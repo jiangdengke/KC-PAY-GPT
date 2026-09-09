@@ -45,6 +45,19 @@ describe('orbitcard client', () => {
         expect(detail.data).toMatchObject({ cardId: 42, cardNumber: '4242424242424242', cvc: '123', expiry: '12/30' });
     });
 
+    it('lists all undeleted cards when the status filter is omitted', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: { code: 0, msg: 'ok', data: { list: [{ card_id: 43, status: 'CANCELLED' }], total: 1 } }
+        });
+        const result = await orbitcard.getCardList(
+            { base_url: 'https://orbitcard.cc', api_key: 'k', api_secret: 's' },
+            { status: '' }
+        );
+        expect(result.data).toMatchObject([{ cardId: 43, status: 'CANCELLED' }]);
+        expect(JSON.parse(spy.mock.calls[0][0].data)).toEqual({ page: 1, page_size: 100 });
+    });
+
     it('selects an available product and calculates a one-time card amount per plan', () => {
         const selection = orbitcard.chooseProductForPlan({ list: [
             {

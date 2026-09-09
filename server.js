@@ -2861,7 +2861,23 @@ app.get('/api/admin/orbitcard/usage', requireSecondaryAuth, async (req, res) => 
                 api_key: cfg.orbitcard_api_key,
                 api_secret: cfg.orbitcard_api_secret
             };
+            const providerList = await orbitcard.getCardList(orbitCfg, { status: '' });
+            const providerCardIds = providerList.success
+                ? providerList.data.map((providerCard) => providerCard.cardId)
+                : [];
+            const providerCardIdSet = new Set(providerCardIds.map((cardId) => Number(cardId)));
+            if (providerList.success) {
+                await store.markMissingOrbitcardCards(providerCardIds);
+            }
             await Promise.all(cards.map(async (card) => {
+                if (providerList.success && !providerCardIdSet.has(Number(card.cardId))) {
+                    card.status = 'PROVIDER_DELETED';
+                    card.providerStatus = 'DELETED';
+                    card.balance = null;
+                    card.balanceCurrency = '';
+                    card.balanceError = '上游卡列表中不存在';
+                    return;
+                }
                 const summary = await orbitcard.getCardSummary(orbitCfg, card.cardId);
                 if (!summary.success) {
                     card.balanceError = summary.error || '余额查询失败';
@@ -2882,6 +2898,11 @@ app.get('/api/admin/orbitcard/usage', requireSecondaryAuth, async (req, res) => 
                 });
                 card.balanceUpdatedAt = new Date().toISOString();
             }));
+            if (!providerList.success) {
+                cards.forEach((card) => {
+                    card.providerSyncError = providerList.error || '上游卡列表查询失败';
+                });
+            }
         }
         res.json({ success: true, cards });
     } catch (error) {

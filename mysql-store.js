@@ -3494,6 +3494,24 @@ async function updateOrbitcardCardBalance(cardId, {
     return Number(result.affectedRows || 0) > 0;
 }
 
+async function markMissingOrbitcardCards(remoteCardIds = []) {
+    const ids = [...new Set((Array.isArray(remoteCardIds) ? remoteCardIds : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0))];
+    const params = [...ids];
+    const where = ids.length
+        ? `card_id NOT IN (${ids.map(() => '?').join(', ')})`
+        : '1 = 1';
+    const result = await runExecute(
+        `UPDATE orbitcard_card_usage
+         SET status = 'PROVIDER_DELETED', in_use = 0, locked_at = NULL, locked_by = NULL,
+             cooldown_until = NULL, provider_status = 'DELETED'
+         WHERE ${where} AND status <> 'PROVIDER_DELETED'`,
+        params
+    );
+    return Number(result.affectedRows || 0);
+}
+
 async function recordOrbitcardCardUsage(cardId) {
     const id = Number(cardId);
     if (!Number.isInteger(id) || id <= 0) return { dailyUsageCount: 0, cooledDown: false };
@@ -4138,6 +4156,7 @@ module.exports = {
     updateOrbitcardRecharge,
     listOrbitcardUsage,
     updateOrbitcardCardBalance,
+    markMissingOrbitcardCards,
     recordOrbitcardCardUsage,
     markCardExhausted,
     recordCardUsage,
