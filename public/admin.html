@@ -3049,7 +3049,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
         <div id="logs" class="page-view">
             <div class="page-header">
                 <h1>任务管理</h1>
-                <p>查看与管理自助开通任务记录</p>
+                <p>查看与管理自助开通任务记录 <span id="manual_hold_count" class="status-badge status-warning" style="display:none; margin-left:8px;">待人工确认 0</span></p>
             </div>
             <div class="panel">
                 <div class="runtime-log-toolbar log-page-toolbar">
@@ -5245,7 +5245,9 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 window.__adminLogs = data.logs || [];
                 renderLogTable(window.__adminLogs);
                 renderAutomationTable(window.__adminLogs);
-                loadActivationManualHolds(false).catch(() => { });
+                activationManualHolds = Array.isArray(data.manual_holds) ? data.manual_holds : [];
+                renderActivationManualHolds();
+                updateActivationManualHoldCount();
 
                 try {
                     await loadCdkList();
@@ -6524,6 +6526,14 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             lucide.createIcons();
         }
 
+        function updateActivationManualHoldCount() {
+            const countEl = document.getElementById('manual_hold_count');
+            if (!countEl) return;
+            const count = activationManualHolds.length;
+            countEl.textContent = `待人工确认 ${count}`;
+            countEl.style.display = count > 0 ? 'inline-flex' : 'none';
+        }
+
         async function loadActivationManualHolds(showToast = false) {
             const tbody = document.getElementById('activation_manual_hold_body');
             if (!tbody) return;
@@ -6533,6 +6543,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 if (!res.ok || !data.success) throw new Error(data.message || '加载人工审核记录失败');
                 activationManualHolds = Array.isArray(data.holds) ? data.holds : [];
                 renderActivationManualHolds();
+                updateActivationManualHoldCount();
                 if (showToast) showMessage('人工审核记录已刷新', 'success');
             } catch (error) {
                 if (!activationManualHolds.length) {

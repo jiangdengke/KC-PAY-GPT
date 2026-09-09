@@ -946,7 +946,7 @@ async function getBillingOverviewStats() {
 }
 
 async function getAdminData() {
-    const [configRows, phoneRows, cardRows, logRows, statsRows, cdkStatsRows, billingOverviewRows] = await Promise.all([
+    const [configRows, phoneRows, cardRows, logRows, statsRows, cdkStatsRows, billingOverviewRows, manualHoldRows] = await Promise.all([
         runQuery(
             `SELECT config_key, config_value
              FROM app_config
@@ -995,7 +995,8 @@ async function getAdminData() {
              FROM cdk_codes
              WHERE is_active = 1`
         ),
-        getBillingOverviewStats()
+        getBillingOverviewStats(),
+        listActivationManualHolds(200)
     ]);
 
     const stats = statsRows[0] || {};
@@ -1056,7 +1057,17 @@ async function getAdminData() {
         },
         telegram,
         hcaptcha: publicHcaptchaConfig(hcaptcha),
-        logs: logRows
+        logs: logRows,
+        manual_holds: manualHoldRows.map((hold) => ({
+            id: Number(hold.id),
+            accountEmail: hold.account_email || '',
+            planType: hold.plan_type || 'plus',
+            failedJobKey: hold.failed_job_key || '',
+            cdkCode: hold.cdk_code || '',
+            reason: hold.reason || '',
+            createdAt: hold.created_at,
+            updatedAt: hold.updated_at
+        }))
     };
 }
 
