@@ -318,6 +318,8 @@ function extractCardBalance(row = {}) {
     const balanceInfo = source.balance_info && typeof source.balance_info === 'object' ? source.balance_info : {};
     const funds = source.funds && typeof source.funds === 'object' ? source.funds : {};
     const candidates = [
+        ['available_amount', source.available_amount],
+        ['availableAmount', source.availableAmount],
         ['available_balance', source.available_balance],
         ['availableBalance', source.availableBalance],
         ['card_balance', source.card_balance],

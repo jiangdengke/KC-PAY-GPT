@@ -151,6 +151,21 @@ describe('orbitcard client', () => {
         expect(JSON.parse(spy.mock.calls[0][0].data)).toEqual({ card_id: 42, reveal_sensitive: false });
     });
 
+    it('reads the documented available_amount card balance field', async () => {
+        vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: { code: 0, msg: 'ok', data: { available_amount: '42.75', status: 'ACTIVE' } }
+        });
+        const result = await orbitcard.getCardSummary(
+            { base_url: 'https://orbitcard.cc', api_key: 'k', api_secret: 's' },
+            99
+        );
+        expect(result).toMatchObject({
+            success: true,
+            data: { cardId: 99, balance: 42.75, balanceField: 'available_amount' }
+        });
+    });
+
     it('uses an idempotent request to unfreeze a card', async () => {
         const spy = vi.spyOn(axios, 'request').mockResolvedValue({
             status: 200,
