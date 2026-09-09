@@ -300,13 +300,55 @@ function extractCreatedCardId(data) {
 
 function normalizeCard(row = {}) {
     const cardId = row.card_id ?? row.cardId ?? row.id;
+    const balance = extractCardBalance(row);
     return {
         cardId: Number(cardId),
         status: String(row.status || 'ACTIVE').trim().toUpperCase(),
         last4: String(row.last4 || row.card_last4 || row.cardLast4 || row.card_number || row.cardNumber || '').slice(-4),
         productCode: String(row.product_code || row.productCode || '').trim(),
+        balance: balance.value,
+        balanceField: balance.field,
+        currency: extractCardCurrency(row),
         raw: row
     };
+}
+
+function extractCardBalance(row = {}) {
+    const source = row && typeof row === 'object' ? row : {};
+    const balanceInfo = source.balance_info && typeof source.balance_info === 'object' ? source.balance_info : {};
+    const funds = source.funds && typeof source.funds === 'object' ? source.funds : {};
+    const candidates = [
+        ['available_balance', source.available_balance],
+        ['availableBalance', source.availableBalance],
+        ['card_balance', source.card_balance],
+        ['cardBalance', source.cardBalance],
+        ['current_balance', source.current_balance],
+        ['currentBalance', source.currentBalance],
+        ['balance', source.balance],
+        ['remaining_balance', source.remaining_balance],
+        ['remainingBalance', source.remainingBalance],
+        ['balance_info.available_balance', balanceInfo.available_balance],
+        ['balance_info.availableBalance', balanceInfo.availableBalance],
+        ['balance_info.balance', balanceInfo.balance],
+        ['funds.available_balance', funds.available_balance],
+        ['funds.availableBalance', funds.availableBalance],
+        ['funds.balance', funds.balance]
+    ];
+    for (const [field, value] of candidates) {
+        if (value === null || value === undefined || value === '') continue;
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) return { value: numeric, field };
+    }
+    return { value: null, field: '' };
+}
+
+function extractCardCurrency(row = {}) {
+    const source = row && typeof row === 'object' ? row : {};
+    const balanceInfo = source.balance_info && typeof source.balance_info === 'object' ? source.balance_info : {};
+    return String(
+        source.currency || source.balance_currency || source.balanceCurrency ||
+        balanceInfo.currency || balanceInfo.currency_code || ''
+    ).trim().toUpperCase();
 }
 
 async function getCardList(cfg, { pageSize = 100 } = {}) {
@@ -358,6 +400,42 @@ async function getCardDetail(cfg, cardId) {
         },
         raw: result.raw
     };
+}
+
+async function getCardSummary(cfg, cardId) {
+    const id = Number(cardId);
+    if (!Number.isInteger(id) || id <= 0) return { success: false, error: 'Orbitcard card_id 无效' };
+    const result = await request('/api/open/v1/cardDetail', cfg, { card_id: id, reveal_sensitive: false });
+    if (!result.success) return result;
+    const row = result.data?.card && typeof result.data.card === 'object'
+        ? { ...result.data, ...result.data.card }
+        : (result.data || {});
+    const balance = extractCardBalance(row);
+    return {
+        success: true,
+        status: result.status,
+        data: {
+            cardId: id,
+            status: String(row.status || row.card_status || '').trim().toUpperCase(),
+            last4: String(row.last4 || row.card_last4 || row.card_number || row.cardNumber || '').slice(-4),
+            productCode: String(row.product_code || row.productCode || '').trim(),
+            balance: balance.value,
+            balanceField: balance.field,
+            currency: extractCardCurrency(row),
+            raw: row
+        },
+        raw: result.raw
+    };
+}
+
+async function setCardStatus(cfg, cardId, status = 'ACTIVE', idempotencyKey = '') {
+    const id = Number(cardId);
+    const nextStatus = String(status || '').trim().toUpperCase();
+    if (!Number.isInteger(id) || id <= 0) return { success: false, error: 'Orbitcard card_id 无效' };
+    if (!['ACTIVE', 'CANCELLED'].includes(nextStatus)) return { success: false, error: 'Orbitcard 卡状态无效' };
+    return request('/api/open/v1/freezeCard', cfg, { card_id: id, status: nextStatus }, {
+        idempotencyKey: String(idempotencyKey || `admin-card-${nextStatus.toLowerCase()}-${id}-${Date.now()}`).trim()
+    });
 }
 
 async function testConnection(cfg) {
@@ -414,5 +492,7 @@ module.exports = {
     extractCreatedCardId,
     getCardList,
     getCardDetail,
+    getCardSummary,
+    setCardStatus,
     testConnection
 };

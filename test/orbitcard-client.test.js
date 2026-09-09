@@ -122,4 +122,48 @@ describe('orbitcard client', () => {
         expect(JSON.parse(spy.mock.calls[0][0].data)).toEqual({ product_code: 'visa-1', amount: '100.00', quantity: 1 });
         expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toBe('orbitcard-job-1');
     });
+
+    it('reads a non-sensitive card balance when the provider includes one', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: {
+                code: 0,
+                msg: 'ok',
+                data: {
+                    card: {
+                        card_id: 42,
+                        status: 'ACTIVE',
+                        last4: '4242',
+                        balance_info: { available_balance: '37.50', currency: 'USD' }
+                    }
+                }
+            }
+        });
+        const result = await orbitcard.getCardSummary(
+            { base_url: 'https://orbitcard.cc', api_key: 'k', api_secret: 's' },
+            42
+        );
+        expect(result).toMatchObject({
+            success: true,
+            data: { cardId: 42, last4: '4242', balance: 37.5, balanceField: 'balance_info.available_balance', currency: 'USD' }
+        });
+        expect(spy.mock.calls[0][0].url).toBe('https://orbitcard.cc/api/open/v1/cardDetail');
+        expect(JSON.parse(spy.mock.calls[0][0].data)).toEqual({ card_id: 42, reveal_sensitive: false });
+    });
+
+    it('uses an idempotent request to unfreeze a card', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: { code: 0, msg: 'ok', data: { card_id: 42, status: 'ACTIVE' } }
+        });
+        const result = await orbitcard.setCardStatus(
+            { base_url: 'https://orbitcard.cc', api_key: 'k', api_secret: 's' },
+            42,
+            'ACTIVE',
+            'restore-card-42'
+        );
+        expect(result.success).toBe(true);
+        expect(JSON.parse(spy.mock.calls[0][0].data)).toEqual({ card_id: 42, status: 'ACTIVE' });
+        expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toBe('restore-card-42');
+    });
 });

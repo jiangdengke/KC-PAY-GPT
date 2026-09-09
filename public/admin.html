@@ -2817,13 +2817,13 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             <div class="panel">
                 <div class="panel-header">
                     <h2 class="panel-title">Orbitcard 用卡记录</h2>
-                    <button type="button" class="btn btn-primary" onclick="loadOrbitcardUsage(true)">
+                    <button type="button" class="btn btn-primary" onclick="loadOrbitcardUsage(true, true)">
                         <i data-lucide="refresh-cw"></i>
                         刷新记录
                     </button>
                 </div>
                 <p id="orbitcard_usage_hint" style="font-size:13px; color:var(--text-dim); margin:0 0 12px;">
-                    开卡优先渠道 3 Mastercard（BIN 55565979），再依次使用 Visa（BIN 400242001、40041641）；Plus 卡最多使用 4 次；Pro 5x 和 Pro 20x 默认每张卡使用 1 次。这里仅显示卡 ID、后四位和账号记录，不显示完整卡密。
+                    开卡优先渠道 3 Mastercard（BIN 55565979），再依次使用 Visa（BIN 400242001、40041641）；Plus 卡最多使用 4 次；Pro 5x 和 Pro 20x 默认每张卡使用 1 次。点击“刷新记录”会向 Orbitcard 查询余额并保存最近结果；失败卡在确认未扣款后可手动恢复，达到使用上限的卡不能恢复。
                 </p>
                 <div class="table-container">
                     <table>
@@ -2834,9 +2834,11 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                                 <th width="100px">套餐</th>
                                 <th width="110px" style="text-align:center">已用/上限</th>
                                 <th width="110px">首充金额</th>
+                                <th width="120px">当前余额</th>
                                 <th width="100px">状态</th>
                                 <th>充值账号与订单</th>
                                 <th width="150px">最近使用</th>
+                                <th width="100px" style="text-align:center">操作</th>
                             </tr>
                         </thead>
                         <tbody id="orbitcard_usage_body"></tbody>
@@ -6244,11 +6246,11 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
 
         let orbitcardUsageList = [];
 
-        async function loadOrbitcardUsage(showToast = false) {
+        async function loadOrbitcardUsage(showToast = false, refreshBalances = false) {
             const tbody = document.getElementById('orbitcard_usage_body');
             if (!tbody) return;
             try {
-                const res = await authFetch('/api/admin/orbitcard/usage?limit=200');
+                const res = await authFetch(`/api/admin/orbitcard/usage?limit=200${refreshBalances ? '&refresh=1' : ''}`);
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.message || '加载 Orbitcard 用卡记录失败');
                 orbitcardUsageList = Array.isArray(data.cards) ? data.cards : [];
@@ -6256,7 +6258,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 if (showToast) showMessage('Orbitcard 用卡记录已刷新', 'success');
             } catch (error) {
                 console.error('loadOrbitcardUsage failed', error);
-                tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--error); padding:36px 0;">${escapeHtml(error.message || '加载失败')}</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color:var(--error); padding:36px 0;">${escapeHtml(error.message || '加载失败')}</td></tr>`;
                 if (showToast) showMessage(error.message || '加载 Orbitcard 记录失败', 'error');
             }
             lucide.createIcons();
@@ -6279,7 +6281,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             const tbody = document.getElementById('orbitcard_usage_body');
             if (!tbody) return;
             if (!orbitcardUsageList.length) {
-                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--text-dim); padding:36px 0;">暂无 Orbitcard 用卡记录</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; color:var(--text-dim); padding:36px 0;">暂无 Orbitcard 用卡记录</td></tr>';
                 return;
             }
             tbody.innerHTML = orbitcardUsageList.map((card) => {
@@ -6295,18 +6297,44 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 const status = String(card.status || '').toUpperCase();
                 const statusLabel = status === 'RETIRED' ? '已退役' : (card.inUse ? '使用中' : '可复用');
                 const statusClass = status === 'RETIRED' ? 'status-failed' : (card.inUse ? 'status-warning' : 'status-success');
+                const balanceTitle = card.balanceUpdatedAt ? `最近查询：${formatTimeShort(card.balanceUpdatedAt)}` : '';
+                const balanceText = card.balance == null
+                    ? (card.balanceError ? `<span title="${escapeHtml(card.balanceError)}" style="color:var(--error);">${escapeHtml(card.balanceError === '上游未提供单卡余额' ? '上游未提供' : '查询失败')}</span>` : '<span style="color:var(--text-dim);">未查询</span>')
+                    : `<span title="${escapeHtml(balanceTitle)}">${Number(card.balance).toFixed(2)} ${escapeHtml(card.balanceCurrency || 'USD')}</span>${card.balanceError ? `<br><small title="${escapeHtml(card.balanceError)}" style="color:var(--error);">${escapeHtml(card.balanceError === '上游未提供单卡余额' ? '上游未提供新余额' : '刷新失败')}</small>` : ''}`;
+                const canRestore = status === 'RETIRED' && !card.inUse && Number(card.usageCount || 0) < Number(card.maxUsageCount || 1);
                 return `<tr>
                     <td><code>${escapeHtml(card.cardId)}</code></td>
                     <td><code>${escapeHtml(card.cardLast4 || '****')}</code></td>
                     <td>${escapeHtml(formatOrbitcardPlan(card.planType))}</td>
                     <td style="text-align:center; font-weight:600;">${Number(card.usageCount || 0)}/${Number(card.maxUsageCount || 1)}</td>
                     <td>${card.initialAmount == null ? '-' : `${Number(card.initialAmount).toFixed(2)} USD`}</td>
+                    <td>${balanceText}</td>
                     <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
                     <td style="min-width:300px; font-size:13px;">${historyHtml}</td>
                     <td>${escapeHtml(formatTimeShort(card.lastUsedAt))}</td>
+                    <td style="text-align:center;">${canRestore ? `<button type="button" class="btn btn-success" style="padding:5px 9px; font-size:12px;" onclick="restoreOrbitcardCard(${Number(card.cardId)})">恢复</button>` : '<span style="color:var(--text-dim);">-</span>'}</td>
                 </tr>`;
             }).join('');
             lucide.createIcons();
+        }
+
+        async function restoreOrbitcardCard(cardId) {
+            const card = orbitcardUsageList.find((item) => Number(item.cardId) === Number(cardId));
+            const balance = card?.balance == null ? '未查询余额' : `${Number(card.balance).toFixed(2)} ${card.balanceCurrency || 'USD'}`;
+            const ok = await showAdminConfirm(
+                `确认将 Orbitcard 卡 #${cardId} 解冻并恢复可用吗？当前余额：${balance}。请先确认上一次失败未产生扣款。`,
+                '恢复 Orbitcard 卡'
+            );
+            if (!ok) return;
+            try {
+                const res = await authFetch(`/api/admin/orbitcard/cards/${encodeURIComponent(cardId)}/restore`, { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || '恢复失败');
+                showMessage(data.message || '卡片已恢复可用', 'success');
+                await loadOrbitcardUsage(false, true);
+            } catch (error) {
+                showMessage(error.message || '恢复 Orbitcard 卡失败', 'error');
+            }
         }
 
         function renderCardPoolStats() {

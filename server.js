@@ -2851,9 +2851,85 @@ app.get('/api/admin/orbitcard/usage', requireSecondaryAuth, async (req, res) => 
     try {
         await ensureStoreReady();
         const cards = await store.listOrbitcardUsage(req.query.limit);
+        if (String(req.query.refresh || '') === '1' && cards.length) {
+            const cfg = await store.getGptApiConfig();
+            if (cfg.card_source !== 'orbitcard') {
+                return res.status(400).json({ success: false, message: '当前卡源不是 Orbitcard' });
+            }
+            const orbitCfg = {
+                base_url: cfg.orbitcard_base_url,
+                api_key: cfg.orbitcard_api_key,
+                api_secret: cfg.orbitcard_api_secret
+            };
+            await Promise.all(cards.map(async (card) => {
+                const summary = await orbitcard.getCardSummary(orbitCfg, card.cardId);
+                if (!summary.success) {
+                    card.balanceError = summary.error || '余额查询失败';
+                    return;
+                }
+                card.providerStatus = summary.data.status || '';
+                if (summary.data.balance == null) {
+                    card.balanceError = '上游未提供单卡余额';
+                    return;
+                }
+                card.balance = summary.data.balance;
+                card.balanceCurrency = summary.data.currency || 'USD';
+                card.balanceError = '';
+                await store.updateOrbitcardCardBalance(card.cardId, {
+                    balance: card.balance,
+                    currency: card.balanceCurrency,
+                    providerStatus: card.providerStatus
+                });
+                card.balanceUpdatedAt = new Date().toISOString();
+            }));
+        }
         res.json({ success: true, cards });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/admin/orbitcard/cards/:cardId/restore', requireSecondaryAuth, async (req, res) => {
+    try {
+        await ensureStoreReady();
+        const cardId = Number(req.params.cardId);
+        if (!Number.isInteger(cardId) || cardId <= 0) {
+            return res.status(400).json({ success: false, message: '卡片编号无效' });
+        }
+        const cfg = await store.getGptApiConfig();
+        if (cfg.card_source !== 'orbitcard') {
+            return res.status(400).json({ success: false, message: '当前卡源不是 Orbitcard' });
+        }
+        const localCards = await store.listOrbitcardUsage(500);
+        const localCard = localCards.find((card) => Number(card.cardId) === cardId);
+        if (!localCard) {
+            return res.status(404).json({ success: false, message: '本地没有这张 Orbitcard 记录' });
+        }
+        if (String(localCard.status || '').toUpperCase() !== 'RETIRED') {
+            return res.status(409).json({ success: false, message: '只有已退役卡片可以手动恢复' });
+        }
+        if (localCard.inUse) {
+            return res.status(409).json({ success: false, message: '卡片当前正在使用，不能恢复' });
+        }
+        if (Number(localCard.usageCount || 0) >= Number(localCard.maxUsageCount || 1)) {
+            return res.status(409).json({ success: false, message: '卡片已达到使用上限，不能恢复' });
+        }
+        const orbitCfg = {
+            base_url: cfg.orbitcard_base_url,
+            api_key: cfg.orbitcard_api_key,
+            api_secret: cfg.orbitcard_api_secret
+        };
+        const upstream = await orbitcard.setCardStatus(orbitCfg, cardId, 'ACTIVE', `admin-restore-${cardId}-${Date.now()}`);
+        if (!upstream.success) {
+            return res.status(502).json({ success: false, message: `Orbitcard 解冻失败: ${upstream.error || '未知错误'}` });
+        }
+        const restored = await store.restoreOrbitcardCard(cardId);
+        if (!restored) {
+            return res.status(409).json({ success: false, message: '卡片已达到使用上限，不能恢复' });
+        }
+        return res.json({ success: true, message: '卡片已解冻并恢复可用' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
     }
 });
 

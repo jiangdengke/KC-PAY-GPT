@@ -49,6 +49,13 @@ CREATE TABLE IF NOT EXISTS card_assets (
 CREATE TABLE IF NOT EXISTS orbitcard_card_usage (
     card_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
     usage_count INT NOT NULL DEFAULT 0,
+    plan_type VARCHAR(32) NULL DEFAULT NULL,
+    max_usage_count INT NOT NULL DEFAULT 1,
+    initial_amount DECIMAL(12,2) NULL DEFAULT NULL,
+    provider_balance DECIMAL(12,2) NULL DEFAULT NULL,
+    provider_balance_currency VARCHAR(8) NULL DEFAULT NULL,
+    provider_status VARCHAR(32) NULL DEFAULT NULL,
+    provider_balance_updated_at TIMESTAMP NULL DEFAULT NULL,
     daily_usage_count INT NOT NULL DEFAULT 0,
     daily_usage_reset_at TIMESTAMP NULL DEFAULT NULL,
     cooldown_until TIMESTAMP NULL DEFAULT NULL,

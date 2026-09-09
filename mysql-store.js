@@ -322,6 +322,10 @@ async function ensureOrbitcardUsageTable() {
     await ensureColumn('orbitcard_card_usage', 'plan_type', 'VARCHAR(32) NULL DEFAULT NULL');
     await ensureColumn('orbitcard_card_usage', 'max_usage_count', 'INT NOT NULL DEFAULT 1');
     await ensureColumn('orbitcard_card_usage', 'initial_amount', 'DECIMAL(12,2) NULL DEFAULT NULL');
+    await ensureColumn('orbitcard_card_usage', 'provider_balance', 'DECIMAL(12,2) NULL DEFAULT NULL');
+    await ensureColumn('orbitcard_card_usage', 'provider_balance_currency', 'VARCHAR(8) NULL DEFAULT NULL');
+    await ensureColumn('orbitcard_card_usage', 'provider_status', 'VARCHAR(32) NULL DEFAULT NULL');
+    await ensureColumn('orbitcard_card_usage', 'provider_balance_updated_at', 'TIMESTAMP NULL DEFAULT NULL');
     await runQuery(`
         CREATE TABLE IF NOT EXISTS orbitcard_card_recharges (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -3336,6 +3340,20 @@ async function retireOrbitcardCard(cardId) {
     );
 }
 
+async function restoreOrbitcardCard(cardId) {
+    const id = Number(cardId);
+    if (!Number.isInteger(id) || id <= 0) return false;
+    const result = await runExecute(
+        `UPDATE orbitcard_card_usage
+         SET status = 'ACTIVE', in_use = 0, locked_at = NULL, locked_by = NULL,
+             cooldown_until = NULL
+         WHERE card_id = ?
+           AND usage_count < max_usage_count`,
+        [id]
+    );
+    return Number(result.affectedRows || 0) > 0;
+}
+
 async function createOrbitcardRecharge({
     cardId,
     jobKey,
@@ -3391,6 +3409,7 @@ async function listOrbitcardUsage(limit = 200) {
     const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
     const cards = await runQuery(
         `SELECT card_id, usage_count, plan_type, max_usage_count, initial_amount,
+                provider_balance, provider_balance_currency, provider_status, provider_balance_updated_at,
                 daily_usage_count, cooldown_until, in_use, locked_at, locked_by,
                 last_used_at, status, created_at, updated_at
          FROM orbitcard_card_usage
@@ -3432,6 +3451,10 @@ async function listOrbitcardUsage(limit = 200) {
         usageCount: Number(row.usage_count || 0),
         maxUsageCount: Math.max(1, Number(row.max_usage_count || 1)),
         initialAmount: row.initial_amount == null ? null : Number(row.initial_amount),
+        balance: row.provider_balance == null ? null : Number(row.provider_balance),
+        balanceCurrency: row.provider_balance_currency || '',
+        providerStatus: row.provider_status || '',
+        balanceUpdatedAt: row.provider_balance_updated_at || null,
         dailyUsageCount: Number(row.daily_usage_count || 0),
         cooldownUntil: row.cooldown_until || null,
         inUse: Boolean(row.in_use),
@@ -3443,6 +3466,32 @@ async function listOrbitcardUsage(limit = 200) {
         updatedAt: row.updated_at,
         recharges: historyByCard.get(String(row.card_id)) || []
     }));
+}
+
+async function updateOrbitcardCardBalance(cardId, {
+    balance = null,
+    currency = '',
+    providerStatus = ''
+} = {}) {
+    const id = Number(cardId);
+    if (!Number.isInteger(id) || id <= 0) return false;
+    const numericBalance = balance == null || balance === '' ? null : Number(balance);
+    if (numericBalance != null && !Number.isFinite(numericBalance)) return false;
+    const result = await runExecute(
+        `UPDATE orbitcard_card_usage
+         SET provider_balance = ?,
+             provider_balance_currency = ?,
+             provider_status = ?,
+             provider_balance_updated_at = CURRENT_TIMESTAMP
+         WHERE card_id = ?`,
+        [
+            numericBalance,
+            String(currency || '').trim().toUpperCase().slice(0, 8) || null,
+            String(providerStatus || '').trim().toUpperCase().slice(0, 32) || null,
+            id
+        ]
+    );
+    return Number(result.affectedRows || 0) > 0;
 }
 
 async function recordOrbitcardCardUsage(cardId) {
@@ -4084,9 +4133,11 @@ module.exports = {
     reserveOrbitcardCard,
     releaseOrbitcardCard,
     retireOrbitcardCard,
+    restoreOrbitcardCard,
     createOrbitcardRecharge,
     updateOrbitcardRecharge,
     listOrbitcardUsage,
+    updateOrbitcardCardBalance,
     recordOrbitcardCardUsage,
     markCardExhausted,
     recordCardUsage,
