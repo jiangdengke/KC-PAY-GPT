@@ -2844,6 +2844,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                         <tbody id="orbitcard_usage_body"></tbody>
                     </table>
                 </div>
+                <div id="orbitcard_usage_pagination" class="table-footer"></div>
             </div>
         </div>
 
@@ -6245,23 +6246,53 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
         }
 
         let orbitcardUsageList = [];
+        const orbitcardUsageState = { page: 1, pageSize: 20, total: 0 };
 
-        async function loadOrbitcardUsage(showToast = false, refreshBalances = false) {
+        async function loadOrbitcardUsage(showToast = false, refreshBalances = false, page = orbitcardUsageState.page) {
             const tbody = document.getElementById('orbitcard_usage_body');
             if (!tbody) return;
+            orbitcardUsageState.page = Math.max(1, Number(page) || 1);
             try {
-                const res = await authFetch(`/api/admin/orbitcard/usage?limit=200${refreshBalances ? '&refresh=1' : ''}`);
+                const params = new URLSearchParams({
+                    page: String(orbitcardUsageState.page),
+                    page_size: String(orbitcardUsageState.pageSize)
+                });
+                if (refreshBalances) params.set('refresh', '1');
+                const res = await authFetch(`/api/admin/orbitcard/usage?${params.toString()}`);
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.message || '加载 Orbitcard 用卡记录失败');
                 orbitcardUsageList = Array.isArray(data.cards) ? data.cards : [];
+                orbitcardUsageState.total = Number(data.total || 0);
+                orbitcardUsageState.page = Number(data.page || orbitcardUsageState.page);
                 renderOrbitcardUsageTable();
+                renderOrbitcardUsagePagination();
                 if (showToast) showMessage('Orbitcard 用卡记录已刷新', 'success');
             } catch (error) {
                 console.error('loadOrbitcardUsage failed', error);
                 tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color:var(--error); padding:36px 0;">${escapeHtml(error.message || '加载失败')}</td></tr>`;
+                const pagination = document.getElementById('orbitcard_usage_pagination');
+                if (pagination) pagination.innerHTML = '';
                 if (showToast) showMessage(error.message || '加载 Orbitcard 记录失败', 'error');
             }
             lucide.createIcons();
+        }
+
+        function renderOrbitcardUsagePagination() {
+            const container = document.getElementById('orbitcard_usage_pagination');
+            if (!container) return;
+            const total = orbitcardUsageState.total;
+            const page = orbitcardUsageState.page;
+            const pageSize = orbitcardUsageState.pageSize;
+            const totalPages = Math.max(1, Math.ceil(total / pageSize));
+            const start = total === 0 ? 0 : ((page - 1) * pageSize) + 1;
+            const end = Math.min(page * pageSize, total);
+            container.innerHTML = `<div class="pagination-meta">显示 ${start}-${end}，共 ${total} 张卡</div><div class="pagination">
+                <button class="pagination-nav" onclick="loadOrbitcardUsage(false, false, ${page - 1})" ${page <= 1 ? 'disabled' : ''}>上一页</button>
+                ${getPaginationItems(page, totalPages).map((item) => item === 'ellipsis'
+                    ? '<span class="pagination-ellipsis">...</span>'
+                    : `<button class="${item === page ? 'active' : ''}" onclick="loadOrbitcardUsage(false, false, ${item})">${item}</button>`).join('')}
+                <button class="pagination-nav" onclick="loadOrbitcardUsage(false, false, ${page + 1})" ${page >= totalPages ? 'disabled' : ''}>下一页</button>
+            </div>`;
         }
 
         function formatOrbitcardPlan(planType) {

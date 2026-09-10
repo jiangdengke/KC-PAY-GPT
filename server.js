@@ -2850,7 +2850,14 @@ app.get('/api/admin/cards', requireSecondaryAuth, async (req, res) => {
 app.get('/api/admin/orbitcard/usage', requireSecondaryAuth, async (req, res) => {
     try {
         await ensureStoreReady();
-        const cards = await store.listOrbitcardUsage(req.query.limit);
+        const pageSize = Math.max(1, Math.min(100, Number(req.query.page_size || req.query.limit) || 20));
+        let page = Math.max(1, Number(req.query.page) || 1);
+        const countRows = await store.runQuery('SELECT COUNT(*) AS total FROM orbitcard_card_usage');
+        const total = Number(countRows[0]?.total || 0);
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        page = Math.min(page, totalPages);
+        const offset = (page - 1) * pageSize;
+        const cards = await store.listOrbitcardUsage(pageSize, offset);
         if (String(req.query.refresh || '') === '1' && cards.length) {
             const cfg = await store.getGptApiConfig();
             if (cfg.card_source !== 'orbitcard') {
@@ -2904,7 +2911,7 @@ app.get('/api/admin/orbitcard/usage', requireSecondaryAuth, async (req, res) => 
                 });
             }
         }
-        res.json({ success: true, cards });
+        res.json({ success: true, cards, total, page, pageSize });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }

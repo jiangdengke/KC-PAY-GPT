@@ -3405,8 +3405,9 @@ async function updateOrbitcardRecharge(jobKey, {
     );
 }
 
-async function listOrbitcardUsage(limit = 200) {
+async function listOrbitcardUsage(limit = 200, offset = 0) {
     const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
+    const safeOffset = Math.max(0, Number(offset) || 0);
     const cards = await runQuery(
         `SELECT card_id, usage_count, plan_type, max_usage_count, initial_amount,
                 provider_balance, provider_balance_currency, provider_status, provider_balance_updated_at,
@@ -3414,16 +3415,20 @@ async function listOrbitcardUsage(limit = 200) {
                 last_used_at, status, created_at, updated_at
          FROM orbitcard_card_usage
          ORDER BY updated_at DESC, card_id DESC
-         LIMIT ?`,
-        [safeLimit]
+         LIMIT ? OFFSET ?`,
+        [safeLimit, safeOffset]
     );
+    const cardIds = cards.map((row) => Number(row.card_id)).filter((id) => Number.isInteger(id) && id > 0);
+    if (!cardIds.length) return [];
+    const cardPlaceholders = cardIds.map(() => '?').join(', ');
     const recharges = await runQuery(
         `SELECT card_id, job_key, plan_type, card_last4, account_email, use_number, max_usage_count,
                 initial_amount, order_id, status, message, created_at, updated_at
          FROM orbitcard_card_recharges
+         WHERE card_id IN (${cardPlaceholders})
          ORDER BY created_at DESC
          LIMIT ?`,
-        [Math.min(2000, safeLimit * 8)]
+        [...cardIds, Math.min(5000, Math.max(100, safeLimit * 20))]
     );
     const historyByCard = new Map();
     for (const row of recharges) {
