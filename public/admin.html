@@ -358,9 +358,47 @@
             flex-direction: column;
         }
 
+        /* ============ 业务列表：桌面端左右并排 ============ */
+        .business-split-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+            gap: 20px;
+            align-items: start;
+        }
+
+        .business-split-grid > .panel {
+            margin-bottom: 0;
+            min-width: 0;
+        }
+
+        .business-split-grid--tasks {
+            grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+        }
+
+        .business-split-grid .table-container table {
+            min-width: 860px;
+        }
+
+        .business-split-grid--tasks .table-container table {
+            min-width: 980px;
+        }
+
+        .business-split-grid .table-container th {
+            white-space: nowrap;
+        }
+
         @media (max-width: 1100px) {
             .config-grid {
                 grid-template-columns: 1fr;
+            }
+
+            .business-split-grid,
+            .business-split-grid--tasks {
+                grid-template-columns: 1fr;
+            }
+
+            .business-split-grid > .panel {
+                margin-bottom: 20px;
             }
         }
 
@@ -2766,6 +2804,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 </div>
             </div>
 
+            <div class="business-split-grid">
             <div class="panel">
                 <div class="panel-header">
                     <h2 class="panel-title">银行卡列表</h2>
@@ -2845,6 +2884,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     </table>
                 </div>
                 <div id="orbitcard_usage_pagination" class="table-footer"></div>
+            </div>
             </div>
         </div>
 
@@ -3054,6 +3094,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 <h1>任务管理</h1>
                 <p>查看与管理自助开通任务记录 <span id="manual_hold_count" class="status-badge status-warning" style="display:none; margin-left:8px;">待人工确认 0</span></p>
             </div>
+            <div class="business-split-grid business-split-grid--tasks">
             <div class="panel">
                 <div class="runtime-log-toolbar log-page-toolbar">
                     <button type="button" class="btn btn-success" id="admin_refresh_pause_btn" onclick="toggleAdminDataRefresh()">
@@ -3085,7 +3126,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 </div>
                 <div id="log_pagination" class="table-footer"></div>
             </div>
-            <div class="panel" style="margin-top: 18px;">
+            <div class="panel">
                 <div class="runtime-log-toolbar log-page-toolbar">
                     <div>
                         <h2 style="margin:0 0 4px;">待人工确认</h2>
@@ -3112,6 +3153,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                         <tbody id="activation_manual_hold_body"></tbody>
                     </table>
                 </div>
+            </div>
             </div>
         </div>
 
