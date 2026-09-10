@@ -387,6 +387,49 @@
             white-space: nowrap;
         }
 
+        .admin-switcher {
+            min-width: 0;
+        }
+
+        .admin-switcher-tabs {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px;
+            margin-bottom: 16px;
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            background: var(--surface-soft);
+        }
+
+        .admin-switcher-tab {
+            min-height: 36px;
+            padding: 8px 16px;
+            border: 0;
+            border-radius: 9px;
+            background: transparent;
+            color: var(--text-dim);
+            font: inherit;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .admin-switcher-tab:hover {
+            color: var(--primary);
+        }
+
+        .admin-switcher-tab.is-active {
+            color: var(--primary);
+            background: var(--surface);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .admin-switcher-panel[hidden] {
+            display: none !important;
+        }
+
         @media (max-width: 1100px) {
             .config-grid {
                 grid-template-columns: 1fr;
@@ -399,6 +442,15 @@
 
             .business-split-grid > .panel {
                 margin-bottom: 20px;
+            }
+
+            .admin-switcher-tabs {
+                display: flex;
+                width: 100%;
+            }
+
+            .admin-switcher-tab {
+                flex: 1;
             }
         }
 
@@ -2804,8 +2856,12 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 </div>
             </div>
 
-            <div class="business-split-grid">
-            <div class="panel">
+            <div class="admin-switcher" data-switcher="card-assets">
+                <div class="admin-switcher-tabs" role="tablist" aria-label="卡池类型">
+                    <button type="button" class="admin-switcher-tab is-active" role="tab" aria-selected="true" data-switcher-tab="local" onclick="switchAdminSection('card-assets', 'local')">银行卡列表</button>
+                    <button type="button" class="admin-switcher-tab" role="tab" aria-selected="false" data-switcher-tab="orbitcard" onclick="switchAdminSection('card-assets', 'orbitcard')">Orbitcard 用卡记录</button>
+                </div>
+            <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="local">
                 <div class="panel-header">
                     <h2 class="panel-title">银行卡列表</h2>
                     <button class="btn btn-success" onclick="toggleCardPoolImportBox()">
@@ -2853,7 +2909,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 </div>
             </div>
 
-            <div class="panel">
+            <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="orbitcard" hidden>
                 <div class="panel-header">
                     <h2 class="panel-title">Orbitcard 用卡记录</h2>
                     <button type="button" class="btn btn-primary" onclick="loadOrbitcardUsage(true, true)">
@@ -3094,8 +3150,12 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 <h1>任务管理</h1>
                 <p>查看与管理自助开通任务记录 <span id="manual_hold_count" class="status-badge status-warning" style="display:none; margin-left:8px;">待人工确认 0</span></p>
             </div>
-            <div class="business-split-grid business-split-grid--tasks">
-            <div class="panel">
+            <div class="admin-switcher" data-switcher="task-records">
+                <div class="admin-switcher-tabs" role="tablist" aria-label="任务记录类型">
+                    <button type="button" class="admin-switcher-tab is-active" role="tab" aria-selected="true" data-switcher-tab="tasks" onclick="switchAdminSection('task-records', 'tasks')">任务管理</button>
+                    <button type="button" class="admin-switcher-tab" role="tab" aria-selected="false" data-switcher-tab="holds" onclick="switchAdminSection('task-records', 'holds')">待人工确认</button>
+                </div>
+            <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="tasks">
                 <div class="runtime-log-toolbar log-page-toolbar">
                     <button type="button" class="btn btn-success" id="admin_refresh_pause_btn" onclick="toggleAdminDataRefresh()">
                         <i data-lucide="pause"></i>
@@ -3126,7 +3186,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 </div>
                 <div id="log_pagination" class="table-footer"></div>
             </div>
-            <div class="panel">
+            <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="holds" hidden>
                 <div class="runtime-log-toolbar log-page-toolbar">
                     <div>
                         <h2 style="margin:0 0 4px;">待人工确认</h2>
@@ -4907,6 +4967,26 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     <button class="pagination-nav" onclick="changePage('${stateKey}', ${state.page + 1})" ${state.page >= totalPages ? 'disabled' : ''}>下一页</button>
                 </div>
             `;
+        }
+
+        function switchAdminSection(group, target) {
+            const root = document.querySelector(`[data-switcher="${group}"]`);
+            if (!root) return;
+            root.querySelectorAll('[data-switch-panel]').forEach((panel) => {
+                panel.hidden = panel.dataset.switchPanel !== target;
+            });
+            root.querySelectorAll('[data-switcher-tab]').forEach((tab) => {
+                const active = tab.dataset.switcherTab === target;
+                tab.classList.toggle('is-active', active);
+                tab.setAttribute('aria-selected', active ? 'true' : 'false');
+            });
+            if (group === 'card-assets' && target === 'orbitcard') {
+                loadOrbitcardUsage(false, false).catch(() => { });
+            }
+            if (group === 'task-records' && target === 'holds') {
+                loadActivationManualHolds(false).catch(() => { });
+            }
+            lucide.createIcons();
         }
 
         function toggleNavGroup(groupId, event) {
