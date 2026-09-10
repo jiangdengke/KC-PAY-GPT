@@ -430,6 +430,10 @@
             display: none !important;
         }
 
+        .orbitcard-usage-table {
+            min-width: 1240px;
+        }
+
         @media (max-width: 1100px) {
             .config-grid {
                 grid-template-columns: 1fr;
@@ -2921,7 +2925,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     开卡优先渠道 3 Mastercard（BIN 55565979），再依次使用 Visa（BIN 400242001、40041641）；Plus 卡最多使用 4 次；Pro 5x 和 Pro 20x 默认每张卡使用 1 次。点击“刷新记录”会查询余额并对照 Orbitcard 卡列表；上游列表中缺失的卡会标记为“上游已删除”，失败卡在确认未扣款后可手动恢复。
                 </p>
                 <div class="table-container">
-                    <table>
+                    <table class="orbitcard-usage-table">
                         <thead>
                             <tr>
                                 <th width="110px">卡 ID</th>
@@ -2931,7 +2935,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                                 <th width="110px">首充金额</th>
                                 <th width="120px">当前余额</th>
                                 <th width="100px">状态</th>
-                                <th>充值账号与订单</th>
+                                <th width="300px">充值账号与订单</th>
                                 <th width="150px">最近使用</th>
                                 <th width="100px" style="text-align:center">操作</th>
                             </tr>
