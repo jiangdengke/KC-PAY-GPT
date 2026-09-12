@@ -121,9 +121,11 @@ const PLAN_REUSE_LIMITS = Object.freeze({
 
 const CHANNEL3_PRODUCT_PRIORITY = Object.freeze([
     { bin: '55565979', network: 'MASTERCARD', label: '渠道 3 Mastercard' },
-    { bin: '400242001', network: 'VISA', label: '渠道 3 Visa 1' },
-    { bin: '40041641', network: 'VISA', label: '渠道 3 Visa 2' }
+    { bin: '40041641', network: 'VISA', label: '渠道 3 Visa 4004' }
 ]);
+
+// 4002 系列当前不可用：既不参与新卡排序，也不从上游 ACTIVE 卡中复用。
+const BLOCKED_CARD_BIN_PREFIXES = Object.freeze(['4002']);
 
 function getPlanReuseLimit(planType) {
     const key = String(planType || 'plus').trim();
@@ -164,6 +166,18 @@ function getChannel3Priority(product) {
     return index >= 0 ? index : null;
 }
 
+function isBlockedCardProduct(product = {}) {
+    const source = product && typeof product === 'object' ? product : {};
+    const bin = String(source.bin || source.cardBin || source.raw?.bin || '').replace(/\s+/g, '').trim();
+    const productCode = String(source.productCode || source.product_code || source.raw?.product_code || '').trim().toLowerCase();
+    const maskedNumber = String(source.cardNumberMasked || source.card_number_masked || source.raw?.card_number_masked || '').replace(/\s+/g, '');
+    return BLOCKED_CARD_BIN_PREFIXES.some((prefix) => (
+        bin.startsWith(prefix)
+        || maskedNumber.startsWith(prefix)
+        || productCode.includes(`:${prefix}`)
+    ));
+}
+
 function isProductAvailable(product) {
     if (product.remainingOpenCardNum == null || product.remainingOpenCardNum > 0) return true;
     // Provider-validated products expose 0 when the card table checks stock at open time.
@@ -189,6 +203,7 @@ function resolveProductPlanPrice(product, planType) {
 
 function rankProductsForPlan(data, planType = 'plus') {
     const products = normalizeProductList(data)
+        .filter((product) => !isBlockedCardProduct(product))
         .filter(isProductAvailable)
         .map((product) => ({ product, planPrice: resolveProductPlanPrice(product, planType) }));
 
@@ -304,7 +319,9 @@ function normalizeCard(row = {}) {
     return {
         cardId: Number(cardId),
         status: String(row.status || 'ACTIVE').trim().toUpperCase(),
+        bin: String(row.bin || row.card_bin || row.cardBin || '').replace(/\s+/g, '').trim(),
         last4: String(row.last4 || row.card_last4 || row.cardLast4 || row.card_number || row.cardNumber || '').slice(-4),
+        cardNumberMasked: String(row.card_number_masked || row.cardNumberMasked || '').trim(),
         productCode: String(row.product_code || row.productCode || '').trim(),
         balance: balance.value,
         balanceField: balance.field,
@@ -485,6 +502,8 @@ module.exports = {
     CHANNEL3_PRODUCT_PRIORITY,
     getPlanReuseLimit,
     getChannel3Priority,
+    isBlockedCardProduct,
+    BLOCKED_CARD_BIN_PREFIXES,
     isProductAvailable,
     normalizeProduct,
     normalizeProductList,

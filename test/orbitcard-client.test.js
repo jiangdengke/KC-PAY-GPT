@@ -98,9 +98,10 @@ describe('orbitcard client', () => {
         expect(orbitcard.getPlanReuseLimit('pro_20x')).toBe(1);
     });
 
-    it('prefers channel 3 Mastercard, then its Visa fallbacks', () => {
+    it('prefers channel 3 Mastercard, then the 4004 Visa fallback', () => {
         const selection = orbitcard.chooseProductForPlan({ list: [
             { product_code: 'tracked-cheap', bin: '555659', network: 'MASTERCARD', remaining_open_card_num: 500, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },
+            { product_code: 'amzkeys:400242001', bin: '400242001', network: 'UNKNOWN', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },
             { product_code: 'amzkeys:40041641', bin: '40041641', network: 'UNKNOWN', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },
             { product_code: 'amzkeys:55565979', bin: '55565979', network: 'UNKNOWN', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] }
         ] }, 'plus');
@@ -110,15 +111,27 @@ describe('orbitcard client', () => {
             channel: 3,
             channelPriority: 0
         });
-        expect(orbitcard.getChannel3Priority({ productCode: 'amzkeys:400242001', bin: '400242001' })).toBe(1);
+        expect(orbitcard.getChannel3Priority({ productCode: 'amzkeys:400242001', bin: '400242001' })).toBe(null);
         expect(orbitcard.getProductSelectionsForPlan({ list: [
-            { product_code: 'amzkeys:40041641', bin: '40041641', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },
-            { product_code: 'visa-40041641-duplicate', bin: '40041641', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '16.00' }] },
+            { product_code: 'amzkeys:400242001', bin: '400242001', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },
             { product_code: 'amzkeys:55565979', bin: '55565979', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },
-            { product_code: 'amzkeys:400242001', bin: '400242001', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '15', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] }
+            { product_code: 'visa-40041641-duplicate', bin: '40041641', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '16.00' }] },
+            { product_code: 'amzkeys:40041641', bin: '40041641', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '15', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] }
         ] }, 'plus').map((item) => item.product.productCode)).toEqual([
-            'amzkeys:55565979', 'amzkeys:400242001', 'amzkeys:40041641'
+            'amzkeys:55565979', 'amzkeys:40041641'
         ]);
+    });
+
+    it('blocks existing 4002 cards from reuse', () => {
+        expect(orbitcard.isBlockedCardProduct({
+            productCode: 'amzkeys:400242001',
+            bin: '400242001',
+            raw: { card_number_masked: '400242******5810' }
+        })).toBe(true);
+        expect(orbitcard.isBlockedCardProduct({
+            productCode: 'amzkeys:40041641',
+            bin: '40041641'
+        })).toBe(false);
     });
 
     it('creates exactly one card with the documented idempotency key', async () => {

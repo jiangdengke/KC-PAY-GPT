@@ -3549,7 +3549,8 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 await setProgress('running', 12, `正在查找可复用的 ${getPlanTypeLabel(planType)} 卡...`);
                 const cardList = await orbitcard.getCardList(orbitCfg);
                 if (!cardList.success) throw new Error(`Orbitcard 卡列表查询失败: ${cardList.error}`);
-                reservedOrbitcard = await store.reserveOrbitcardCard(cardList.data, `gptapi_${jobKey}`, {
+                const reusableCards = cardList.data.filter((card) => !orbitcard.isBlockedCardProduct(card));
+                reservedOrbitcard = await store.reserveOrbitcardCard(reusableCards, `gptapi_${jobKey}`, {
                     planType,
                     maxUsageCount: reuseLimit
                 });
