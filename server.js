@@ -55,6 +55,8 @@ function cleanupProcesses() {
 
 // WebSocket 客户端映射: jobKey -> Set<WebSocket>
 const taskClients = new Map();
+// 当前运行任务的验证码链接只保存在内存，不写入长期任务日志。
+const activeTaskCaptchas = new Map();
 const TERMINAL_TASK_STATUSES = new Set(['success', 'failed', 'manual', 'maintenance']);
 const activeForegroundJobs = new Set();
 
@@ -262,6 +264,13 @@ async function sendTaskSnapshot(ws, jobKey) {
         } catch (_) { /* ignore */ }
     }
     const media = extractTaskMediaFromOutput(task.raw_output || '');
+    let captcha = activeTaskCaptchas.get(jobKey) || null;
+    if (!captcha && task.gpt_api_captcha) {
+        try {
+            const parsed = JSON.parse(task.gpt_api_captcha);
+            captcha = parsed && typeof parsed === 'object' ? parsed : null;
+        } catch (_) { /* ignore malformed transient metadata */ }
+    }
 
     ws.send(JSON.stringify({
         type: 'snapshot',
@@ -272,6 +281,7 @@ async function sendTaskSnapshot(ws, jobKey) {
         cdkCode: task.cdk_code || null,
         phone: task.phone || null,
         cardLast4: task.card_last4 || null,
+        captcha,
         screenshots: [...new Set([...storedMedia.screenshots, ...media.screenshots])],
         videos: [...new Set([...storedMedia.videos, ...media.videos])],
         isTerminal: TERMINAL_TASK_STATUSES.has(task.status)
@@ -3466,8 +3476,17 @@ function mapGptApiPlanKey(planType, cfg = {}) {
 function sanitizeGptApiRaw(data, openProtocol) {
     if (!openProtocol || !data || typeof data !== 'object') return data;
     if (Array.isArray(data)) return data.map((item) => sanitizeGptApiRaw(item, true));
-    const copy = { ...data };
-    delete copy.session;
+    const copy = {};
+    for (const [key, value] of Object.entries(data)) {
+        if (key === 'session') continue;
+        if (key === 'captcha' && value && typeof value === 'object' && !Array.isArray(value)) {
+            const safeCaptcha = sanitizeGptApiRaw(value, true);
+            delete safeCaptcha.url;
+            copy[key] = safeCaptcha;
+            continue;
+        }
+        copy[key] = sanitizeGptApiRaw(value, true);
+    }
     return copy;
 }
 
@@ -3494,15 +3513,33 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
     let orbitcardRechargeRecorded = false;
 
     const setProgress = async (status, progress, message, extra = {}) => {
-        await store.updateTaskLog(jobKey, { status, progress, message, ...extra });
-        broadcastToTask(jobKey, {
+        const hasCaptcha = Object.prototype.hasOwnProperty.call(extra, 'captcha');
+        const { captcha, ...taskExtra } = extra;
+        if (hasCaptcha) {
+            if (captcha) activeTaskCaptchas.set(jobKey, captcha);
+            else activeTaskCaptchas.delete(jobKey);
+        }
+        await store.updateTaskLog(jobKey, {
+            status,
+            progress,
+            message,
+            ...taskExtra,
+            ...(hasCaptcha ? {
+                gptApiCaptcha: JSON.stringify(captcha
+                    ? { ...captcha, url: null }
+                    : null)
+            } : {})
+        });
+        const update = {
             type: status === 'running' ? 'progress' : 'status',
             jobKey,
             status,
             progress,
             message,
             cdkCode: cdk
-        });
+        };
+        if (hasCaptcha) update.captcha = captcha ?? null;
+        broadcastToTask(jobKey, update);
     };
 
     try {
@@ -3707,8 +3744,12 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         const maxPolls = Number(process.env.GPT_API_MAX_POLLS || 120);
         const pollIntervalMs = Number(process.env.GPT_API_POLL_INTERVAL_MS || 5000);
         let nextPollDelayMs = pollIntervalMs;
+        let pollCount = 0;
+        let captchaRequired = false;
+        let captchaId = '';
 
-        for (let poll = 1; poll <= maxPolls; poll += 1) {
+        while (pollCount < maxPolls || captchaRequired) {
+            pollCount += 1;
             await sleep(nextPollDelayMs);
 
             let queryRes = null;
@@ -3720,7 +3761,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             }
 
             if (!queryRes || !queryRes.success) {
-                logTask(jobKey, `状态轮询第 ${poll} 次失败: ${queryRes?.error || '未知错误'}`, 'warn');
+                logTask(jobKey, `状态轮询第 ${pollCount} 次失败: ${queryRes?.error || '未知错误'}`, 'warn');
                 nextPollDelayMs = Math.min(60000, Math.max(pollIntervalMs, Number(queryRes?.retryAfterMs || 0)));
                 continue;
             }
@@ -3740,7 +3781,29 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 sessionUpdate = JSON.stringify(sessionPayload);
             }
             const rawStatus = String(queryRes.rawStatus || '').toLowerCase();
-            const progress = Math.min(95, 40 + poll);
+            const stage = String(queryRes.stage || lastRaw?.stage || '').trim().toLowerCase();
+            const captcha = queryRes.captcha || gptApi.extractCaptcha(lastRaw);
+            const captchaStatus = String(captcha?.status || '').trim().toLowerCase();
+            const isCaptchaPending = stage === 'awaiting_captcha' || captchaStatus === 'pending';
+            if (isCaptchaPending) {
+                captchaRequired = true;
+                const nextCaptchaId = String(captcha?.id || '').trim();
+                if (nextCaptchaId && nextCaptchaId !== captchaId) {
+                    captchaId = nextCaptchaId;
+                }
+            } else if (stage === 'captcha_submitted' || captchaStatus === 'submitted') {
+                captchaRequired = false;
+            } else if (!captcha) {
+                captchaRequired = false;
+            }
+            const taskCaptcha = captcha
+                ? { ...captcha, stage: stage || null }
+                : (stage === 'awaiting_captcha'
+                    ? { id: captchaId || null, status: 'pending', url: null, expiresAt: null, stage }
+                    : (stage === 'captcha_submitted' && captchaId
+                    ? { id: captchaId, status: 'submitted', url: null, expiresAt: null, stage }
+                    : null));
+            const progress = Math.min(95, 40 + pollCount);
 
             if (isTerminalGptApiStatus(rawStatus)) {
                 const businessResult = lastRaw && typeof lastRaw.result === 'object' ? lastRaw.result : {};
@@ -3774,6 +3837,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                     {
                         gptApiRaw: JSON.stringify(sanitizeGptApiRaw(lastRaw, openProtocol)),
                         gptApiTopupCode: gptApi.extractTopupCode(lastRaw),
+                        captcha: null,
                         ...(sessionUpdate ? { sessionPayload: sessionUpdate } : {})
                     }
                 );
@@ -3783,7 +3847,8 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 break;
             }
 
-            await setProgress('running', progress, gptApi.formatProgressMessage(lastRaw, poll), {
+            await setProgress('running', progress, gptApi.formatProgressMessage(lastRaw, pollCount), {
+                captcha: taskCaptcha,
                 ...(sessionUpdate ? { sessionPayload: sessionUpdate } : {})
             });
         }
@@ -3802,7 +3867,8 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             });
             await setProgress(finalStatus, 99, finalMessage, {
                 gptApiRaw: JSON.stringify(sanitizeGptApiRaw(lastRaw, openProtocol)),
-                gptApiTopupCode: gptApi.extractTopupCode(lastRaw)
+                gptApiTopupCode: gptApi.extractTopupCode(lastRaw),
+                captcha: null
             });
             if (orbitcardRechargeRecorded) {
                 await store.updateOrbitcardRecharge(jobKey, { status: finalStatus, orderId, message: finalMessage });
@@ -3874,7 +3940,8 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             status: 'failed',
             message: manualReviewMessage,
             progress: 0,
-            cdkCode: cdk
+            cdkCode: cdk,
+            gptApiCaptcha: 'null'
         });
         broadcastToTask(jobKey, {
             type: 'status',
@@ -3882,10 +3949,12 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             status: 'failed',
             message: manualReviewMessage,
             cdkCode: cdk,
-            progress: 0
+            progress: 0,
+            captcha: null
         });
         notifyTaskOutcome({ event: 'failure', email: accountEmail, planType, cdk, jobKey, message: manualReviewMessage });
     } finally {
+        activeTaskCaptchas.delete(jobKey);
         releaseForegroundSlot(jobKey);
         if (shouldRollbackCdk) {
             await store.markCdkUnused(cdk).catch(() => { });
@@ -4510,6 +4579,13 @@ app.get('/api/task-status/:jobKey', async (req, res) => {
         if (!task) {
             return res.status(404).json({ success: false, message: '未找到该任务' });
         }
+        let captcha = activeTaskCaptchas.get(jobKey) || null;
+        if (!captcha && task.gpt_api_captcha) {
+            try {
+                const parsed = JSON.parse(task.gpt_api_captcha);
+                captcha = parsed && typeof parsed === 'object' ? parsed : null;
+            } catch (_) { /* ignore malformed transient metadata */ }
+        }
         return res.json({
             success: true,
             data: {
@@ -4520,6 +4596,7 @@ app.get('/api/task-status/:jobKey', async (req, res) => {
                 cdkCode: task.cdk_code || null,
                 phone: task.phone || null,
                 cardLast4: task.card_last4 || null,
+                captcha,
                 isTerminal: TERMINAL_TASK_STATUSES.has(task.status)
             }
         });

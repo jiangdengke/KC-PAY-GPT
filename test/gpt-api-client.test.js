@@ -86,6 +86,32 @@ describe('gpt api client', () => {
             .toBe('上游已收到订单，正在同步最新状态（已查询 3 次）');
     });
 
+    it('normalizes multi-round captcha metadata and user-facing states', () => {
+        const pending = client.extractCaptcha({
+            stage: 'awaiting_captcha',
+            captcha: {
+                id: 'cap_1',
+                status: 'pending',
+                url: 'https://recharge.example/captcha#ticket',
+                expires_at: '2026-09-13T15:00:00Z'
+            }
+        });
+        expect(pending).toEqual({
+            id: 'cap_1',
+            status: 'pending',
+            url: 'https://recharge.example/captcha#ticket',
+            expiresAt: '2026-09-13T15:00:00Z'
+        });
+        expect(client.formatProgressMessage({
+            stage: 'awaiting_captcha',
+            captcha: pending
+        })).toBe('上游需要完成人机验证，请点击页面中的验证按钮');
+        expect(client.formatProgressMessage({
+            stage: 'captcha_submitted',
+            captcha: { ...pending, status: 'submitted', url: null }
+        }, 2)).toBe('人机验证已提交，上游正在确认（已查询 2 次）');
+    });
+
     it('sends documented client reference and saved-card fields', async () => {
         const spy = vi.spyOn(axios, 'request').mockResolvedValue({
             status: 200,
@@ -215,6 +241,38 @@ describe('gpt api client', () => {
         expect(out).toMatchObject({ success: true, rawStatus: 'succeeded', retryAfterMs: 7000 });
         expect(out.data.subscriptionCancelled).toBe(true);
         expect(spy.mock.calls[0][0].url).toBe('https://recharge.desolate.run/api/v1/open/orders/ord_abc');
+    });
+
+    it('returns captcha and stage from a Desolate Open order status', async () => {
+        vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: {
+                code: 0,
+                data: {
+                    orderId: 'ord_captcha',
+                    status: 'pending',
+                    stage: 'awaiting_captcha',
+                    captcha: {
+                        id: 'cap_2',
+                        status: 'pending',
+                        url: 'https://recharge.example/captcha#ticket'
+                    }
+                }
+            }
+        });
+        const out = await client.queryOrder(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_live_test' },
+            'ord_captcha'
+        );
+        expect(out).toMatchObject({
+            rawStatus: 'pending',
+            stage: 'awaiting_captcha',
+            captcha: {
+                id: 'cap_2',
+                status: 'pending',
+                url: 'https://recharge.example/captcha#ticket'
+            }
+        });
     });
 
 });

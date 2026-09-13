@@ -296,6 +296,7 @@ async function ensureGptApiColumns() {
     await ensureColumn('task_logs', 'gpt_api_order_id', "VARCHAR(128) NULL DEFAULT NULL");
     await ensureColumn('task_logs', 'gpt_api_task_id', "VARCHAR(128) NULL DEFAULT NULL");
     await ensureColumn('task_logs', 'gpt_api_raw', "MEDIUMTEXT NULL");
+    await ensureColumn('task_logs', 'gpt_api_captcha', "MEDIUMTEXT NULL");
 }
 
 async function ensureOrbitcardUsageTable() {
@@ -2836,7 +2837,7 @@ async function createTaskLog({ tokenPreview, sessionPayload, cdkCode, phone, car
 async function getTaskStatus(jobKey) {
     const rows = await runQuery(
         `SELECT status, message, progress, raw_output, cdk_code, phone, card_last4, failure_screenshots,
-                gpt_api_order_id, gpt_api_task_id, gpt_api_raw, gpt_api_topup_code
+                gpt_api_order_id, gpt_api_task_id, gpt_api_raw, gpt_api_topup_code, gpt_api_captcha
          FROM task_logs
          WHERE job_key = ?
          LIMIT 1`,
@@ -2890,7 +2891,7 @@ async function deleteTaskLogByJobKey(jobKey) {
     return { deleted: Number(result.affectedRows || 0), mediaDeleted };
 }
 
-async function updateTaskLog(jobKey, { status, message, rawOutput, cdkCode, phone, cardLast4, progress, failureScreenshots, sessionPayload, gptApiOrderId, gptApiTaskId, gptApiRaw, gptApiTopupCode }) {
+async function updateTaskLog(jobKey, { status, message, rawOutput, cdkCode, phone, cardLast4, progress, failureScreenshots, sessionPayload, gptApiOrderId, gptApiTaskId, gptApiRaw, gptApiTopupCode, gptApiCaptcha }) {
     const screenshotsJson = Array.isArray(failureScreenshots)
         ? JSON.stringify(failureScreenshots)
         : null;
@@ -2908,7 +2909,8 @@ async function updateTaskLog(jobKey, { status, message, rawOutput, cdkCode, phon
              gpt_api_order_id = COALESCE(?, gpt_api_order_id),
              gpt_api_task_id = COALESCE(?, gpt_api_task_id),
              gpt_api_raw = COALESCE(?, gpt_api_raw),
-             gpt_api_topup_code = COALESCE(?, gpt_api_topup_code)
+             gpt_api_topup_code = COALESCE(?, gpt_api_topup_code),
+             gpt_api_captcha = COALESCE(?, gpt_api_captcha)
          WHERE job_key = ?`,
         [
             String(status),
@@ -2924,6 +2926,7 @@ async function updateTaskLog(jobKey, { status, message, rawOutput, cdkCode, phon
             gptApiTaskId || null,
             gptApiRaw || null,
             gptApiTopupCode || null,
+            gptApiCaptcha || null,
             String(jobKey)
         ]
     );

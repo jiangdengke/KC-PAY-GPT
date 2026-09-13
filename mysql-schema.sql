@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS task_logs (
     raw_output MEDIUMTEXT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    gpt_api_captcha MEDIUMTEXT NULL,
     UNIQUE KEY uniq_task_logs_job_key (job_key),
     KEY idx_task_logs_created (created_at),
     KEY idx_task_logs_status_created (status, created_at)

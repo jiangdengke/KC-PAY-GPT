@@ -392,6 +392,40 @@ function extractTopupCode(data) {
     return code == null || String(code).trim() === '' ? null : String(code).trim();
 }
 
+function normalizeCaptcha(value) {
+    if (!value || typeof value !== 'object') return null;
+    const id = String(value.id ?? value.captcha_id ?? value.captchaId ?? '').trim();
+    const status = String(value.status ?? '').trim().toLowerCase();
+    const url = String(value.url ?? '').trim();
+    const expiresAt = value.expires_at ?? value.expiresAt ?? value.expire_at ?? value.expireAt ?? null;
+    return {
+        id: id || null,
+        status: status || null,
+        url: url || null,
+        expiresAt: expiresAt == null || String(expiresAt).trim() === '' ? null : String(expiresAt).trim()
+    };
+}
+
+function extractCaptcha(data) {
+    if (!data || typeof data !== 'object') return null;
+    return normalizeCaptcha(
+        data.captcha
+        ?? data.order?.captcha
+        ?? data.result?.captcha
+        ?? null
+    );
+}
+
+function extractStage(data) {
+    if (!data || typeof data !== 'object') return '';
+    return String(
+        data.stage
+        ?? data.order?.stage
+        ?? data.result?.stage
+        ?? ''
+    ).trim().toLowerCase();
+}
+
 /**
  * 查询单笔代充订单状态 (GET /pay/orders/{order_id})
  */
@@ -410,6 +444,8 @@ async function queryOrder(cfg, orderId) {
         data,
         raw: res.data,
         rawStatus: extractStatus(data),
+        stage: extractStage(data),
+        captcha: extractCaptcha(data),
         retryAfterMs: res.retryAfterMs
     };
 }
@@ -429,6 +465,8 @@ async function queryTask(cfg, taskId) {
         status: res.status,
         data: res.data,
         rawStatus: extractStatus(res.data),
+        stage: extractStage(res.data),
+        captcha: extractCaptcha(res.data),
         retryAfterMs: res.retryAfterMs
     };
 }
@@ -500,6 +538,17 @@ const IN_PROGRESS_STATUS_MESSAGES = Object.freeze({
 function formatProgressMessage(data, pollCount = 0) {
     const source = data && typeof data === 'object' ? data : {};
     const result = source.result && typeof source.result === 'object' ? source.result : {};
+    const captcha = source.captcha || result.captcha;
+    const stage = String(source.stage ?? result.stage ?? '').trim().toLowerCase();
+    const captchaStatus = String(captcha?.status || '').trim().toLowerCase();
+    if (stage === 'awaiting_captcha' || captchaStatus === 'pending') {
+        return '上游需要完成人机验证，请点击页面中的验证按钮';
+    }
+    if (stage === 'captcha_submitted' || captchaStatus === 'submitted') {
+        const count = Number(pollCount);
+        const suffix = Number.isFinite(count) && count > 0 ? `（已查询 ${Math.floor(count)} 次）` : '';
+        return `人机验证已提交，上游正在确认${suffix}`;
+    }
     const displayStatus = String(
         source.display_status
         ?? source.displayStatus
@@ -637,6 +686,9 @@ module.exports = {
     extractOrderId,
     extractTaskId,
     extractTopupCode,
+    normalizeCaptcha,
+    extractCaptcha,
+    extractStage,
     extractStatus,
     formatProgressMessage,
     isDesolateOpenProtocol,

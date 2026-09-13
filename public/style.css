@@ -480,6 +480,66 @@ button::after {
     box-shadow: none;
 }
 
+.captcha-verification {
+    margin-top: 18px;
+    padding: 16px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    border: 1px solid #fcd34d;
+    border-radius: var(--radius);
+    background: #fffbeb;
+    color: #78350f;
+    animation: slideUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.captcha-verification-copy {
+    min-width: 0;
+}
+
+.captcha-verification-copy strong {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+}
+
+.captcha-verification-copy strong svg {
+    width: 18px;
+    height: 18px;
+}
+
+.captcha-verification-copy p {
+    margin: 6px 0 0;
+    color: #92400e;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.captcha-verification-copy small {
+    display: block;
+    margin-top: 4px;
+    color: #a16207;
+    font-size: 12px;
+}
+
+.captcha-verification button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    .captcha-verification {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .captcha-verification button {
+        width: 100%;
+    }
+}
+
 .status-message {
     margin-top: 16px;
     padding: 14px 16px;
