@@ -3788,6 +3788,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 const nextCaptchaId = String(captcha?.id || '').trim();
                 if (nextCaptchaId && nextCaptchaId !== captchaId) {
                     captchaId = nextCaptchaId;
+                    logTask(jobKey, `订单需要人机验证 captcha=${captchaId} url=${captcha?.url ? 'ready' : 'pending'}`);
                 }
             } else if (stage === 'captcha_submitted' || captchaStatus === 'submitted') {
                 captchaRequired = false;
@@ -4603,6 +4604,62 @@ app.get('/api/task-status/:jobKey', async (req, res) => {
         });
     } catch (error) {
         return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+app.get('/api/task-captcha/:jobKey', async (req, res) => {
+    const jobKey = String(req.params.jobKey || '').trim();
+    if (!jobKey || jobKey.length > 128) {
+        return res.status(400).type('text/plain').send('缺少有效任务编号');
+    }
+
+    try {
+        await ensureStoreReady();
+        const task = await store.getTaskStatus(jobKey);
+        if (!task || task.status !== 'running' || !task.gpt_api_order_id) {
+            return res.status(409).type('text/plain').send('当前任务不需要人机验证，请返回原页面查看最新状态');
+        }
+
+        let storedCaptcha = null;
+        try {
+            storedCaptcha = task.gpt_api_captcha ? JSON.parse(task.gpt_api_captcha) : null;
+        } catch (_) { /* ignore malformed transient metadata */ }
+        const storedStage = String(storedCaptcha?.stage || '').trim().toLowerCase();
+        const storedStatus = String(storedCaptcha?.status || '').trim().toLowerCase();
+        if (storedStage !== 'awaiting_captcha' && storedStatus !== 'pending') {
+            return res.status(409).type('text/plain').send('当前任务不需要人机验证，请返回原页面查看最新状态');
+        }
+
+        const cfg = await store.getGptApiConfig();
+        if (!cfg.enabled || !cfg.api_key || !gptApi.isDesolateOpenProtocol(cfg)) {
+            return res.status(409).type('text/plain').send('当前任务没有可用的验证入口');
+        }
+
+        const result = await gptApi.queryOrder(cfg, task.gpt_api_order_id);
+        const captcha = result.success ? result.captcha : null;
+        const stage = String(result.stage || '').trim().toLowerCase();
+        const captchaStatus = String(captcha?.status || '').trim().toLowerCase();
+        const pending = stage === 'awaiting_captcha' || captchaStatus === 'pending';
+        if (!pending || !captcha?.url) {
+            return res.status(409).type('text/plain').send('验证入口暂未就绪，请返回原页面稍后重试');
+        }
+
+        let target = null;
+        try {
+            target = new URL(String(captcha.url));
+        } catch (_) {
+            return res.status(502).type('text/plain').send('验证入口格式无效，请联系客服处理');
+        }
+        if (target.protocol !== 'https:') {
+            return res.status(502).type('text/plain').send('验证入口不安全，请联系客服处理');
+        }
+
+        activeTaskCaptchas.set(jobKey, { ...captcha, stage: stage || null });
+        res.setHeader('Cache-Control', 'no-store');
+        return res.redirect(302, target.toString());
+    } catch (error) {
+        logTask(jobKey, `获取人机验证入口失败: ${error.message}`, 'warn');
+        return res.status(502).type('text/plain').send('验证入口获取失败，请返回原页面稍后重试');
     }
 });
 

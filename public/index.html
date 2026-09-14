@@ -231,14 +231,6 @@
             return Number.isFinite(parsed) ? parsed : NaN;
         }
 
-        function isSafeCaptchaUrl(value) {
-            try {
-                return new URL(String(value || ''), window.location.href).protocol === 'https:';
-            } catch (_) {
-                return false;
-            }
-        }
-
         function updateCaptchaVerification(captcha) {
             if (!captcha || typeof captcha !== 'object') {
                 hideCaptchaVerification();
@@ -263,7 +255,7 @@
             const expired = Number.isFinite(expiresMs) && expiresMs <= Date.now();
             const pending = next.stage === 'awaiting_captcha' || next.status === 'pending';
             const submitted = next.stage === 'captcha_submitted' || next.status === 'submitted';
-            const canOpen = pending && isSafeCaptchaUrl(next.url) && !expired;
+            const canOpen = pending && Boolean(activeJobKey) && !expired;
 
             if (captchaVerificationPanel) captchaVerificationPanel.style.display = 'flex';
             if (captchaVerificationText) {
@@ -271,9 +263,7 @@
                     ? '验证已提交，系统正在确认结果，请保持此页面打开。'
                     : expired
                         ? '验证链接已过期，系统会继续同步订单状态。'
-                        : next.url
-                            ? '请点击按钮打开验证页面，完成后返回此页等待结果。'
-                            : '系统已要求验证，验证入口正在准备，请稍候。';
+                        : '请点击按钮打开验证页面，完成后返回此页等待结果。';
             }
             if (captchaVerificationExpiry) {
                 captchaVerificationExpiry.textContent = Number.isFinite(expiresMs) && !expired
@@ -288,11 +278,12 @@
 
         captchaVerificationBtn?.addEventListener('click', () => {
             const current = activeCaptcha;
-            if (!current?.url || !isSafeCaptchaUrl(current.url) || current.status !== 'pending'
+            const pending = current?.stage === 'awaiting_captcha' || current?.status === 'pending';
+            if (!pending || !activeJobKey
                 || (current.expiresAt && parseCaptchaExpiry(current.expiresAt) <= Date.now())) {
                 return;
             }
-            const popup = window.open(current.url, '_blank');
+            const popup = window.open(`/api/task-captcha/${encodeURIComponent(activeJobKey)}`, '_blank');
             if (!popup) {
                 showStatus('浏览器拦截了验证窗口，请允许弹窗后再次点击。', 'error');
                 return;
