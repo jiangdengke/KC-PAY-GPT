@@ -77,13 +77,13 @@ describe('gpt api client', () => {
 
     it('formats provider queue and processing states for end users', () => {
         expect(client.formatProgressMessage({ status: 'pending', display_status: 'queued' }, 1))
-            .toBe('订单已进入上游队列，等待处理（已查询 1 次）');
+            .toBe('订单已进入处理队列，等待处理（已查询 1 次）');
         expect(client.formatProgressMessage({ status: 'processing' }, 4))
-            .toBe('上游正在处理订单（已查询 4 次）');
+            .toBe('订单正在处理中（已查询 4 次）');
         expect(client.formatProgressMessage({ status: 'running', queue_status: 'stalled' }, 2))
-            .toBe('上游处理较慢，系统仍在等待结果（已查询 2 次）');
+            .toBe('订单处理较慢，系统仍在等待结果（已查询 2 次）');
         expect(client.formatProgressMessage({ status: 'unknown' }, 3))
-            .toBe('上游已收到订单，正在同步最新状态（已查询 3 次）');
+            .toBe('订单已提交，正在同步最新状态（已查询 3 次）');
     });
 
     it('normalizes multi-round captcha metadata and user-facing states', () => {
@@ -105,11 +105,11 @@ describe('gpt api client', () => {
         expect(client.formatProgressMessage({
             stage: 'awaiting_captcha',
             captcha: pending
-        })).toBe('上游需要完成人机验证，请点击页面中的验证按钮');
+        })).toBe('需要完成人机验证，请点击页面中的验证按钮');
         expect(client.formatProgressMessage({
             stage: 'captcha_submitted',
             captcha: { ...pending, status: 'submitted', url: null }
-        }, 2)).toBe('人机验证已提交，上游正在确认（已查询 2 次）');
+        }, 2)).toBe('人机验证已提交，系统正在确认（已查询 2 次）');
     });
 
     it('sends documented client reference and saved-card fields', async () => {

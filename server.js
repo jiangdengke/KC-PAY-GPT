@@ -3583,7 +3583,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             };
             const reuseLimit = orbitcard.getPlanReuseLimit(planType);
             if (reuseLimit > 1) {
-                await setProgress('running', 12, `正在查找可复用的 ${getPlanTypeLabel(planType)} 卡...`);
+                await setProgress('running', 12, '正在准备支付方式...');
                 const cardList = await orbitcard.getCardList(orbitCfg);
                 if (!cardList.success) throw new Error(`Orbitcard 卡列表查询失败: ${cardList.error}`);
                 const reusableCards = cardList.data.filter((card) => !orbitcard.isBlockedCardProduct(card));
@@ -3593,9 +3593,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 });
             }
 
-            await setProgress('running', 14, reservedOrbitcard
-                ? `正在读取复用卡资料（第 ${Number(reservedOrbitcard.usage_count || 0) + 1}/${reuseLimit} 次）...`
-                : `正在查询 ${getPlanTypeLabel(planType)} 的可开卡产品...`);
+            await setProgress('running', 14, '正在准备支付信息...');
             let selection = null;
             let createdOrbitcard = false;
             if (!reservedOrbitcard) {
@@ -3612,7 +3610,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                     const channelLabel = candidate.channel === 3
                         ? `渠道 3 ${candidate.network || '卡'} BIN ${candidate.product.bin || candidate.product.productCode}`
                         : candidate.product.productCode;
-                    await setProgress('running', 17, `正在为 ${getPlanTypeLabel(planType)} 创建卡（${channelLabel}，首充 ${candidate.amount} USD，最多使用 ${candidate.maxUsageCount} 次）...`);
+                    logTask(jobKey, `为 ${getPlanTypeLabel(planType)} 创建卡（${channelLabel}，首充 ${candidate.amount} USD，最多使用 ${candidate.maxUsageCount} 次）...`);
                     const createResult = await orbitcard.createCard(orbitCfg, {
                         productCode: candidate.product.productCode,
                         amount: candidate.amount,
@@ -3701,7 +3699,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         }
 
         // 套餐从 CDK 的 plan_type 同步；国家币种使用协议默认值（PH / PHP）
-        await setProgress('running', 20, '正在提交代充订单...');
+        await setProgress('running', 20, '正在提交开通订单...');
         const idempotencyKey = `cdk-${cdk}`;
         const submit = await gptApi.submitPay(cfg, {
             planKey: apiPlanKey,
@@ -3727,7 +3725,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             throw new Error(`代充提交成功但未返回订单号: ${JSON.stringify(submit.data).slice(0, 300)}`);
         }
 
-        await setProgress('running', 35, `代充订单已创建 ${orderId}，正在等待上游处理...`, {
+        await setProgress('running', 35, '订单已创建，正在等待处理...', {
             gptApiOrderId: orderId,
             gptApiTaskId: taskId,
             gptApiRaw: JSON.stringify(sanitizeGptApiRaw(submit.data, openProtocol)),
@@ -3739,7 +3737,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
 
         // 轮询状态
         let finalStatus = 'running';
-        let finalMessage = '第三方代充进行中';
+        let finalMessage = '订单正在处理中';
         let lastRaw = submit.data;
         const maxPolls = Number(process.env.GPT_API_MAX_POLLS || 120);
         const pollIntervalMs = Number(process.env.GPT_API_POLL_INTERVAL_MS || 5000);
@@ -3813,21 +3811,24 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 const failureDetail = openProtocol
                     ? (lastRaw?.failureMessage || lastRaw?.failureCode || rawStatus || 'unknown')
                     : (businessResult.error || lastRaw?.error || businessResult.status || rawStatus || 'unknown');
+                const internalFailureMessage = `第三方代充失败: ${failureDetail}`;
+                if (!succeeded) {
+                    logTask(jobKey, `订单终态失败 status=${rawStatus} detail=${failureDetail}`, 'warn');
+                }
                 finalStatus = succeeded ? 'success' : 'failed';
                 finalMessage = succeeded
                     ? (openProtocol && lastRaw?.subscriptionCancelled === false
-                        ? '第三方代充开通成功，但自动续订取消状态未确认，请到目标账户账单页核对'
-                        : '第三方代充开通成功')
-                    : `第三方代充失败: ${failureDetail}`;
+                        ? '开通成功，但自动续订取消状态未确认，请到目标账户账单页核对'
+                        : '开通成功')
+                    : '本次开通未完成，已转人工确认，请联系客服处理后再试';
                 if (!succeeded) {
-                    finalMessage = getManualReviewMessage(finalMessage);
                     await store.createActivationManualHold({
                         accountKey,
                         accountEmail,
                         planType,
                         failedJobKey: jobKey,
                         cdkCode: cdk,
-                        reason: finalMessage
+                        reason: internalFailureMessage
                     });
                 }
                 await setProgress(
@@ -3855,8 +3856,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
 
         if (finalStatus === 'running') {
             finalStatus = 'failed';
-            finalMessage = '第三方代充超时未完成，请稍后在第三方平台查询订单状态';
-            finalMessage = getManualReviewMessage(finalMessage);
+            finalMessage = '订单处理超时，已转人工确认，请联系客服处理后再试';
             await store.createActivationManualHold({
                 accountKey,
                 accountEmail,
@@ -3917,6 +3917,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
     } catch (error) {
         console.error(`[GPT API Task Error] ${jobKey}:`, error);
         const manualReviewMessage = getManualReviewMessage(error.message);
+        const customerFailureMessage = '本次开通未完成，已转人工确认，请联系客服处理后再试';
         await store.createActivationManualHold({
             accountKey,
             accountEmail,
@@ -3938,7 +3939,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         }
         await store.updateTaskLog(jobKey, {
             status: 'failed',
-            message: manualReviewMessage,
+            message: customerFailureMessage,
             progress: 0,
             cdkCode: cdk,
             gptApiCaptcha: 'null'
@@ -3947,7 +3948,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             type: 'status',
             jobKey,
             status: 'failed',
-            message: manualReviewMessage,
+            message: customerFailureMessage,
             cdkCode: cdk,
             progress: 0,
             captcha: null

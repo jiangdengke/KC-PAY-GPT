@@ -520,16 +520,16 @@ function extractStatus(data) {
 }
 
 const IN_PROGRESS_STATUS_MESSAGES = Object.freeze({
-    queued: '订单已进入上游队列，等待处理',
-    pending: '订单已进入上游队列，等待处理',
-    waiting: '订单已进入上游队列，等待处理',
-    accepted: '订单已受理，等待上游处理',
-    processing: '上游正在处理订单',
-    running: '上游正在处理订单',
-    in_progress: '上游正在处理订单',
-    requires_cvc: '上游需要补充验证信息，订单暂未完成',
-    system_error: '上游暂时异常，系统正在重试',
-    stalled: '上游处理较慢，系统仍在等待结果'
+    queued: '订单已进入处理队列，等待处理',
+    pending: '订单已进入处理队列，等待处理',
+    waiting: '订单已进入处理队列，等待处理',
+    accepted: '订单已受理，等待处理',
+    processing: '订单正在处理中',
+    running: '订单正在处理中',
+    in_progress: '订单正在处理中',
+    requires_cvc: '订单正在进行安全验证',
+    system_error: '系统暂时繁忙，正在重试',
+    stalled: '订单处理较慢，系统仍在等待结果'
 });
 
 /**
@@ -542,12 +542,12 @@ function formatProgressMessage(data, pollCount = 0) {
     const stage = String(source.stage ?? result.stage ?? '').trim().toLowerCase();
     const captchaStatus = String(captcha?.status || '').trim().toLowerCase();
     if (stage === 'awaiting_captcha' || captchaStatus === 'pending') {
-        return '上游需要完成人机验证，请点击页面中的验证按钮';
+        return '需要完成人机验证，请点击页面中的验证按钮';
     }
     if (stage === 'captcha_submitted' || captchaStatus === 'submitted') {
         const count = Number(pollCount);
         const suffix = Number.isFinite(count) && count > 0 ? `（已查询 ${Math.floor(count)} 次）` : '';
-        return `人机验证已提交，上游正在确认${suffix}`;
+        return `人机验证已提交，系统正在确认${suffix}`;
     }
     const displayStatus = String(
         source.display_status
@@ -560,7 +560,7 @@ function formatProgressMessage(data, pollCount = 0) {
     ).trim().toLowerCase();
     const businessStatus = String(source.status ?? source.state ?? result.status ?? '').trim().toLowerCase();
     const key = displayStatus || businessStatus;
-    const message = IN_PROGRESS_STATUS_MESSAGES[key] || '上游已收到订单，正在同步最新状态';
+    const message = IN_PROGRESS_STATUS_MESSAGES[key] || '订单已提交，正在同步最新状态';
     const count = Number(pollCount);
     return Number.isFinite(count) && count > 0 ? `${message}（已查询 ${Math.floor(count)} 次）` : message;
 }
