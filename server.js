@@ -3607,8 +3607,8 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 for (let candidateIndex = 0; candidateIndex < selections.length; candidateIndex += 1) {
                     const candidate = selections[candidateIndex];
                     selection = candidate;
-                    const channelLabel = candidate.channel === 3
-                        ? `渠道 3 ${candidate.network || '卡'} BIN ${candidate.product.bin || candidate.product.productCode}`
+                    const channelLabel = candidate.channel
+                        ? `渠道 ${candidate.channel} ${candidate.network || '卡'} BIN ${candidate.product.bin || candidate.product.productCode}`
                         : candidate.product.productCode;
                     logTask(jobKey, `为 ${getPlanTypeLabel(planType)} 创建卡（${channelLabel}，首充 ${candidate.amount} USD，最多使用 ${candidate.maxUsageCount} 次）...`);
                     const createResult = await orbitcard.createCard(orbitCfg, {

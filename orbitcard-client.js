@@ -124,6 +124,10 @@ const CHANNEL3_PRODUCT_PRIORITY = Object.freeze([
     { bin: '40041641', network: 'VISA', label: '渠道 3 Visa 4004' }
 ]);
 
+const CHANNEL1_PRODUCT_PRIORITY = Object.freeze([
+    { binPrefix: '5556', network: 'MASTERCARD', label: '渠道 1 Mastercard 5556' }
+]);
+
 // 4002 系列当前不可用：既不参与新卡排序，也不从上游 ACTIVE 卡中复用。
 const BLOCKED_CARD_BIN_PREFIXES = Object.freeze(['4002']);
 
@@ -163,6 +167,13 @@ function getChannel3Priority(product) {
     const index = CHANNEL3_PRODUCT_PRIORITY.findIndex((item) => (
         (bin && bin === item.bin) || code === `amzkeys:${item.bin}`
     ));
+    return index >= 0 ? index : null;
+}
+
+function getChannel1Priority(product) {
+    if (String(product?.inventoryMode || '').trim().toLowerCase() !== 'tracked') return null;
+    const bin = String(product?.bin || '').replace(/\s+/g, '').trim();
+    const index = CHANNEL1_PRODUCT_PRIORITY.findIndex((item) => bin.startsWith(item.binPrefix));
     return index >= 0 ? index : null;
 }
 
@@ -207,7 +218,8 @@ function rankProductsForPlan(data, planType = 'plus') {
         .filter(isProductAvailable)
         .map((product) => ({ product, planPrice: resolveProductPlanPrice(product, planType) }));
 
-    // Prefer channel 3 products, then a live plan price, then the lowest current price.
+    // Prefer channel 3 products, then channel 1 Mastercard 5556, then a live
+    // plan price and the lowest current price for uncategorized products.
     products.sort((a, b) => {
         const aChannelPriority = getChannel3Priority(a.product);
         const bChannelPriority = getChannel3Priority(b.product);
@@ -215,6 +227,13 @@ function rankProductsForPlan(data, planType = 'plus') {
             if (aChannelPriority === null) return 1;
             if (bChannelPriority === null) return -1;
             if (aChannelPriority !== bChannelPriority) return aChannelPriority - bChannelPriority;
+        }
+        const aChannel1Priority = getChannel1Priority(a.product);
+        const bChannel1Priority = getChannel1Priority(b.product);
+        if (aChannel1Priority !== null || bChannel1Priority !== null) {
+            if (aChannel1Priority === null) return 1;
+            if (bChannel1Priority === null) return -1;
+            if (aChannel1Priority !== bChannel1Priority) return aChannel1Priority - bChannel1Priority;
         }
         if (Boolean(a.planPrice) !== Boolean(b.planPrice)) return a.planPrice ? -1 : 1;
         if (a.planPrice && b.planPrice && a.planPrice.price !== b.planPrice.price) {
@@ -233,7 +252,17 @@ function rankProductsForPlan(data, planType = 'plus') {
         seenChannel3Priorities.add(priority);
         channel3Products.push(item);
     }
-    return channel3Products.length ? channel3Products : products;
+    if (channel3Products.length) return channel3Products;
+
+    // The tracked inventory is channel 1. Do not silently fall back to a
+    // different channel-1 BIN when the configured 5556 product is unavailable.
+    const channel1Inventory = products.filter((item) => (
+        String(item.product.inventoryMode || '').trim().toLowerCase() === 'tracked'
+    ));
+    if (channel1Inventory.length) {
+        return channel1Inventory.filter((item) => getChannel1Priority(item.product) !== null);
+    }
+    return products;
 }
 
 function buildProductSelection(product, planPrice, planType) {
@@ -250,13 +279,15 @@ function buildProductSelection(product, planPrice, planType) {
         : (reuseLimit > 1 ? fallback * reuseLimit : fallback);
     const rawAmount = Math.max(minimum, priceTarget);
     const amount = (Math.ceil(rawAmount / 5) * 5).toFixed(2);
+    const channel3Priority = getChannel3Priority(product);
+    const channel1Priority = getChannel1Priority(product);
     return {
         product,
         planPrice,
         amount,
         maxUsageCount: reuseLimit,
-        channel: getChannel3Priority(product) == null ? null : 3,
-        channelPriority: getChannel3Priority(product),
+        channel: channel3Priority !== null ? 3 : (channel1Priority !== null ? 1 : null),
+        channelPriority: channel3Priority ?? channel1Priority,
     };
 }
 
@@ -500,8 +531,10 @@ module.exports = {
     getProductCode,
     PLAN_REUSE_LIMITS,
     CHANNEL3_PRODUCT_PRIORITY,
+    CHANNEL1_PRODUCT_PRIORITY,
     getPlanReuseLimit,
     getChannel3Priority,
+    getChannel1Priority,
     isBlockedCardProduct,
     BLOCKED_CARD_BIN_PREFIXES,
     isProductAvailable,

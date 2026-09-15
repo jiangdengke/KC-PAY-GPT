@@ -122,6 +122,34 @@ describe('orbitcard client', () => {
         ]);
     });
 
+    it('uses only 5556 Mastercard products for channel 1', () => {
+        const selections = orbitcard.getProductSelectionsForPlan({ list: [
+            { product_code: 'G5321KC', bin: '53211359', network: 'MASTERCARD', open_card_inventory_mode: 'tracked', remaining_open_card_num: 89, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '20.00' }] },
+            { product_code: 'P5378OX', bin: '537872', network: 'MASTERCARD', open_card_inventory_mode: 'tracked', remaining_open_card_num: 10979, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.70' }] },
+            { product_code: 'P5556XV', bin: '555659', network: 'MASTERCARD', open_card_inventory_mode: 'tracked', remaining_open_card_num: 2187, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.70' }] },
+            { product_code: 'G5554LC', bin: '555671544015', network: 'MASTERCARD', open_card_inventory_mode: 'tracked', remaining_open_card_num: 1775, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '16.05' }] }
+        ] }, 'plus');
+        expect(selections.map((item) => item.product.productCode)).toEqual(['P5556XV', 'G5554LC']);
+        expect(selections[0]).toMatchObject({
+            product: { productCode: 'P5556XV', bin: '555659' },
+            channel: 1,
+            channelPriority: 0
+        });
+        expect(selections[1]).toMatchObject({
+            product: { productCode: 'G5554LC', bin: '555671544015' },
+            channel: 1,
+            channelPriority: 0
+        });
+    });
+
+    it('does not fall back to another channel 1 BIN when 5556 is unavailable', () => {
+        const selections = orbitcard.getProductSelectionsForPlan({ list: [
+            { product_code: 'P5378OX', bin: '537872', open_card_inventory_mode: 'tracked', remaining_open_card_num: 10, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.70' }] },
+            { product_code: 'G5321KC', bin: '53211359', open_card_inventory_mode: 'tracked', remaining_open_card_num: 10, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '20.00' }] }
+        ] }, 'plus');
+        expect(selections).toEqual([]);
+    });
+
     it('blocks existing 4002 cards from reuse', () => {
         expect(orbitcard.isBlockedCardProduct({
             productCode: 'amzkeys:400242001',
