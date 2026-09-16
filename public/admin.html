@@ -2134,9 +2134,9 @@
                         <p id="orbitcard_api_secret_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
                     </div>
                     <div class="form-group" style="margin-top: 16px;">
-                        <label for="orbitcard_next_product_code">下一次新开卡产品</label>
+                        <label for="orbitcard_product_code">后续新开卡产品</label>
                         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                            <select id="orbitcard_next_product_code" class="asset-input" style="flex:1; min-width:240px;">
+                            <select id="orbitcard_product_code" class="asset-input" style="flex:1; min-width:240px;">
                                 <option value="">自动按优先级选择</option>
                             </select>
                             <button type="button" class="btn btn-secondary" onclick="loadOrbitcardProductOptions()" title="刷新 Orbitcard 产品目录">
@@ -2144,7 +2144,7 @@
                             </button>
                         </div>
                         <p id="orbitcard_next_product_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
-                            选择后仅对下一笔需要新开卡的订单生效；有可复用卡时仍优先复用，不会为此额外开卡。
+                            选择后会持续用于后续所有需要新开卡的订单，直到改为自动或选择其他产品；有可复用卡时仍优先复用。
                         </p>
                     </div>
                 </div>
@@ -8497,7 +8497,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 const orbitKeyHint = document.getElementById('orbitcard_api_key_hint');
                 const orbitSecretEl = document.getElementById('orbitcard_api_secret');
                 const orbitSecretHint = document.getElementById('orbitcard_api_secret_hint');
-                const nextProductEl = document.getElementById('orbitcard_next_product_code');
+                const nextProductEl = document.getElementById('orbitcard_product_code');
                 if (keyEl) keyEl.value = '';
                 if (keyEl) keyEl.placeholder = cfg.api_key_saved
                     ? `已保存（${cfg.api_key_preview || 'ap_live_…'}）留空不修改`
@@ -8514,14 +8514,14 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 if (orbitSecretHint) orbitSecretHint.textContent = cfg.orbitcard_api_secret_configured
                     ? '✓ Orbitcard Secret 已保存，留空不修改'
                     : '尚未配置 Orbitcard Secret';
-                if (nextProductEl) nextProductEl.value = cfg.orbitcard_next_product_code || '';
+                if (nextProductEl) nextProductEl.value = cfg.orbitcard_product_code || '';
                 updateOrbitcardConfigVisibility();
                 if (keyHint) {
                     keyHint.textContent = cfg.api_key_saved ? '✓ API Key 已保存' : '尚未配置 API Key';
                 }
                 if (cfg.api_key_saved) refreshGptApiStatus();
                 if (cfg.card_source === 'orbitcard') {
-                    await loadOrbitcardProductOptions(cfg.orbitcard_next_product_code || '');
+                    await loadOrbitcardProductOptions(cfg.orbitcard_product_code || '');
                 }
             } catch (e) {
                 console.error('loadGptApiConfig failed', e);
@@ -8535,7 +8535,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 api_key: document.getElementById('gpt_api_key')?.value.trim() || '',
                 plan_key: document.getElementById('gpt_api_plan_key')?.value.trim() || '',
                 card_source: document.getElementById('gpt_api_card_source')?.value || 'local',
-                orbitcard_next_product_code: document.getElementById('orbitcard_next_product_code')?.value || '',
+                orbitcard_product_code: document.getElementById('orbitcard_product_code')?.value || '',
                 orbitcard_base_url: document.getElementById('orbitcard_base_url')?.value.trim() || '',
                 orbitcard_api_key: document.getElementById('orbitcard_api_key')?.value.trim() || '',
                 orbitcard_api_secret: document.getElementById('orbitcard_api_secret')?.value.trim() || ''
@@ -8549,7 +8549,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
         }
 
         async function loadOrbitcardProductOptions(selectedCode = '') {
-            const select = document.getElementById('orbitcard_next_product_code');
+            const select = document.getElementById('orbitcard_product_code');
             const hint = document.getElementById('orbitcard_next_product_hint');
             if (!select) return;
             const requested = String(selectedCode || select.value || '').trim();
@@ -8585,7 +8585,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     ? requested
                     : '';
                 if (hint) hint.textContent = data.products?.length
-                    ? '选择后仅对下一笔需要新开卡的订单生效；有可复用卡时仍优先复用，不会为此额外开卡。'
+                    ? '选择后会持续用于后续所有需要新开卡的订单，直到改为自动或选择其他产品；有可复用卡时仍优先复用。'
                     : '当前没有可选择的渠道产品，将继续按自动优先级处理。';
             } catch (error) {
                 select.innerHTML = '<option value="">自动按优先级选择</option>';

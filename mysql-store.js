@@ -287,6 +287,7 @@ const GPT_API_CONFIG_KEYS = [
     'gpt_api_country',
     'gpt_api_currency',
     'gpt_api_card_source',
+    'orbitcard_product_code',
     'orbitcard_next_product_code',
     'orbitcard_base_url',
     'orbitcard_api_key',
@@ -381,6 +382,7 @@ async function ensureGptApiConfigDefaults() {
         ['gpt_api_country', 'PH'],
         ['gpt_api_currency', 'PHP'],
         ['gpt_api_card_source', 'local'],
+        ['orbitcard_product_code', ''],
         ['orbitcard_next_product_code', ''],
         ['orbitcard_base_url', 'https://orbitcard.cc'],
         ['orbitcard_api_key', ''],
@@ -413,7 +415,7 @@ async function getGptApiConfig() {
         country: String(map.gpt_api_country || 'PH').trim().toUpperCase() || 'PH',
         currency: String(map.gpt_api_currency || 'PHP').trim().toUpperCase() || 'PHP',
         card_source: String(map.gpt_api_card_source || 'local').trim().toLowerCase() === 'orbitcard' ? 'orbitcard' : 'local',
-        orbitcard_next_product_code: String(map.orbitcard_next_product_code || '').trim(),
+        orbitcard_product_code: String(map.orbitcard_product_code || map.orbitcard_next_product_code || '').trim(),
         orbitcard_base_url: String(map.orbitcard_base_url || 'https://orbitcard.cc').trim().replace(/\/+$/, '') || 'https://orbitcard.cc',
         orbitcard_api_key: String(map.orbitcard_api_key || '').trim(),
         orbitcard_api_secret: String(map.orbitcard_api_secret || ORBITCARD_API_SECRET || '').trim()
@@ -423,13 +425,13 @@ async function getGptApiConfig() {
 async function saveGptApiConfig(config = {}) {
     const existing = await getGptApiConfig();
     const apiKey = String(config.api_key || '').trim() || existing.api_key || '';
-    const nextProductCode = Object.prototype.hasOwnProperty.call(config, 'orbitcard_next_product_code')
-        ? String(config.orbitcard_next_product_code || '').trim()
-        : existing.orbitcard_next_product_code;
+    const productCode = Object.prototype.hasOwnProperty.call(config, 'orbitcard_product_code')
+        ? String(config.orbitcard_product_code || '').trim()
+        : existing.orbitcard_product_code;
     const orbitcardApiSecret = String(config.orbitcard_api_secret || '').trim() || existing.orbitcard_api_secret || '';
     await runExecute(
         `INSERT INTO app_config (config_key, config_value)
-         VALUES (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)
+         VALUES (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)
          ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)`,
         [
             'gpt_api_enabled', config.enabled ? '1' : '0',
@@ -440,24 +442,13 @@ async function saveGptApiConfig(config = {}) {
             'gpt_api_country', String(config.country || existing.country || 'PH').trim().toUpperCase() || 'PH',
             'gpt_api_currency', String(config.currency || existing.currency || 'PHP').trim().toUpperCase() || 'PHP',
             'gpt_api_card_source', String(config.card_source || existing.card_source || 'local').trim().toLowerCase() === 'orbitcard' ? 'orbitcard' : 'local',
-            'orbitcard_next_product_code', nextProductCode,
+            'orbitcard_product_code', productCode,
+            'orbitcard_next_product_code', '',
             'orbitcard_base_url', String(config.orbitcard_base_url || existing.orbitcard_base_url || 'https://orbitcard.cc').trim().replace(/\/+$/, '') || 'https://orbitcard.cc',
             'orbitcard_api_key', String(config.orbitcard_api_key || existing.orbitcard_api_key || '').trim(),
             'orbitcard_api_secret', orbitcardApiSecret
         ]
     );
-}
-
-async function consumeOrbitcardNextProductCode(expectedCode) {
-    const code = String(expectedCode || '').trim();
-    if (!code) return '';
-    const result = await runExecute(
-        `UPDATE app_config
-         SET config_value = ''
-         WHERE config_key = 'orbitcard_next_product_code' AND config_value = ?`,
-        [code]
-    );
-    return Number(result.affectedRows || 0) === 1 ? code : '';
 }
 
 async function hasColumn(tableName, columnName) {
@@ -4141,7 +4132,6 @@ module.exports = {
     saveTelegramConfig,
     getGptApiConfig,
     saveGptApiConfig,
-    consumeOrbitcardNextProductCode,
     getHcaptchaConfig,
     saveHcaptchaConfig,
     syncHcaptchaConfigPersistence,
