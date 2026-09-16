@@ -458,6 +458,77 @@
             }
         }
 
+        @media (max-width: 720px) {
+            body {
+                flex-direction: column;
+                height: 100dvh;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: auto;
+                flex: 0 0 auto;
+                padding: 8px 10px;
+                border-right: 0;
+                border-bottom: 1px solid var(--glass-border);
+                overflow-x: auto;
+                overflow-y: hidden;
+            }
+
+            .sidebar-brand,
+            .sidebar-footer,
+            .nav-group-toggle {
+                display: none;
+            }
+
+            .nav-menu,
+            .nav-group,
+            .nav-subitems {
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                gap: 4px;
+                width: max-content;
+            }
+
+            .nav-subitems {
+                padding: 0;
+                margin: 0;
+            }
+
+            .nav-item,
+            .nav-subitem {
+                flex: 0 0 auto;
+                min-height: 38px;
+                padding: 8px 12px;
+                white-space: nowrap;
+            }
+
+            .main-content {
+                width: 100%;
+                min-height: 0;
+                padding: 18px 14px;
+            }
+
+            .page-header {
+                margin-bottom: 18px;
+            }
+
+            .panel {
+                padding: 18px 16px;
+            }
+
+            .admin-switcher-tabs {
+                overflow-x: auto;
+                justify-content: flex-start;
+            }
+
+            .admin-switcher-tab {
+                flex: 0 0 auto;
+                white-space: nowrap;
+            }
+        }
+
         /* ============ 邮箱来源单选卡片 ============ */
         .email-source-options {
             display: flex;
