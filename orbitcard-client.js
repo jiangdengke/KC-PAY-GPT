@@ -119,6 +119,8 @@ const PLAN_REUSE_LIMITS = Object.freeze({
     pro_20x: 1
 });
 
+const SUPPORTED_PLAN_TYPES = Object.freeze(['plus', 'pro_5x', 'pro_20x']);
+
 const CHANNEL3_PRODUCT_PRIORITY = Object.freeze([
     { bin: '55565979', network: 'MASTERCARD', label: '渠道 3 Mastercard' },
     { bin: '40041641', network: 'VISA', label: '渠道 3 Visa 4004' }
@@ -313,6 +315,61 @@ function getProductOptionsForPlan(data, planType = 'plus') {
     return getSelectableProductItems(data, planType)
         .filter(({ product }) => getChannel3Priority(product) !== null || getChannel1Priority(product) !== null)
         .map(({ product, planPrice }) => buildProductSelection(product, planPrice, planType));
+}
+
+function buildProductStrategyCatalog(data) {
+    const productMap = new Map();
+    for (const planType of SUPPORTED_PLAN_TYPES) {
+        for (const selection of getProductOptionsForPlan(data, planType)) {
+            const code = selection.product.productCode;
+            if (!productMap.has(code)) {
+                productMap.set(code, {
+                    product_code: code,
+                    bin: selection.product.bin,
+                    network: selection.product.network,
+                    issuing_area: selection.product.issuingArea,
+                    channel: selection.channel,
+                    channel_priority: selection.channelPriority,
+                    inventory_mode: selection.product.inventoryMode,
+                    remaining_open_card_num: selection.product.remainingOpenCardNum,
+                    min_initial_amount: selection.product.minInitialAmount,
+                    min_retained_balance: selection.product.minRetainedBalance,
+                    plans: {}
+                });
+            }
+            productMap.get(code).plans[planType] = {
+                amount: selection.amount,
+                plan_price: selection.planPrice?.price ?? null,
+                currency: selection.planPrice?.currency || 'USD',
+                max_usage_count: selection.maxUsageCount
+            };
+        }
+    }
+    const products = Array.from(productMap.values()).sort((left, right) => {
+        if (Number(left.channel ?? 99) !== Number(right.channel ?? 99)) {
+            return Number(left.channel ?? 99) - Number(right.channel ?? 99);
+        }
+        if (Number(left.channel_priority ?? 99) !== Number(right.channel_priority ?? 99)) {
+            return Number(left.channel_priority ?? 99) - Number(right.channel_priority ?? 99);
+        }
+        return String(left.product_code).localeCompare(String(right.product_code));
+    });
+    const automatic = Object.fromEntries(SUPPORTED_PLAN_TYPES.map((planType) => {
+        const selected = getProductSelectionsForPlan(data, planType)[0];
+        return [planType, selected ? {
+            product_code: selected.product.productCode,
+            bin: selected.product.bin,
+            network: selected.product.network,
+            channel: selected.channel,
+            amount: selected.amount,
+            plan_price: selected.planPrice?.price ?? null,
+            currency: selected.planPrice?.currency || 'USD',
+            max_usage_count: selected.maxUsageCount,
+            min_initial_amount: selected.product.minInitialAmount,
+            min_retained_balance: selected.product.minRetainedBalance
+        } : null];
+    }));
+    return { products, automatic };
 }
 
 function chooseProductForPlan(data, planType = 'plus') {
@@ -564,6 +621,7 @@ module.exports = {
     rankProductsForPlan,
     getProductSelectionsForPlan,
     getProductOptionsForPlan,
+    buildProductStrategyCatalog,
     chooseProductForPlan,
     createCard,
     extractCreatedCardId,

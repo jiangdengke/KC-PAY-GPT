@@ -2133,20 +2133,6 @@
                         <input type="password" id="orbitcard_api_secret" class="asset-input" placeholder="留空不修改" autocomplete="off">
                         <p id="orbitcard_api_secret_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
                     </div>
-                    <div class="form-group" style="margin-top: 16px;">
-                        <label for="orbitcard_product_code">后续新开卡产品</label>
-                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                            <select id="orbitcard_product_code" class="asset-input" style="flex:1; min-width:240px;">
-                                <option value="">自动按优先级选择</option>
-                            </select>
-                            <button type="button" class="btn btn-secondary" onclick="loadOrbitcardProductOptions()" title="刷新 Orbitcard 产品目录">
-                                <i data-lucide="refresh-cw"></i><span>刷新产品</span>
-                            </button>
-                        </div>
-                        <p id="orbitcard_next_product_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
-                            选择后会持续用于后续所有需要新开卡的订单，直到改为自动或选择其他产品；有可复用卡时仍优先复用。
-                        </p>
-                    </div>
                 </div>
                 <p style="font-size: 12px; color: var(--text-dim); margin-top: 12px;">
                     Desolate Open 平台要求完整 Session（含 user、account、accessToken、sessionToken、expires）；根域名会自动补全 /api/v1/open。
@@ -2878,6 +2864,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 <div class="admin-switcher-tabs" role="tablist" aria-label="卡池类型">
                     <button type="button" class="admin-switcher-tab is-active" role="tab" aria-selected="true" data-switcher-tab="local" onclick="switchAdminSection('card-assets', 'local')">银行卡列表</button>
                     <button type="button" class="admin-switcher-tab" role="tab" aria-selected="false" data-switcher-tab="orbitcard" onclick="switchAdminSection('card-assets', 'orbitcard')">Orbitcard 用卡记录</button>
+                    <button type="button" class="admin-switcher-tab" role="tab" aria-selected="false" data-switcher-tab="orbitcard-strategy" onclick="switchAdminSection('card-assets', 'orbitcard-strategy')">Orbitcard 开卡策略</button>
                 </div>
             <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="local">
                 <div class="panel-header">
@@ -2958,6 +2945,54 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     </table>
                 </div>
                 <div id="orbitcard_usage_pagination" class="table-footer"></div>
+            </div>
+
+            <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="orbitcard-strategy" hidden>
+                <div class="panel-header">
+                    <div>
+                        <h2 class="panel-title">Orbitcard 开卡策略</h2>
+                        <p style="font-size:13px; color:var(--text-dim); margin:8px 0 0;">
+                            指定后续新开卡持续使用的产品；已有可复用卡时仍优先复用，不会重复开卡。
+                        </p>
+                    </div>
+                    <button type="button" class="btn btn-secondary" onclick="loadOrbitcardProductStrategy(true)">
+                        <i data-lucide="refresh-cw"></i>
+                        刷新上游库存
+                    </button>
+                </div>
+                <div class="form-group" style="margin-top:18px; max-width:820px;">
+                    <label for="orbitcard_strategy_product_code">后续新开卡产品</label>
+                    <select id="orbitcard_strategy_product_code" class="asset-input" onchange="renderOrbitcardStrategyDetails()">
+                        <option value="">自动按优先级选择</option>
+                    </select>
+                    <p id="orbitcard_strategy_inventory_hint" style="font-size:12px; color:var(--text-dim); margin-top:7px;">
+                        打开此页后读取上游实时产品目录。
+                    </p>
+                </div>
+                <div id="orbitcard_strategy_summary" style="margin-top:18px;"></div>
+                <div class="table-container" style="margin-top:16px;">
+                    <table style="min-width:860px;">
+                        <thead>
+                            <tr>
+                                <th>套餐</th>
+                                <th>上游套餐价</th>
+                                <th>使用上限</th>
+                                <th>最低首充</th>
+                                <th>最低留存</th>
+                                <th>后续新卡首充</th>
+                            </tr>
+                        </thead>
+                        <tbody id="orbitcard_strategy_plan_body">
+                            <tr><td colspan="6" style="text-align:center; color:var(--text-dim); padding:28px 0;">请刷新上游库存</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div style="display:flex; justify-content:flex-end; margin-top:18px;">
+                    <button type="button" class="btn btn-primary" onclick="saveOrbitcardProductStrategy()">
+                        <i data-lucide="save"></i>
+                        保存开卡策略
+                    </button>
+                </div>
             </div>
             </div>
         </div>
@@ -5001,6 +5036,9 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             if (group === 'card-assets' && target === 'orbitcard') {
                 loadOrbitcardUsage(false, false).catch(() => { });
             }
+            if (group === 'card-assets' && target === 'orbitcard-strategy') {
+                loadOrbitcardProductStrategy(false).catch(() => { });
+            }
             if (group === 'task-records' && target === 'holds') {
                 loadActivationManualHolds(false).catch(() => { });
             }
@@ -6387,6 +6425,127 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
 
         let orbitcardUsageList = [];
         const orbitcardUsageState = { page: 1, pageSize: 20, total: 0 };
+        let orbitcardStrategyProducts = [];
+        let orbitcardStrategyAutomatic = {};
+
+        function orbitcardInventoryLabel(product) {
+            if (String(product?.inventory_mode || '').toLowerCase() === 'provider_validated') {
+                return '库存开卡时实时校验';
+            }
+            const count = Number(product?.remaining_open_card_num);
+            return Number.isFinite(count) ? `实时库存 ${count} 张` : '库存数量未返回';
+        }
+
+        function formatOrbitcardMoney(value, currency = 'USD') {
+            if (value == null || value === '') return '未返回';
+            const amount = Number(value);
+            return Number.isFinite(amount) ? `${amount.toFixed(2)} ${currency || 'USD'}` : '未返回';
+        }
+
+        function getOrbitcardStrategyPlan(planType) {
+            const selectedCode = document.getElementById('orbitcard_strategy_product_code')?.value || '';
+            if (!selectedCode) return orbitcardStrategyAutomatic?.[planType] || null;
+            const product = orbitcardStrategyProducts.find((item) => item.product_code === selectedCode);
+            const plan = product?.plans?.[planType];
+            return plan ? {
+                ...plan,
+                product_code: product.product_code,
+                bin: product.bin,
+                network: product.network,
+                channel: product.channel,
+                min_initial_amount: product.min_initial_amount,
+                min_retained_balance: product.min_retained_balance
+            } : null;
+        }
+
+        function renderOrbitcardStrategyDetails() {
+            const select = document.getElementById('orbitcard_strategy_product_code');
+            const summary = document.getElementById('orbitcard_strategy_summary');
+            const tbody = document.getElementById('orbitcard_strategy_plan_body');
+            if (!select || !summary || !tbody) return;
+            const selectedCode = select.value || '';
+            const selected = orbitcardStrategyProducts.find((item) => item.product_code === selectedCode);
+            if (selectedCode && selected) {
+                summary.innerHTML = `<div style="display:flex; gap:18px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:14px 16px; border:1px solid var(--border); border-radius:8px; background:var(--bg-secondary);">
+                    <div><strong>持续指定产品</strong><div style="font-size:13px; color:var(--text-dim); margin-top:5px;">渠道 ${Number(selected.channel || 0) || '-'} · ${escapeHtml(selected.network || '卡')} · BIN ${escapeHtml(selected.bin || '未知')} · ${escapeHtml(selected.product_code)}</div></div>
+                    <div style="font-size:13px; font-weight:600;">${escapeHtml(orbitcardInventoryLabel(selected))}</div>
+                </div>`;
+            } else {
+                summary.innerHTML = `<div style="padding:14px 16px; border-left:3px solid var(--primary); background:var(--bg-secondary);">
+                    <strong>自动按优先级选择</strong>
+                    <div style="font-size:13px; color:var(--text-dim); margin-top:5px;">实际开卡时按当前渠道优先级和实时可用产品选择；下表展示本次目录对应的选择结果。</div>
+                </div>`;
+            }
+            const planLabels = { plus: 'ChatGPT Plus', pro_5x: 'Pro 5x', pro_20x: 'Pro 20x' };
+            tbody.innerHTML = Object.entries(planLabels).map(([planType, label]) => {
+                const detail = getOrbitcardStrategyPlan(planType);
+                if (!detail) {
+                    return `<tr><td><strong>${label}</strong></td><td colspan="5" style="color:var(--error);">所选产品当前没有该套餐的开卡参数</td></tr>`;
+                }
+                const productText = `${detail.channel ? `渠道 ${detail.channel} · ` : ''}${detail.bin ? `BIN ${detail.bin}` : detail.product_code || ''}`;
+                return `<tr>
+                    <td><strong>${label}</strong><br><small style="color:var(--text-dim);">${escapeHtml(productText)}</small></td>
+                    <td>${escapeHtml(formatOrbitcardMoney(detail.plan_price, detail.currency))}</td>
+                    <td>${Number(detail.max_usage_count || 1)} 次</td>
+                    <td>${escapeHtml(formatOrbitcardMoney(detail.min_initial_amount, 'USD'))}</td>
+                    <td>${escapeHtml(formatOrbitcardMoney(detail.min_retained_balance, 'USD'))}</td>
+                    <td><strong style="color:var(--primary);">${escapeHtml(formatOrbitcardMoney(detail.amount, 'USD'))}</strong></td>
+                </tr>`;
+            }).join('');
+            lucide.createIcons();
+        }
+
+        async function loadOrbitcardProductStrategy(showToast = false) {
+            const select = document.getElementById('orbitcard_strategy_product_code');
+            const hint = document.getElementById('orbitcard_strategy_inventory_hint');
+            if (!select || !hint) return;
+            const previous = select.value || '';
+            select.disabled = true;
+            try {
+                const res = await authFetch('/api/admin/orbitcard/products');
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || '产品目录查询失败');
+                orbitcardStrategyProducts = Array.isArray(data.products) ? data.products : [];
+                orbitcardStrategyAutomatic = data.automatic || {};
+                const configured = String(data.selected_product_code || previous || '');
+                select.innerHTML = '<option value="">自动按优先级选择</option>';
+                for (const product of orbitcardStrategyProducts) {
+                    const option = document.createElement('option');
+                    option.value = product.product_code || '';
+                    option.textContent = `渠道 ${product.channel || '-'} ${product.network || '卡'} · BIN ${product.bin || '未知'} · ${product.product_code} · ${orbitcardInventoryLabel(product)}`;
+                    select.appendChild(option);
+                }
+                const available = Array.from(select.options).some((option) => option.value === configured);
+                select.value = available ? configured : '';
+                const fetchedAt = data.fetched_at ? new Date(data.fetched_at).toLocaleString('zh-CN', { hour12: false }) : '刚刚';
+                hint.textContent = `库存直接来自本次 Orbitcard 产品目录，查询时间：${fetchedAt}。供应商实时校验型产品不显示“0 张”。`;
+                renderOrbitcardStrategyDetails();
+                if (showToast) showMessage('上游产品与库存已刷新', 'success');
+            } catch (error) {
+                hint.textContent = `产品目录读取失败：${error.message || '未知错误'}`;
+                if (showToast) showMessage(error.message || '产品目录读取失败', 'error');
+            } finally {
+                select.disabled = false;
+                lucide.createIcons();
+            }
+        }
+
+        async function saveOrbitcardProductStrategy() {
+            const productCode = document.getElementById('orbitcard_strategy_product_code')?.value || '';
+            try {
+                const res = await authFetch('/api/admin/orbitcard/product-strategy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ product_code: productCode })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || '保存开卡策略失败');
+                showMessage(data.message || '开卡策略已保存', 'success');
+                await loadOrbitcardProductStrategy(false);
+            } catch (error) {
+                showMessage(error.message || '保存开卡策略失败', 'error');
+            }
+        }
 
         async function loadOrbitcardUsage(showToast = false, refreshBalances = false, page = orbitcardUsageState.page) {
             const tbody = document.getElementById('orbitcard_usage_body');
@@ -8497,7 +8656,6 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 const orbitKeyHint = document.getElementById('orbitcard_api_key_hint');
                 const orbitSecretEl = document.getElementById('orbitcard_api_secret');
                 const orbitSecretHint = document.getElementById('orbitcard_api_secret_hint');
-                const nextProductEl = document.getElementById('orbitcard_product_code');
                 if (keyEl) keyEl.value = '';
                 if (keyEl) keyEl.placeholder = cfg.api_key_saved
                     ? `已保存（${cfg.api_key_preview || 'ap_live_…'}）留空不修改`
@@ -8514,15 +8672,11 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 if (orbitSecretHint) orbitSecretHint.textContent = cfg.orbitcard_api_secret_configured
                     ? '✓ Orbitcard Secret 已保存，留空不修改'
                     : '尚未配置 Orbitcard Secret';
-                if (nextProductEl) nextProductEl.value = cfg.orbitcard_product_code || '';
                 updateOrbitcardConfigVisibility();
                 if (keyHint) {
                     keyHint.textContent = cfg.api_key_saved ? '✓ API Key 已保存' : '尚未配置 API Key';
                 }
                 if (cfg.api_key_saved) refreshGptApiStatus();
-                if (cfg.card_source === 'orbitcard') {
-                    await loadOrbitcardProductOptions(cfg.orbitcard_product_code || '');
-                }
             } catch (e) {
                 console.error('loadGptApiConfig failed', e);
             }
@@ -8535,7 +8689,6 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 api_key: document.getElementById('gpt_api_key')?.value.trim() || '',
                 plan_key: document.getElementById('gpt_api_plan_key')?.value.trim() || '',
                 card_source: document.getElementById('gpt_api_card_source')?.value || 'local',
-                orbitcard_product_code: document.getElementById('orbitcard_product_code')?.value || '',
                 orbitcard_base_url: document.getElementById('orbitcard_base_url')?.value.trim() || '',
                 orbitcard_api_key: document.getElementById('orbitcard_api_key')?.value.trim() || '',
                 orbitcard_api_secret: document.getElementById('orbitcard_api_secret')?.value.trim() || ''
@@ -8546,61 +8699,6 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             const source = document.getElementById('gpt_api_card_source')?.value || 'local';
             const fields = document.getElementById('orbitcard_config_fields');
             if (fields) fields.style.display = source === 'orbitcard' ? 'block' : 'none';
-        }
-
-        async function loadOrbitcardProductOptions(selectedCode = '') {
-            const select = document.getElementById('orbitcard_product_code');
-            const hint = document.getElementById('orbitcard_next_product_hint');
-            if (!select) return;
-            const requested = String(selectedCode || select.value || '').trim();
-            select.disabled = true;
-            select.innerHTML = '<option value="">正在读取产品目录...</option>';
-            try {
-                const res = await authFetch('/api/admin/orbitcard/products?plan=plus');
-                const data = await res.json();
-                if (!res.ok || !data.success) throw new Error(data.message || '产品目录查询失败');
-                select.innerHTML = '';
-                const automatic = document.createElement('option');
-                automatic.value = '';
-                automatic.textContent = '自动按优先级选择';
-                select.appendChild(automatic);
-                for (const product of (data.products || [])) {
-                    const option = document.createElement('option');
-                    option.value = product.product_code || '';
-                    const channel = product.channel ? `渠道 ${product.channel}` : '未分类';
-                    const network = product.network || '卡';
-                    const bin = product.bin ? `BIN ${product.bin}` : 'BIN 未知';
-                    const amount = product.amount ? `首充约 ${product.amount} USD` : '金额按套餐计算';
-                    option.textContent = `${channel} ${network} · ${bin} · ${product.product_code} · ${amount}`;
-                    select.appendChild(option);
-                }
-                if (requested && !Array.from(select.options).some((option) => option.value === requested)) {
-                    const stale = document.createElement('option');
-                    stale.value = requested;
-                    stale.textContent = `${requested}（当前目录不可用，保存后将清空）`;
-                    stale.disabled = true;
-                    select.appendChild(stale);
-                }
-                select.value = requested && Array.from(select.options).some((option) => option.value === requested)
-                    ? requested
-                    : '';
-                if (hint) hint.textContent = data.products?.length
-                    ? '选择后会持续用于后续所有需要新开卡的订单，直到改为自动或选择其他产品；有可复用卡时仍优先复用。'
-                    : '当前没有可选择的渠道产品，将继续按自动优先级处理。';
-            } catch (error) {
-                select.innerHTML = '<option value="">自动按优先级选择</option>';
-                if (requested) {
-                    const stale = document.createElement('option');
-                    stale.value = requested;
-                    stale.textContent = `${requested}（目录读取失败，暂保留）`;
-                    select.appendChild(stale);
-                    select.value = requested;
-                }
-                if (hint) hint.textContent = `产品目录读取失败：${error.message || '未知错误'}；保存前请刷新产品。`;
-            } finally {
-                select.disabled = false;
-                lucide.createIcons();
-            }
         }
 
         async function saveGptApiConfig() {
@@ -8699,9 +8797,6 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
 
         document.getElementById('gpt_api_card_source')?.addEventListener('change', () => {
             updateOrbitcardConfigVisibility();
-            if (document.getElementById('gpt_api_card_source')?.value === 'orbitcard') {
-                loadOrbitcardProductOptions();
-            }
         });
 
         const US_TAX_FREE_STATE_NAMES = ['Oregon', 'Delaware', 'Montana', 'New Hampshire', 'Alaska'];

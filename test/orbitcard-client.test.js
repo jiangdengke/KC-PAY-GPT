@@ -163,6 +163,38 @@ describe('orbitcard client', () => {
         ]);
     });
 
+    it('builds one live product catalog with amounts for all supported plans', () => {
+        const catalog = orbitcard.buildProductStrategyCatalog({ list: [{
+            product_code: 'P5556XV',
+            bin: '555659',
+            network: 'MASTERCARD',
+            open_card_inventory_mode: 'tracked',
+            remaining_open_card_num: 2035,
+            min_initial_amount: '20',
+            min_retained_balance: '0.10',
+            gpt_plan_prices: [
+                { id: 'plus', price: '15.70', currency: 'USD' },
+                { id: 'pro', price: '92.61', currency: 'USD' },
+                { id: 'pro_20x', price: '142.55', currency: 'USD' }
+            ]
+        }] });
+        expect(catalog.products).toHaveLength(1);
+        expect(catalog.products[0]).toMatchObject({
+            product_code: 'P5556XV',
+            remaining_open_card_num: 2035,
+            plans: {
+                plus: { amount: '65.00', plan_price: 15.7, max_usage_count: 4 },
+                pro_5x: { amount: '95.00', plan_price: 92.61, max_usage_count: 1 },
+                pro_20x: { amount: '145.00', plan_price: 142.55, max_usage_count: 1 }
+            }
+        });
+        expect(catalog.automatic.plus).toMatchObject({
+            product_code: 'P5556XV',
+            amount: '65.00',
+            max_usage_count: 4
+        });
+    });
+
     it('blocks existing 4002 cards from reuse', () => {
         expect(orbitcard.isBlockedCardProduct({
             productCode: 'amzkeys:400242001',
