@@ -410,6 +410,90 @@ async function createCard(cfg, { productCode, amount, quantity = 1, idempotencyK
     }, { idempotencyKey: String(idempotencyKey || '').trim() });
 }
 
+const CREATE_CARD_PENDING_STATUSES = new Set(['pending', 'pending_confirm', 'processing']);
+
+function extractCreateCardOrder(data) {
+    const source = data && typeof data === 'object' ? data : {};
+    const item = Array.isArray(source.items) ? source.items[0] : null;
+    return {
+        orderNo: String(source.order_no || source.orderNo || item?.order_no || item?.orderNo || '').trim(),
+        status: String(source.status || item?.status || '').trim().toLowerCase()
+    };
+}
+
+async function createCardUntilReady(cfg, params = {}, options = {}) {
+    const maxAttempts = Math.max(1, Math.min(Number(options.maxAttempts) || 25, 120));
+    const pollIntervalMs = Object.prototype.hasOwnProperty.call(options, 'pollIntervalMs')
+        ? Math.max(0, Number(options.pollIntervalMs) || 0)
+        : 5000;
+    const wait = typeof options.wait === 'function'
+        ? options.wait
+        : (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const onPending = typeof options.onPending === 'function' ? options.onPending : null;
+    let lastResult = null;
+    let orderNo = '';
+    let status = '';
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const result = await createCard(cfg, params);
+        lastResult = result;
+        if (!result.success) {
+            return {
+                ...result,
+                attempts: attempt,
+                orderNo,
+                createStatus: status,
+                pending: CREATE_CARD_PENDING_STATUSES.has(status),
+                ambiguous: Boolean(orderNo && CREATE_CARD_PENDING_STATUSES.has(status))
+            };
+        }
+
+        const cardId = extractCreatedCardId(result.data);
+        const current = extractCreateCardOrder(result.data);
+        orderNo = current.orderNo || orderNo;
+        status = current.status || status;
+        if (cardId) {
+            return {
+                ...result,
+                cardId,
+                attempts: attempt,
+                orderNo,
+                createStatus: status,
+                pending: false
+            };
+        }
+
+        if (!CREATE_CARD_PENDING_STATUSES.has(status)) {
+            return {
+                ...result,
+                success: false,
+                attempts: attempt,
+                orderNo,
+                createStatus: status,
+                pending: false,
+                ambiguous: true,
+                error: `Orbitcard 开卡响应未返回 card_id${status ? `（状态 ${status}）` : ''}`
+            };
+        }
+
+        if (onPending) {
+            await onPending({ attempt, maxAttempts, orderNo, status, data: result.data });
+        }
+        if (attempt < maxAttempts) await wait(pollIntervalMs);
+    }
+
+    return {
+        ...(lastResult || {}),
+        success: false,
+        pending: true,
+        attempts: maxAttempts,
+        orderNo,
+        createStatus: status,
+        ambiguous: true,
+        error: `Orbitcard 开卡订单仍在确认${orderNo ? `（订单 ${orderNo}）` : ''}`
+    };
+}
+
 function extractCreatedCardId(data) {
     const source = data && typeof data === 'object' ? data : {};
     const item = Array.isArray(source.items) ? source.items[0] : null;
@@ -624,6 +708,8 @@ module.exports = {
     buildProductStrategyCatalog,
     chooseProductForPlan,
     createCard,
+    extractCreateCardOrder,
+    createCardUntilReady,
     extractCreatedCardId,
     getCardList,
     getCardDetail,

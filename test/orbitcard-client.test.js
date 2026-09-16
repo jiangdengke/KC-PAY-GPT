@@ -222,6 +222,104 @@ describe('orbitcard client', () => {
         expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toBe('orbitcard-job-1');
     });
 
+    it('waits for pending_confirm with the same request and idempotency key', async () => {
+        const spy = vi.spyOn(axios, 'request')
+            .mockResolvedValueOnce({
+                status: 200,
+                data: {
+                    code: 0,
+                    msg: 'ok',
+                    data: { order_no: 'OC-PENDING-1', status: 'pending_confirm', initial_amount: '65.00' }
+                }
+            })
+            .mockResolvedValueOnce({
+                status: 200,
+                data: {
+                    code: 0,
+                    msg: 'ok',
+                    data: { order_no: 'OC-PENDING-1', card_id: 88, status: 'success', initial_amount: '65.00' }
+                }
+            });
+        const wait = vi.fn().mockResolvedValue(undefined);
+        const onPending = vi.fn().mockResolvedValue(undefined);
+        const result = await orbitcard.createCardUntilReady(
+            { base_url: 'https://orbitcard.cc', api_key: 'k', api_secret: 's' },
+            { productCode: 'amzkeys:55565979', amount: '65.00', quantity: 1, idempotencyKey: 'orbitcard-job-pending-1' },
+            { maxAttempts: 3, pollIntervalMs: 1, wait, onPending }
+        );
+        expect(result).toMatchObject({
+            success: true,
+            cardId: 88,
+            orderNo: 'OC-PENDING-1',
+            createStatus: 'success',
+            attempts: 2,
+            pending: false
+        });
+        expect(wait).toHaveBeenCalledOnce();
+        expect(onPending).toHaveBeenCalledWith(expect.objectContaining({
+            attempt: 1,
+            orderNo: 'OC-PENDING-1',
+            status: 'pending_confirm'
+        }));
+        expect(spy).toHaveBeenCalledTimes(2);
+        for (const request of spy.mock.calls.map((call) => call[0])) {
+            expect(request.data).toBe('{"product_code":"amzkeys:55565979","amount":"65.00","quantity":1}');
+            expect(request.headers['Idempotency-Key']).toBe('orbitcard-job-pending-1');
+        }
+    });
+
+    it('returns an unresolved pending order without creating a different request', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: {
+                code: 0,
+                msg: 'ok',
+                data: { order_no: 'OC-PENDING-2', status: 'processing', initial_amount: '65.00' }
+            }
+        });
+        const result = await orbitcard.createCardUntilReady(
+            { base_url: 'https://orbitcard.cc', api_key: 'k', api_secret: 's' },
+            { productCode: 'amzkeys:55565979', amount: '65.00', quantity: 1, idempotencyKey: 'orbitcard-job-pending-2' },
+            { maxAttempts: 3, pollIntervalMs: 0, wait: vi.fn().mockResolvedValue(undefined) }
+        );
+        expect(result).toMatchObject({
+            success: false,
+            pending: true,
+            orderNo: 'OC-PENDING-2',
+            createStatus: 'processing',
+            attempts: 3
+        });
+        expect(spy).toHaveBeenCalledTimes(3);
+        expect(new Set(spy.mock.calls.map((call) => call[0].headers['Idempotency-Key']))).toEqual(
+            new Set(['orbitcard-job-pending-2'])
+        );
+    });
+
+    it('treats a successful response without card_id as ambiguous and does not retry it', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: {
+                code: 0,
+                msg: 'ok',
+                data: { order_no: 'OC-UNKNOWN-1', status: 'unexpected_state', initial_amount: '65.00' }
+            }
+        });
+        const result = await orbitcard.createCardUntilReady(
+            { base_url: 'https://orbitcard.cc', api_key: 'k', api_secret: 's' },
+            { productCode: 'amzkeys:55565979', amount: '65.00', quantity: 1, idempotencyKey: 'orbitcard-job-unknown-1' },
+            { maxAttempts: 3, pollIntervalMs: 0 }
+        );
+        expect(result).toMatchObject({
+            success: false,
+            pending: false,
+            ambiguous: true,
+            orderNo: 'OC-UNKNOWN-1',
+            createStatus: 'unexpected_state',
+            attempts: 1
+        });
+        expect(spy).toHaveBeenCalledOnce();
+    });
+
     it('reads a non-sensitive card balance when the provider includes one', async () => {
         const spy = vi.spyOn(axios, 'request').mockResolvedValue({
             status: 200,

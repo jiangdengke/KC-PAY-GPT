@@ -3694,6 +3694,8 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
 
                 let createdCardId = null;
                 let lastCreateError = '';
+                let unresolvedCreateOrder = '';
+                let unresolvedCreateResponse = false;
                 for (let candidateIndex = 0; candidateIndex < selections.length; candidateIndex += 1) {
                     const candidate = selections[candidateIndex];
                     selection = candidate;
@@ -3701,20 +3703,32 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                         ? `渠道 ${candidate.channel} ${candidate.network || '卡'} BIN ${candidate.product.bin || candidate.product.productCode}`
                         : candidate.product.productCode;
                     logTask(jobKey, `为 ${getPlanTypeLabel(planType)} 创建卡（${channelLabel}，首充 ${candidate.amount} USD，最多使用 ${candidate.maxUsageCount} 次）...`);
-                    const createResult = await orbitcard.createCard(orbitCfg, {
+                    const createResult = await orbitcard.createCardUntilReady(orbitCfg, {
                         productCode: candidate.product.productCode,
                         amount: candidate.amount,
                         quantity: 1,
                         idempotencyKey: `orbitcard-${jobKey}-${candidateIndex + 1}`
+                    }, {
+                        maxAttempts: 25,
+                        pollIntervalMs: 5000,
+                        onPending: async ({ attempt, maxAttempts, orderNo, status }) => {
+                            if (attempt === 1 || attempt % 3 === 0) {
+                                logTask(jobKey, `Orbitcard 开卡订单等待确认 order=${orderNo || '-'} status=${status || '-'} poll=${attempt}/${maxAttempts}`);
+                                await setProgress('running', 14, '正在等待支付方式准备完成...');
+                            }
+                        }
                     });
                     if (createResult.success) {
-                        createdCardId = orbitcard.extractCreatedCardId(createResult.data);
-                        if (!createdCardId) {
-                            throw new Error(`Orbitcard 开卡成功但未返回 card_id: ${JSON.stringify(createResult.data).slice(0, 300)}`);
-                        }
+                        createdCardId = createResult.cardId || orbitcard.extractCreatedCardId(createResult.data);
                         break;
                     }
                     lastCreateError = createResult.error || '未知错误';
+                    if (createResult.pending || createResult.ambiguous) {
+                        unresolvedCreateResponse = true;
+                        unresolvedCreateOrder = createResult.orderNo || '';
+                        logTask(jobKey, `Orbitcard 开卡订单尚未确认 order=${unresolvedCreateOrder || '-'} status=${createResult.createStatus || '-'}，停止切换产品`, 'warn');
+                        break;
+                    }
                     // A transport failure leaves the outcome unknown; do not risk
                     // opening a second card after an ambiguous upstream response.
                     if (!createResult.status) break;
@@ -3723,7 +3737,13 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                         logTask(jobKey, `Orbitcard ${channelLabel} 开卡失败，切换备用产品 ${next.product.productCode}: ${lastCreateError}`, 'warn');
                     }
                 }
-                if (!createdCardId) throw new Error(`Orbitcard 开卡失败: ${lastCreateError || '当前渠道产品均不可用'}`);
+                if (!createdCardId) {
+                    if (unresolvedCreateResponse) {
+                        const orderLabel = unresolvedCreateOrder ? `（订单 ${unresolvedCreateOrder}）` : '';
+                        throw new Error(`Orbitcard 开卡结果仍待确认${orderLabel}，请勿解除审核或重新提交，待上游确认后再处理`);
+                    }
+                    throw new Error(`Orbitcard 开卡失败: ${lastCreateError || '当前渠道产品均不可用'}`);
+                }
 
                 reservedOrbitcard = await store.reserveOrbitcardCard([{ card_id: createdCardId, status: 'ACTIVE' }], `gptapi_${jobKey}`, {
                     planType,
