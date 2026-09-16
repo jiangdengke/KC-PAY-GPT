@@ -2133,6 +2133,20 @@
                         <input type="password" id="orbitcard_api_secret" class="asset-input" placeholder="留空不修改" autocomplete="off">
                         <p id="orbitcard_api_secret_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
                     </div>
+                    <div class="form-group" style="margin-top: 16px;">
+                        <label for="orbitcard_next_product_code">下一次新开卡产品</label>
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <select id="orbitcard_next_product_code" class="asset-input" style="flex:1; min-width:240px;">
+                                <option value="">自动按优先级选择</option>
+                            </select>
+                            <button type="button" class="btn btn-secondary" onclick="loadOrbitcardProductOptions()" title="刷新 Orbitcard 产品目录">
+                                <i data-lucide="refresh-cw"></i><span>刷新产品</span>
+                            </button>
+                        </div>
+                        <p id="orbitcard_next_product_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
+                            选择后仅对下一笔需要新开卡的订单生效；有可复用卡时仍优先复用，不会为此额外开卡。
+                        </p>
+                    </div>
                 </div>
                 <p style="font-size: 12px; color: var(--text-dim); margin-top: 12px;">
                     Desolate Open 平台要求完整 Session（含 user、account、accessToken、sessionToken、expires）；根域名会自动补全 /api/v1/open。
@@ -8483,6 +8497,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 const orbitKeyHint = document.getElementById('orbitcard_api_key_hint');
                 const orbitSecretEl = document.getElementById('orbitcard_api_secret');
                 const orbitSecretHint = document.getElementById('orbitcard_api_secret_hint');
+                const nextProductEl = document.getElementById('orbitcard_next_product_code');
                 if (keyEl) keyEl.value = '';
                 if (keyEl) keyEl.placeholder = cfg.api_key_saved
                     ? `已保存（${cfg.api_key_preview || 'ap_live_…'}）留空不修改`
@@ -8499,11 +8514,15 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 if (orbitSecretHint) orbitSecretHint.textContent = cfg.orbitcard_api_secret_configured
                     ? '✓ Orbitcard Secret 已保存，留空不修改'
                     : '尚未配置 Orbitcard Secret';
+                if (nextProductEl) nextProductEl.value = cfg.orbitcard_next_product_code || '';
                 updateOrbitcardConfigVisibility();
                 if (keyHint) {
                     keyHint.textContent = cfg.api_key_saved ? '✓ API Key 已保存' : '尚未配置 API Key';
                 }
                 if (cfg.api_key_saved) refreshGptApiStatus();
+                if (cfg.card_source === 'orbitcard') {
+                    await loadOrbitcardProductOptions(cfg.orbitcard_next_product_code || '');
+                }
             } catch (e) {
                 console.error('loadGptApiConfig failed', e);
             }
@@ -8516,6 +8535,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 api_key: document.getElementById('gpt_api_key')?.value.trim() || '',
                 plan_key: document.getElementById('gpt_api_plan_key')?.value.trim() || '',
                 card_source: document.getElementById('gpt_api_card_source')?.value || 'local',
+                orbitcard_next_product_code: document.getElementById('orbitcard_next_product_code')?.value || '',
                 orbitcard_base_url: document.getElementById('orbitcard_base_url')?.value.trim() || '',
                 orbitcard_api_key: document.getElementById('orbitcard_api_key')?.value.trim() || '',
                 orbitcard_api_secret: document.getElementById('orbitcard_api_secret')?.value.trim() || ''
@@ -8526,6 +8546,61 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             const source = document.getElementById('gpt_api_card_source')?.value || 'local';
             const fields = document.getElementById('orbitcard_config_fields');
             if (fields) fields.style.display = source === 'orbitcard' ? 'block' : 'none';
+        }
+
+        async function loadOrbitcardProductOptions(selectedCode = '') {
+            const select = document.getElementById('orbitcard_next_product_code');
+            const hint = document.getElementById('orbitcard_next_product_hint');
+            if (!select) return;
+            const requested = String(selectedCode || select.value || '').trim();
+            select.disabled = true;
+            select.innerHTML = '<option value="">正在读取产品目录...</option>';
+            try {
+                const res = await authFetch('/api/admin/orbitcard/products?plan=plus');
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || '产品目录查询失败');
+                select.innerHTML = '';
+                const automatic = document.createElement('option');
+                automatic.value = '';
+                automatic.textContent = '自动按优先级选择';
+                select.appendChild(automatic);
+                for (const product of (data.products || [])) {
+                    const option = document.createElement('option');
+                    option.value = product.product_code || '';
+                    const channel = product.channel ? `渠道 ${product.channel}` : '未分类';
+                    const network = product.network || '卡';
+                    const bin = product.bin ? `BIN ${product.bin}` : 'BIN 未知';
+                    const amount = product.amount ? `首充约 ${product.amount} USD` : '金额按套餐计算';
+                    option.textContent = `${channel} ${network} · ${bin} · ${product.product_code} · ${amount}`;
+                    select.appendChild(option);
+                }
+                if (requested && !Array.from(select.options).some((option) => option.value === requested)) {
+                    const stale = document.createElement('option');
+                    stale.value = requested;
+                    stale.textContent = `${requested}（当前目录不可用，保存后将清空）`;
+                    stale.disabled = true;
+                    select.appendChild(stale);
+                }
+                select.value = requested && Array.from(select.options).some((option) => option.value === requested)
+                    ? requested
+                    : '';
+                if (hint) hint.textContent = data.products?.length
+                    ? '选择后仅对下一笔需要新开卡的订单生效；有可复用卡时仍优先复用，不会为此额外开卡。'
+                    : '当前没有可选择的渠道产品，将继续按自动优先级处理。';
+            } catch (error) {
+                select.innerHTML = '<option value="">自动按优先级选择</option>';
+                if (requested) {
+                    const stale = document.createElement('option');
+                    stale.value = requested;
+                    stale.textContent = `${requested}（目录读取失败，暂保留）`;
+                    select.appendChild(stale);
+                    select.value = requested;
+                }
+                if (hint) hint.textContent = `产品目录读取失败：${error.message || '未知错误'}；保存前请刷新产品。`;
+            } finally {
+                select.disabled = false;
+                lucide.createIcons();
+            }
         }
 
         async function saveGptApiConfig() {
@@ -8622,7 +8697,12 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             }
         }
 
-        document.getElementById('gpt_api_card_source')?.addEventListener('change', updateOrbitcardConfigVisibility);
+        document.getElementById('gpt_api_card_source')?.addEventListener('change', () => {
+            updateOrbitcardConfigVisibility();
+            if (document.getElementById('gpt_api_card_source')?.value === 'orbitcard') {
+                loadOrbitcardProductOptions();
+            }
+        });
 
         const US_TAX_FREE_STATE_NAMES = ['Oregon', 'Delaware', 'Montana', 'New Hampshire', 'Alaska'];
         const US_STATE_ABBR_MAP = { OR: 'Oregon', DE: 'Delaware', MT: 'Montana', NH: 'New Hampshire', AK: 'Alaska' };

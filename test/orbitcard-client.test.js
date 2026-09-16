@@ -150,6 +150,19 @@ describe('orbitcard client', () => {
         expect(selections).toEqual([]);
     });
 
+    it('honors a one-time preferred product code across channels', () => {
+        const catalog = { list: [
+            { product_code: 'amzkeys:55565979', bin: '55565979', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },
+            { product_code: 'P5556XV', bin: '555659', open_card_inventory_mode: 'tracked', remaining_open_card_num: 10, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.70' }] }
+        ] };
+        const selection = orbitcard.getProductSelectionsForPlan(catalog, 'plus', { preferredProductCode: 'P5556XV' });
+        expect(selection).toHaveLength(1);
+        expect(selection[0]).toMatchObject({ product: { productCode: 'P5556XV' }, channel: 1 });
+        expect(orbitcard.getProductOptionsForPlan(catalog, 'plus').map((item) => item.product.productCode)).toEqual([
+            'amzkeys:55565979', 'P5556XV'
+        ]);
+    });
+
     it('blocks existing 4002 cards from reuse', () => {
         expect(orbitcard.isBlockedCardProduct({
             productCode: 'amzkeys:400242001',

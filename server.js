@@ -2525,7 +2525,8 @@ app.get('/api/admin/gpt-api', async (req, res) => {
                 orbitcard_api_key_saved: Boolean(cfg.orbitcard_api_key),
                 orbitcard_api_key_preview: orbitcard.maskApiKey(cfg.orbitcard_api_key),
                 orbitcard_api_secret_configured: Boolean(cfg.orbitcard_api_secret),
-                orbitcard_api_secret_preview: orbitcard.maskApiKey(cfg.orbitcard_api_secret)
+                orbitcard_api_secret_preview: orbitcard.maskApiKey(cfg.orbitcard_api_secret),
+                orbitcard_next_product_code: cfg.orbitcard_next_product_code || ''
             }
         });
     } catch (error) {
@@ -2545,6 +2546,7 @@ app.post('/api/admin/gpt-api', async (req, res) => {
             country: body.country,
             currency: body.currency,
             card_source: body.card_source,
+            orbitcard_next_product_code: body.orbitcard_next_product_code,
             orbitcard_base_url: body.orbitcard_base_url,
             orbitcard_api_key: body.orbitcard_api_key,
             orbitcard_api_secret: body.orbitcard_api_secret
@@ -2552,6 +2554,44 @@ app.post('/api/admin/gpt-api', async (req, res) => {
         res.json({ success: true, message: '第三方代充 API 配置已保存' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+app.get('/api/admin/orbitcard/products', async (req, res) => {
+    try {
+        await ensureStoreReady();
+        const cfg = await store.getGptApiConfig();
+        if (!cfg.orbitcard_api_key || !cfg.orbitcard_api_secret) {
+            return res.status(400).json({ success: false, message: '请先配置 Orbitcard API Key 和 Secret' });
+        }
+        const planType = ['plus', 'pro_5x', 'pro_20x'].includes(String(req.query.plan || '').trim())
+            ? String(req.query.plan).trim()
+            : 'plus';
+        const result = await orbitcard.getProductCode({
+            base_url: cfg.orbitcard_base_url,
+            api_key: cfg.orbitcard_api_key,
+            api_secret: cfg.orbitcard_api_secret
+        });
+        if (!result.success) {
+            return res.status(502).json({ success: false, message: `Orbitcard 产品目录查询失败: ${result.error || '未知错误'}` });
+        }
+        const products = orbitcard.getProductOptionsForPlan(result.data, planType).map((selection) => ({
+            product_code: selection.product.productCode,
+            bin: selection.product.bin,
+            network: selection.product.network,
+            channel: selection.channel,
+            channel_priority: selection.channelPriority,
+            amount: selection.amount,
+            plan_price: selection.planPrice?.price ?? null,
+            currency: selection.planPrice?.currency || 'USD',
+            remaining_open_card_num: selection.product.remainingOpenCardNum,
+            min_initial_amount: selection.product.minInitialAmount,
+            min_retained_balance: selection.product.minRetainedBalance,
+            max_usage_count: selection.maxUsageCount
+        }));
+        return res.json({ success: true, plan_type: planType, products });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
     }
 });
 
@@ -3581,6 +3621,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 api_key: cfg.orbitcard_api_key,
                 api_secret: cfg.orbitcard_api_secret
             };
+            const requestedProductCode = String(cfg.orbitcard_next_product_code || '').trim();
             const reuseLimit = orbitcard.getPlanReuseLimit(planType);
             if (reuseLimit > 1) {
                 await setProgress('running', 12, '正在准备支付方式...');
@@ -3599,7 +3640,22 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             if (!reservedOrbitcard) {
                 const productResult = await orbitcard.getProductCode(orbitCfg);
                 if (!productResult.success) throw new Error(`Orbitcard 产品目录查询失败: ${productResult.error}`);
-                const selections = orbitcard.getProductSelectionsForPlan(productResult.data, planType);
+                let consumedProductCode = '';
+                if (requestedProductCode) {
+                    const requestedSelection = orbitcard.getProductSelectionsForPlan(productResult.data, planType, {
+                        preferredProductCode: requestedProductCode
+                    });
+                    if (!requestedSelection.length) {
+                        throw new Error(`指定的 Orbitcard 产品 ${requestedProductCode} 当前不可用，请重新选择`);
+                    }
+                    consumedProductCode = await store.consumeOrbitcardNextProductCode(requestedProductCode);
+                    if (!consumedProductCode) {
+                        throw new Error('指定的 Orbitcard 产品已被其他订单消费，请重新选择');
+                    }
+                }
+                const selections = orbitcard.getProductSelectionsForPlan(productResult.data, planType, consumedProductCode
+                    ? { preferredProductCode: consumedProductCode }
+                    : {});
                 if (!selections.length) throw new Error('Orbitcard 当前没有可开卡产品库存');
 
                 let createdCardId = null;

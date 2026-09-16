@@ -212,11 +212,15 @@ function resolveProductPlanPrice(product, planType) {
     return null;
 }
 
-function rankProductsForPlan(data, planType = 'plus') {
-    const products = normalizeProductList(data)
+function getSelectableProductItems(data, planType = 'plus') {
+    return normalizeProductList(data)
         .filter((product) => !isBlockedCardProduct(product))
         .filter(isProductAvailable)
         .map((product) => ({ product, planPrice: resolveProductPlanPrice(product, planType) }));
+}
+
+function rankProductsForPlan(data, planType = 'plus') {
+    const products = getSelectableProductItems(data, planType);
 
     // Prefer channel 3 products, then channel 1 Mastercard 5556, then a live
     // plan price and the lowest current price for uncategorized products.
@@ -291,8 +295,23 @@ function buildProductSelection(product, planPrice, planType) {
     };
 }
 
-function getProductSelectionsForPlan(data, planType = 'plus') {
-    return rankProductsForPlan(data, planType)
+function getProductSelectionsForPlan(data, planType = 'plus', options = {}) {
+    const preferredProductCode = String(options?.preferredProductCode || '').trim().toLowerCase();
+    if (preferredProductCode) {
+        const preferred = getSelectableProductItems(data, planType).find(({ product }) => (
+            product.productCode.toLowerCase() === preferredProductCode
+            && (getChannel3Priority(product) !== null || getChannel1Priority(product) !== null)
+        ));
+        return preferred ? [buildProductSelection(preferred.product, preferred.planPrice, planType)] : [];
+    }
+    return rankProductsForPlan(data, planType).map(({ product, planPrice }) => (
+        buildProductSelection(product, planPrice, planType)
+    ));
+}
+
+function getProductOptionsForPlan(data, planType = 'plus') {
+    return getSelectableProductItems(data, planType)
+        .filter(({ product }) => getChannel3Priority(product) !== null || getChannel1Priority(product) !== null)
         .map(({ product, planPrice }) => buildProductSelection(product, planPrice, planType));
 }
 
@@ -540,9 +559,11 @@ module.exports = {
     isProductAvailable,
     normalizeProduct,
     normalizeProductList,
+    getSelectableProductItems,
     resolveProductPlanPrice,
     rankProductsForPlan,
     getProductSelectionsForPlan,
+    getProductOptionsForPlan,
     chooseProductForPlan,
     createCard,
     extractCreatedCardId,
