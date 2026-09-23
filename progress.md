@@ -53,3 +53,18 @@
 - `test/gpt-api-client.test.js`：新增 queue done 與業務終態回歸測試。
 - `progress.md`：追加本輪記錄。
 - 回滾方式：還原上述檔案並重建 app；回滾會再次把失敗任務誤報成功。
+
+
+## 2026-09-23 - Task: 修復並部署 Session 管理表格布局
+### What was done
+- 修正 Session 管理表格列宽不足造成的逐字换行，较长内容改为横向滚动查看。
+- 仅将 Session 布局补丁应用到 rn 当前页面资源，保留原文件备份，未重启应用。
+### Testing
+- `npm test`：3 个测试文件、38 项测试通过。
+- `ReadLints` 检查 `public/admin.html`、`public/admin.css`：无诊断。
+- rn 运行中的管理页面与新版 CSS 均返回 HTTP 200，页面引用新版样式且包含布局修复；应用容器保持 healthy。
+### Notes
+- `public/admin.html`：指定 Session 列宽并更新样式缓存版本。
+- `public/admin.css`：扩大 Session 表格最小宽度，避免 ID 逐字换行并限制预览文本。
+- `progress.md`：记录本轮部署与验证结果。
+- 回滚：分别执行 `ssh rn 'cp /root/KC-GPT-PAY/public/admin.html.bak-session-layout-20260923 /root/KC-GPT-PAY/public/admin.html'` 与 `ssh rn 'cp /root/KC-GPT-PAY/public/admin.css.bak-session-layout-20260923 /root/KC-GPT-PAY/public/admin.css'` 恢复部署前文件。
