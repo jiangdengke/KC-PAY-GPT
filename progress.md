@@ -89,3 +89,20 @@
 - `README.md`、`docs/orbitcard-card-reuse.md`：说明套餐复用配置与卡片筛选规则。
 - `progress.md`：追加本轮变更与验证记录。
 - 回滚：变更提交后运行 `git revert HEAD` 撤销本轮后端及文档提交。
+
+
+## 2026-09-23 - Task: 修复并部署任务管理表格操作布局
+### What was done
+- 保留任务管理中的截图/录像列，修复列宽不足导致的内容竖排和操作按钮换行。
+- 提交并推送界面改动后，将对应 HTML/CSS 窄范围部署到 rn；应用无需重启。
+### Testing
+- `npm test`：3 个测试文件、38 项测试通过。
+- `node --check public/admin.js` 和 `git diff --check`：通过。
+- rn 运行时检查：任务管理页面与新版 CSS 均 HTTP 200，截图/录像列存在且操作列修复规则已加载；容器保持 healthy。
+### Notes
+- `public/admin.css`：为任务管理表格设置最小宽度和固定列宽，保持操作按钮横向排列。
+- `public/admin.html`：更新 CSS 缓存版本。
+- `rn:/root/KC-GPT-PAY/public/admin.css`：部署任务表格列宽和操作样式。
+- `rn:/root/KC-GPT-PAY/public/admin.html`：部署新版 CSS 缓存版本。
+- `progress.md`：记录部署及验证结果。
+- 回滚：在 rn 分别执行 `cp /root/KC-GPT-PAY/public/admin.html.bak-task-table-actions-20260923 /root/KC-GPT-PAY/public/admin.html` 和 `cp /root/KC-GPT-PAY/public/admin.css.bak-task-table-actions-20260923 /root/KC-GPT-PAY/public/admin.css`，再按需清理浏览器缓存。
