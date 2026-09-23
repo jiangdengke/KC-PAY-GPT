@@ -1974,6 +1974,24 @@ app.get('/api/admin/activation-manual-holds', async (req, res) => {
     }
 });
 
+app.get('/api/admin/task-logs/:jobKey', async (req, res) => {
+    try {
+        await ensureStoreReady();
+        const jobKey = decodeURIComponent(String(req.params.jobKey || '').trim());
+        if (!jobKey) {
+            return res.status(400).json({ success: false, message: '缺少任务标识' });
+        }
+        const task = await store.getAdminTaskLogDetail(jobKey);
+        if (!task) {
+            return res.status(404).json({ success: false, message: '未找到该任务记录' });
+        }
+        const runtimeEntries = runtimeLog.tail(15000).filter((entry) => entry.jobKey === jobKey);
+        return res.json({ success: true, task, runtimeEntries });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 app.post('/api/admin/activation-manual-holds/:id/resolve', async (req, res) => {
     try {
         await ensureStoreReady();
@@ -1985,7 +2003,7 @@ app.post('/api/admin/activation-manual-holds/:id/resolve', async (req, res) => {
         if (!resolved) {
             return res.status(404).json({ success: false, message: '记录不存在或已解除' });
         }
-        return res.json({ success: true, message: '人工审核已解除，该账号可重新提交' });
+        return res.json({ success: true, message: '人工审核已解除，该卡密可重新提交' });
     } catch (error) {
         return res.status(500).json({ success: false, message: error.message });
     }
@@ -2084,8 +2102,10 @@ app.post('/api/admin/browser-pool/reload', async (req, res) => {
 app.get('/api/admin/sessions', requireSecondaryAuth, async (req, res) => {
     try {
         await ensureStoreReady();
-        const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
-        res.json(await store.listSessions({ limit }));
+        const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 12));
+        const offset = Math.max(0, Number(req.query.offset) || 0);
+        const search = String(req.query.search || '').trim().slice(0, 120);
+        res.json(await store.listSessions({ limit, offset, search }));
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -2575,7 +2595,9 @@ app.get('/api/admin/orbitcard/products', async (req, res) => {
         if (!result.success) {
             return res.status(502).json({ success: false, message: `Orbitcard 产品目录查询失败: ${result.error || '未知错误'}` });
         }
-        const strategyCatalog = orbitcard.buildProductStrategyCatalog(result.data);
+        const strategyCatalog = orbitcard.buildProductStrategyCatalog(result.data, {
+            reuseLimits: cfg.orbitcard_reuse_limits
+        });
         const products = strategyCatalog.products.map((product) => ({
             ...product,
             amount: product.plans[planType]?.amount ?? null,
@@ -2589,6 +2611,7 @@ app.get('/api/admin/orbitcard/products', async (req, res) => {
             selected_product_code: cfg.orbitcard_product_code || '',
             fetched_at: new Date().toISOString(),
             automatic: strategyCatalog.automatic,
+            reuse_limits: cfg.orbitcard_reuse_limits,
             products
         });
     } catch (error) {
@@ -2599,9 +2622,18 @@ app.get('/api/admin/orbitcard/products', async (req, res) => {
 app.post('/api/admin/orbitcard/product-strategy', async (req, res) => {
     try {
         await ensureStoreReady();
+        const cfg = await store.getGptApiConfig();
         const productCode = String(req.body?.product_code || '').trim();
+        const reuseLimits = { ...cfg.orbitcard_reuse_limits };
+        for (const planType of ['plus', 'pro_5x', 'pro_20x']) {
+            if (!Object.prototype.hasOwnProperty.call(req.body?.reuse_limits || {}, planType)) continue;
+            const value = Number(req.body.reuse_limits[planType]);
+            if (!Number.isInteger(value) || value < 1 || value > 20) {
+                return res.status(400).json({ success: false, message: `${planType} 的一卡几冲必须是 1-20 的整数` });
+            }
+            reuseLimits[planType] = value;
+        }
         if (productCode) {
-            const cfg = await store.getGptApiConfig();
             if (!cfg.orbitcard_api_key || !cfg.orbitcard_api_secret) {
                 return res.status(400).json({ success: false, message: '请先配置 Orbitcard API Key 和 Secret' });
             }
@@ -2615,7 +2647,8 @@ app.post('/api/admin/orbitcard/product-strategy', async (req, res) => {
             }
             const selectable = ['plus', 'pro_5x', 'pro_20x'].some((planType) => (
                 orbitcard.getProductSelectionsForPlan(result.data, planType, {
-                    preferredProductCode: productCode
+                    preferredProductCode: productCode,
+                    reuseLimits
                 }).length > 0
             ));
             if (!selectable) {
@@ -2624,10 +2657,14 @@ app.post('/api/admin/orbitcard/product-strategy', async (req, res) => {
         }
         await store.setAppConfigValue('orbitcard_product_code', productCode);
         await store.setAppConfigValue('orbitcard_next_product_code', '');
+        await store.setAppConfigValue('orbitcard_reuse_limit_plus', reuseLimits.plus);
+        await store.setAppConfigValue('orbitcard_reuse_limit_pro_5x', reuseLimits.pro_5x);
+        await store.setAppConfigValue('orbitcard_reuse_limit_pro_20x', reuseLimits.pro_20x);
         return res.json({
             success: true,
             product_code: productCode,
-            message: productCode ? 'Orbitcard 后续开卡产品已保存' : '已恢复自动按优先级开卡'
+            reuse_limits: reuseLimits,
+            message: productCode ? 'Orbitcard 后续开卡产品与复用上限已保存' : '已恢复自动按优先级开卡，复用上限已保存'
         });
     } catch (error) {
         return res.status(500).json({ success: false, message: error.message });
@@ -3661,7 +3698,8 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 api_secret: cfg.orbitcard_api_secret
             };
             const requestedProductCode = String(cfg.orbitcard_product_code || '').trim();
-            const reuseLimit = orbitcard.getPlanReuseLimit(planType);
+            const reuseLimits = cfg.orbitcard_reuse_limits || null;
+            const reuseLimit = orbitcard.getPlanReuseLimit(planType, reuseLimits);
             if (reuseLimit > 1) {
                 await setProgress('running', 12, '正在准备支付方式...');
                 const cardList = await orbitcard.getCardList(orbitCfg);
@@ -3681,15 +3719,16 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 if (!productResult.success) throw new Error(`Orbitcard 产品目录查询失败: ${productResult.error}`);
                 if (requestedProductCode) {
                     const requestedSelection = orbitcard.getProductSelectionsForPlan(productResult.data, planType, {
-                        preferredProductCode: requestedProductCode
+                        preferredProductCode: requestedProductCode,
+                        reuseLimits
                     });
                     if (!requestedSelection.length) {
                         throw new Error(`指定的 Orbitcard 产品 ${requestedProductCode} 当前不可用，请重新选择`);
                     }
                 }
                 const selections = orbitcard.getProductSelectionsForPlan(productResult.data, planType, requestedProductCode
-                    ? { preferredProductCode: requestedProductCode }
-                    : {});
+                    ? { preferredProductCode: requestedProductCode, reuseLimits }
+                    : { reuseLimits });
                 if (!selections.length) throw new Error('Orbitcard 当前没有可开卡产品库存');
 
                 let createdCardId = null;
@@ -3835,10 +3874,13 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             throw new Error(`代充提交成功但未返回订单号: ${JSON.stringify(submit.data).slice(0, 300)}`);
         }
 
-        await setProgress('running', 35, '订单已创建，正在等待处理...', {
+        const submittedPayload = submit.data && typeof submit.data === 'object'
+            ? { ...submit.data, ...(submit.message ? { _providerMessage: submit.message } : {}) }
+            : submit.data;
+        await setProgress('running', 35, submit.message || '订单已创建，正在等待处理...', {
             gptApiOrderId: orderId,
             gptApiTaskId: taskId,
-            gptApiRaw: JSON.stringify(sanitizeGptApiRaw(submit.data, openProtocol)),
+            gptApiRaw: JSON.stringify(sanitizeGptApiRaw(submittedPayload, openProtocol)),
             gptApiTopupCode: submit.topupCode
         });
         if (orbitcardRechargeRecorded) {
@@ -3876,6 +3918,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             nextPollDelayMs = pollIntervalMs;
 
             lastRaw = queryRes.data;
+            const providerMessage = queryRes.message || gptApi.extractProviderMessage(lastRaw);
             let sessionUpdate = null;
             if (openProtocol && lastRaw?.session && typeof lastRaw.session === 'object') {
                 // Preserve fields omitted by a partial provider refresh while
@@ -3889,6 +3932,10 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 sessionUpdate = JSON.stringify(sessionPayload);
             }
             const rawStatus = String(queryRes.rawStatus || '').toLowerCase();
+            if (providerMessage && lastRaw && typeof lastRaw === 'object') {
+                lastRaw = { ...lastRaw, _providerMessage: providerMessage };
+            }
+            logTask(jobKey, `订单查询第 ${pollCount} 次：status=${rawStatus || '-'}${providerMessage ? `，message=${providerMessage}` : ''}`);
             const stage = String(queryRes.stage || lastRaw?.stage || '').trim().toLowerCase();
             const captcha = queryRes.captcha || gptApi.extractCaptcha(lastRaw);
             const captchaStatus = String(captcha?.status || '').trim().toLowerCase();
@@ -3991,7 +4038,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             await store.resetCdkFailure(cdk);
             if (reservedOrbitcard) {
                 const usage = await store.recordOrbitcardCardUsage(reservedOrbitcard.orbitcard_id);
-                const maxUsageCount = Number(reservedOrbitcard.max_usage_count || orbitcard.getPlanReuseLimit(planType) || 1);
+                const maxUsageCount = Number(reservedOrbitcard.max_usage_count || orbitcard.getPlanReuseLimit(planType, cfg.orbitcard_reuse_limits) || 1);
                 if (usage.usageCount >= maxUsageCount) {
                     await store.retireOrbitcardCard(reservedOrbitcard.orbitcard_id).catch(() => { });
                 } else {
@@ -4431,23 +4478,20 @@ async function handleActivationRequest(req, res) {
                 message: runningTask.message || '该 CDK 正在开通中，已为您恢复等待进度'
             });
         }
-        if (!cdkDetails || cdkDetails.used_at || cdkDetails.type !== '自助') {
-            return res.status(403).json({ success: false, message: 'CDK 无效、已使用或非自助激活码' });
-        }
-
-        const planType = cdkDetails.plan_type || 'plus';
-        const accountKey = getActivationAccountKey(rawSession, token);
-        const manualHold = accountKey
-            ? await store.getActivationManualHold(accountKey, planType)
-            : null;
+        const manualHold = cdkDetails ? await store.getActivationManualHold(cdk) : null;
         if (manualHold) {
             return res.status(409).json({
                 success: false,
                 code: 'manual_review_required',
                 manualReview: true,
-                message: `该账号的 ${getPlanTypeLabel(planType)} 上一次开通失败，已转人工确认，请联系客服处理后再试`
+                message: '该卡密上一次开通失败，已转人工确认，请联系客服处理后再试'
             });
         }
+        if (!cdkDetails || cdkDetails.used_at || cdkDetails.type !== '自助') {
+            return res.status(403).json({ success: false, message: 'CDK 无效、已使用或非自助激活码' });
+        }
+
+        const planType = cdkDetails.plan_type || 'plus';
 
         const cdkCooldownMinutes = getRemainingCooldownMinutes(cdkDetails.cooldown_until);
         if (cdkCooldownMinutes > 0) {
@@ -4553,6 +4597,15 @@ app.post('/api/verify-cdk', async (req, res) => {
                     jobKey: runningTask.job_key,
                     message: runningTask.message || '当前 CDK 正在开通中'
                 }
+            });
+        }
+        const manualHold = cdkData ? await store.getActivationManualHold(cdk) : null;
+        if (manualHold) {
+            return res.status(409).json({
+                success: false,
+                code: 'manual_review_required',
+                manualReview: true,
+                message: '该卡密上一次开通失败，已转人工确认，请联系客服处理后再试'
             });
         }
         if (cdkData && !cdkData.used_at) {

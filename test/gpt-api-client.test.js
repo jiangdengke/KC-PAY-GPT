@@ -84,6 +84,8 @@ describe('gpt api client', () => {
             .toBe('订单处理较慢，系统仍在等待结果（已查询 2 次）');
         expect(client.formatProgressMessage({ status: 'unknown' }, 3))
             .toBe('订单已提交，正在同步最新状态（已查询 3 次）');
+        expect(client.formatProgressMessage({ status: 'pending', message: '正在等待银行确认' }, 2))
+            .toBe('正在等待银行确认（已查询 2 次）');
     });
 
     it('normalizes multi-round captcha metadata and user-facing states', () => {
@@ -241,6 +243,23 @@ describe('gpt api client', () => {
         expect(out).toMatchObject({ success: true, rawStatus: 'succeeded', retryAfterMs: 7000 });
         expect(out.data.subscriptionCancelled).toBe(true);
         expect(spy.mock.calls[0][0].url).toBe('https://recharge.desolate.run/api/v1/open/orders/ord_abc');
+    });
+
+    it('preserves a readable order message for the standard task timeline', async () => {
+        vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: {
+                code: 0,
+                message: '上游订单处理中，请稍候',
+                data: { orderId: 'ord_message', status: 'pending' }
+            }
+        });
+        const out = await client.queryOrder(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_live_test' },
+            'ord_message'
+        );
+        expect(out.message).toBe('上游订单处理中，请稍候');
+        expect(client.extractProviderMessage({ message: '成功' }, '成功')).toBe('');
     });
 
     it('returns captcha and stage from a Desolate Open order status', async () => {

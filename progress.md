@@ -68,3 +68,24 @@
 - `public/admin.css`：扩大 Session 表格最小宽度，避免 ID 逐字换行并限制预览文本。
 - `progress.md`：记录本轮部署与验证结果。
 - 回滚：分别执行 `ssh rn 'cp /root/KC-GPT-PAY/public/admin.html.bak-session-layout-20260923 /root/KC-GPT-PAY/public/admin.html'` 与 `ssh rn 'cp /root/KC-GPT-PAY/public/admin.css.bak-session-layout-20260923 /root/KC-GPT-PAY/public/admin.css'` 恢复部署前文件。
+
+
+## 2026-09-23 - Task: 完善代充订单提示与卡片复用管控
+### What was done
+- 保留上游订单进度说明，并为 Orbitcard 新卡按套餐配置复用次数与首充预算。
+- 将待人工复核限制绑定到卡密，补充管理端任务详情与 Session 分页查询。
+- 补充 Orbitcard 复用规则和配置文档。
+### Testing
+- `npm test`：3 个测试文件、38 项测试通过。
+- `git diff --check`：通过。
+### Notes
+- `gpt-api-client.js`：提取并保留上游订单进度消息。
+- `orbitcard-client.js`：支持读取配置的套餐复用上限并计算首充金额。
+- `mysql-store.js`：持久化复用次数、支持任务详情、Session 分页及 CDK 复核查询。
+- `mysql-schema.sql`：为按卡密查询待复核记录添加索引。
+- `server.js`：接入套餐复用设置、订单进度消息、任务详情和卡密复核流程。
+- `test/gpt-api-client.test.js`：覆盖上游进度提示解析。
+- `test/orbitcard-client.test.js`：覆盖自定义复用次数和首充金额。
+- `README.md`、`docs/orbitcard-card-reuse.md`：说明套餐复用配置与卡片筛选规则。
+- `progress.md`：追加本轮变更与验证记录。
+- 回滚：变更提交后运行 `git revert HEAD` 撤销本轮后端及文档提交。

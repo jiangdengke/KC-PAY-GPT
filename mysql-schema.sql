@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS activation_manual_holds (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_activation_manual_hold_lookup (account_key, plan_type, resolved_at),
+    KEY idx_activation_manual_hold_cdk (cdk_code, resolved_at),
     KEY idx_activation_manual_hold_status (resolved_at, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

@@ -98,6 +98,20 @@ describe('orbitcard client', () => {
         expect(orbitcard.getPlanReuseLimit('pro_20x')).toBe(1);
     });
 
+    it('uses configured reuse limits when calculating card funding and cap', () => {
+        const selection = orbitcard.chooseProductForPlan({ list: [
+            {
+                product_code: 'visa-plus',
+                remaining_open_card_num: 2,
+                min_initial_amount: '20',
+                min_retained_balance: '0.10',
+                gpt_plan_prices: [{ id: 'plus', price: '15.75', currency: 'USD' }]
+            }
+        ] }, 'plus', { reuseLimits: { plus: 6 } });
+        expect(selection).toMatchObject({ amount: '100.00', maxUsageCount: 6 });
+        expect(orbitcard.getPlanReuseLimit('plus', { plus: 6 })).toBe(6);
+    });
+
     it('prefers channel 3 Mastercard, then the 4004 Visa fallback', () => {
         const selection = orbitcard.chooseProductForPlan({ list: [
             { product_code: 'tracked-cheap', bin: '555659', network: 'MASTERCARD', remaining_open_card_num: 500, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },

@@ -90,6 +90,8 @@ docker compose up -d
 
 Orbitcard 卡台使用 Open API V1 的 HMAC-SHA256 签名。后台填写 Orbitcard Base URL、API Key 和 Secret；Secret 会保存到应用配置中，也可通过服务端环境变量 `ORBITCARD_API_SECRET` 注入（数据库配置优先）。API Key 需要 `products:read`、`cards:create`、`cards:read` 与 `cards:sensitive` Scope，另加 `account:read` 用于余额测试。任务会先查询产品目录，渠道 3 优先选择 Mastercard `55565979`，再选择 Visa 4004 `40041641`；使用渠道 1 时仅创建 Mastercard `5556` 卡头，按实时价格依次尝试可用的 5556 产品。后台可在 Orbitcard 配置中选择“后续新开卡产品”，该选择会持续用于所有需要新开卡的订单，直到改为自动或选择其他产品；有可复用卡时仍按复用规则处理。未指定时沿用自动优先级。4002 系列（如 `400242001`）暂不新开，也不会复用已有卡。Plus 卡按实时价格计算首充金额并最多复用 4 次，Pro 5x/Pro 20x 每张卡使用 1 次。没有可复用卡时以 `quantity=1` 调用 `createCard`，如果上游明确返回开卡失败，会按顺序尝试下一个可用产品；网络超时等结果不明确时不会重复开卡。随后按卡 ID 调用 `cardDetail(reveal_sensitive=true)` 读取卡资料。完成上限次数或遇到异常后卡会标记为已退役，不再复用。本地数据库记录卡 ID、使用次数、首充金额和每次代充账号/订单，不保存 Orbitcard 完整卡号或 CVV。
 
+Orbitcard 一卡几冲默认 Plus 4 次、Pro 5x 和 Pro 20x 各 1 次，可在后台「支付与资产 → Orbitcard 开卡策略」按套餐设置为 1–20 次；新设置只作用于之后新开的卡，已有卡沿用各自记录的上限。详细复用条件与首充计算见 [Orbitcard 卡片复用策略](docs/orbitcard-card-reuse.md)。
+
 | 地址 | 说明 |
 |------|------|
 | `http://服务器IP:3000/` | 用户前台（卡密兑换） |

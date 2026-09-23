@@ -317,6 +317,7 @@ async function submitPay(cfg, { planKey, session, sessionToken, country, currenc
             taskId: null,
             id: orderId,
             data: payload,
+            message: extractProviderMessage(payload, res.data?.message),
             raw: res.data
         };
     }
@@ -360,7 +361,8 @@ async function submitPay(cfg, { planKey, session, sessionToken, country, currenc
         id: orderId || taskId || extractId(res.data) || null,
         alreadySubmitted: Boolean(res.data?.already_submitted),
         topupCode: extractTopupCode(res.data),
-        data: res.data
+        data: res.data,
+        message: extractProviderMessage(res.data)
     };
 }
 
@@ -426,6 +428,19 @@ function extractStage(data) {
     ).trim().toLowerCase();
 }
 
+const GENERIC_PROVIDER_MESSAGES = new Set(['成功', 'ok', 'success', '请求成功', '操作成功']);
+
+function extractProviderMessage(data, fallback = '') {
+    const source = data && typeof data === 'object' ? data : {};
+    const result = source.result && typeof source.result === 'object' ? source.result : {};
+    const candidates = [source.providerMessage, source._providerMessage, source.message, source.msg, result.message, result.msg, fallback];
+    for (const candidate of candidates) {
+        const value = String(candidate || '').trim();
+        if (value && !GENERIC_PROVIDER_MESSAGES.has(value.toLowerCase())) return value;
+    }
+    return '';
+}
+
 /**
  * 查询单笔代充订单状态 (GET /pay/orders/{order_id})
  */
@@ -443,6 +458,7 @@ async function queryOrder(cfg, orderId) {
         status: res.status,
         data,
         raw: res.data,
+        message: extractProviderMessage(data, res.data?.message),
         rawStatus: extractStatus(data),
         stage: extractStage(data),
         captcha: extractCaptcha(data),
@@ -464,6 +480,7 @@ async function queryTask(cfg, taskId) {
         success: true,
         status: res.status,
         data: res.data,
+        message: extractProviderMessage(res.data),
         rawStatus: extractStatus(res.data),
         stage: extractStage(res.data),
         captcha: extractCaptcha(res.data),
@@ -560,8 +577,14 @@ function formatProgressMessage(data, pollCount = 0) {
     ).trim().toLowerCase();
     const businessStatus = String(source.status ?? source.state ?? result.status ?? '').trim().toLowerCase();
     const key = displayStatus || businessStatus;
-    const message = IN_PROGRESS_STATUS_MESSAGES[key] || '订单已提交，正在同步最新状态';
+    const providerMessage = extractProviderMessage(source);
     const count = Number(pollCount);
+    if (providerMessage) {
+        return Number.isFinite(count) && count > 0
+            ? `${providerMessage}（已查询 ${Math.floor(count)} 次）`
+            : providerMessage;
+    }
+    const message = IN_PROGRESS_STATUS_MESSAGES[key] || '订单已提交，正在同步最新状态';
     return Number.isFinite(count) && count > 0 ? `${message}（已查询 ${Math.floor(count)} 次）` : message;
 }
 
@@ -689,6 +712,7 @@ module.exports = {
     normalizeCaptcha,
     extractCaptcha,
     extractStage,
+    extractProviderMessage,
     extractStatus,
     formatProgressMessage,
     isDesolateOpenProtocol,

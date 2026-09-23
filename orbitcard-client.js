@@ -133,8 +133,12 @@ const CHANNEL1_PRODUCT_PRIORITY = Object.freeze([
 // 4002 系列当前不可用：既不参与新卡排序，也不从上游 ACTIVE 卡中复用。
 const BLOCKED_CARD_BIN_PREFIXES = Object.freeze(['4002']);
 
-function getPlanReuseLimit(planType) {
+function getPlanReuseLimit(planType, reuseLimits = null) {
     const key = String(planType || 'plus').trim();
+    const configured = reuseLimits && typeof reuseLimits === 'object'
+        ? Number(reuseLimits[key])
+        : NaN;
+    if (Number.isInteger(configured) && configured >= 1 && configured <= 20) return configured;
     return PLAN_REUSE_LIMITS[key] || PLAN_REUSE_LIMITS.plus;
 }
 
@@ -271,14 +275,14 @@ function rankProductsForPlan(data, planType = 'plus') {
     return products;
 }
 
-function buildProductSelection(product, planPrice, planType) {
+function buildProductSelection(product, planPrice, planType, reuseLimits = null) {
     const minimum = Number.isFinite(product.minInitialAmount) && product.minInitialAmount > 0
         ? product.minInitialAmount
         : 20;
     const retained = Number.isFinite(product.minRetainedBalance) && product.minRetainedBalance > 0
         ? product.minRetainedBalance
         : 0;
-    const reuseLimit = getPlanReuseLimit(planType);
+    const reuseLimit = getPlanReuseLimit(planType, reuseLimits);
     const fallback = FALLBACK_CARD_AMOUNTS[String(planType || 'plus').trim()] || FALLBACK_CARD_AMOUNTS.plus;
     const priceTarget = planPrice
         ? planPrice.price * reuseLimit + retained + 1
@@ -299,28 +303,29 @@ function buildProductSelection(product, planPrice, planType) {
 
 function getProductSelectionsForPlan(data, planType = 'plus', options = {}) {
     const preferredProductCode = String(options?.preferredProductCode || '').trim().toLowerCase();
+    const reuseLimits = options?.reuseLimits || null;
     if (preferredProductCode) {
         const preferred = getSelectableProductItems(data, planType).find(({ product }) => (
             product.productCode.toLowerCase() === preferredProductCode
             && (getChannel3Priority(product) !== null || getChannel1Priority(product) !== null)
         ));
-        return preferred ? [buildProductSelection(preferred.product, preferred.planPrice, planType)] : [];
+        return preferred ? [buildProductSelection(preferred.product, preferred.planPrice, planType, reuseLimits)] : [];
     }
     return rankProductsForPlan(data, planType).map(({ product, planPrice }) => (
-        buildProductSelection(product, planPrice, planType)
+        buildProductSelection(product, planPrice, planType, reuseLimits)
     ));
 }
 
-function getProductOptionsForPlan(data, planType = 'plus') {
+function getProductOptionsForPlan(data, planType = 'plus', options = {}) {
     return getSelectableProductItems(data, planType)
         .filter(({ product }) => getChannel3Priority(product) !== null || getChannel1Priority(product) !== null)
-        .map(({ product, planPrice }) => buildProductSelection(product, planPrice, planType));
+        .map(({ product, planPrice }) => buildProductSelection(product, planPrice, planType, options?.reuseLimits || null));
 }
 
-function buildProductStrategyCatalog(data) {
+function buildProductStrategyCatalog(data, options = {}) {
     const productMap = new Map();
     for (const planType of SUPPORTED_PLAN_TYPES) {
-        for (const selection of getProductOptionsForPlan(data, planType)) {
+        for (const selection of getProductOptionsForPlan(data, planType, options)) {
             const code = selection.product.productCode;
             if (!productMap.has(code)) {
                 productMap.set(code, {
@@ -355,7 +360,7 @@ function buildProductStrategyCatalog(data) {
         return String(left.product_code).localeCompare(String(right.product_code));
     });
     const automatic = Object.fromEntries(SUPPORTED_PLAN_TYPES.map((planType) => {
-        const selected = getProductSelectionsForPlan(data, planType)[0];
+        const selected = getProductSelectionsForPlan(data, planType, options)[0];
         return [planType, selected ? {
             product_code: selected.product.productCode,
             bin: selected.product.bin,
@@ -372,8 +377,8 @@ function buildProductStrategyCatalog(data) {
     return { products, automatic };
 }
 
-function chooseProductForPlan(data, planType = 'plus') {
-    const selections = getProductSelectionsForPlan(data, planType);
+function chooseProductForPlan(data, planType = 'plus', options = {}) {
+    const selections = getProductSelectionsForPlan(data, planType, options);
     if (!selections.length) return { success: false, error: 'Orbitcard 当前没有可开卡产品库存' };
     const selected = selections[0];
     return {

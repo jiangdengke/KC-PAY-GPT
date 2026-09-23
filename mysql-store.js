@@ -291,8 +291,22 @@ const GPT_API_CONFIG_KEYS = [
     'orbitcard_next_product_code',
     'orbitcard_base_url',
     'orbitcard_api_key',
-    'orbitcard_api_secret'
+    'orbitcard_api_secret',
+    'orbitcard_reuse_limit_plus',
+    'orbitcard_reuse_limit_pro_5x',
+    'orbitcard_reuse_limit_pro_20x'
 ];
+
+const DEFAULT_ORBITCARD_REUSE_LIMITS = Object.freeze({
+    plus: 4,
+    pro_5x: 1,
+    pro_20x: 1
+});
+
+function parseOrbitcardReuseLimit(value, fallback) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed >= 1 && parsed <= 20 ? parsed : fallback;
+}
 
 async function ensureGptApiColumns() {
     await ensureColumn('task_logs', 'gpt_api_order_id', "VARCHAR(128) NULL DEFAULT NULL");
@@ -371,6 +385,17 @@ async function ensureActivationManualHoldTable() {
             KEY idx_activation_manual_hold_status (resolved_at, created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+    // Manual review is enforced by CDK, so keep the lookup indexed for existing databases too.
+    try {
+        await runQuery(`
+            ALTER TABLE activation_manual_holds
+            ADD KEY idx_activation_manual_hold_cdk (cdk_code, resolved_at)
+        `);
+    } catch (error) {
+        if (!/duplicate key name|duplicate key/i.test(String(error.message || ''))) {
+            throw error;
+        }
+    }
 }
 
 async function ensureGptApiConfigDefaults() {
@@ -386,7 +411,10 @@ async function ensureGptApiConfigDefaults() {
         ['orbitcard_next_product_code', ''],
         ['orbitcard_base_url', 'https://orbitcard.cc'],
         ['orbitcard_api_key', ''],
-        ['orbitcard_api_secret', '']
+        ['orbitcard_api_secret', ''],
+        ['orbitcard_reuse_limit_plus', String(DEFAULT_ORBITCARD_REUSE_LIMITS.plus)],
+        ['orbitcard_reuse_limit_pro_5x', String(DEFAULT_ORBITCARD_REUSE_LIMITS.pro_5x)],
+        ['orbitcard_reuse_limit_pro_20x', String(DEFAULT_ORBITCARD_REUSE_LIMITS.pro_20x)]
     ];
     for (const [key, value] of defaults) {
         await runExecute(
@@ -418,7 +446,12 @@ async function getGptApiConfig() {
         orbitcard_product_code: String(map.orbitcard_product_code || map.orbitcard_next_product_code || '').trim(),
         orbitcard_base_url: String(map.orbitcard_base_url || 'https://orbitcard.cc').trim().replace(/\/+$/, '') || 'https://orbitcard.cc',
         orbitcard_api_key: String(map.orbitcard_api_key || '').trim(),
-        orbitcard_api_secret: String(map.orbitcard_api_secret || ORBITCARD_API_SECRET || '').trim()
+        orbitcard_api_secret: String(map.orbitcard_api_secret || ORBITCARD_API_SECRET || '').trim(),
+        orbitcard_reuse_limits: {
+            plus: parseOrbitcardReuseLimit(map.orbitcard_reuse_limit_plus, DEFAULT_ORBITCARD_REUSE_LIMITS.plus),
+            pro_5x: parseOrbitcardReuseLimit(map.orbitcard_reuse_limit_pro_5x, DEFAULT_ORBITCARD_REUSE_LIMITS.pro_5x),
+            pro_20x: parseOrbitcardReuseLimit(map.orbitcard_reuse_limit_pro_20x, DEFAULT_ORBITCARD_REUSE_LIMITS.pro_20x)
+        }
     };
 }
 
@@ -930,7 +963,8 @@ function formatAdminTaskLogRow(row) {
 
 async function listAdminTaskLogs(limit = 200) {
     const rows = await runQuery(
-        `SELECT l.job_key, l.display_time, l.created_at, l.token_preview, l.cdk_code, l.phone, l.card_last4,
+        `SELECT l.job_key, l.display_time, l.created_at, l.token_preview,
+                l.cdk_code, l.phone, l.card_last4,
                 l.status, l.message, l.progress, l.failure_screenshots, l.raw_output, c.type AS cdk_type
          FROM task_logs l
          LEFT JOIN cdk_codes c ON l.cdk_code = c.cdk_code
@@ -1300,22 +1334,43 @@ async function listCdks() {
 }
 
 async function listSessions(options = {}) {
-    const limit = Math.max(1, Math.min(Number(options.limit) || 200, 500));
-    const rows = await runQuery(
-        `SELECT l.job_key, l.display_time, l.token_preview, l.session_payload, l.cdk_code, l.phone, l.card_last4,
-                l.status, l.message, l.progress, l.created_at, l.updated_at
-         FROM task_logs l
-         LEFT JOIN cdk_codes c ON l.cdk_code = c.cdk_code
-         WHERE l.token_preview IS NOT NULL
-           AND l.token_preview != ''
-           AND (l.cdk_code IS NULL OR l.cdk_code NOT LIKE 'ADMIN_PRODUCT_GEN:%')
-           AND (c.type IS NULL OR c.type = '' OR c.type = '自助')
-         ORDER BY l.created_at DESC, l.id DESC
-         LIMIT ?`,
-        [limit]
-    );
+    const limit = Math.max(1, Math.min(Number(options.limit) || 12, 100));
+    const offset = Math.max(0, Number(options.offset) || 0);
+    const search = String(options.search || '').trim().slice(0, 120);
+    const where = [
+        'l.token_preview IS NOT NULL',
+        "l.token_preview != ''",
+        "(l.cdk_code IS NULL OR l.cdk_code NOT LIKE 'ADMIN_PRODUCT_GEN:%')",
+        "(c.type IS NULL OR c.type = '' OR c.type = '自助')"
+    ];
+    const searchParams = [];
+    if (search) {
+        const keyword = `%${search}%`;
+        where.push('(l.job_key LIKE ? OR l.token_preview LIKE ? OR l.cdk_code LIKE ? OR l.card_last4 LIKE ? OR l.message LIKE ?)');
+        searchParams.push(keyword, keyword, keyword, keyword, keyword);
+    }
+    const whereSql = where.join('\n           AND ');
+    const [countRows, rows] = await Promise.all([
+        runQuery(
+            `SELECT COUNT(*) AS total
+             FROM task_logs l
+             LEFT JOIN cdk_codes c ON l.cdk_code = c.cdk_code
+             WHERE ${whereSql}`,
+            searchParams
+        ),
+        runQuery(
+            `SELECT l.job_key, l.display_time, l.token_preview, l.session_payload, l.cdk_code, l.phone, l.card_last4,
+                    l.status, l.message, l.progress, l.created_at, l.updated_at
+             FROM task_logs l
+             LEFT JOIN cdk_codes c ON l.cdk_code = c.cdk_code
+             WHERE ${whereSql}
+             ORDER BY l.created_at DESC, l.id DESC
+             LIMIT ? OFFSET ?`,
+            [...searchParams, limit, offset]
+        )
+    ]);
 
-    return rows.map((row) => ({
+    const items = rows.map((row) => ({
         job_key: row.job_key,
         time: row.display_time,
         token_preview: row.token_preview,
@@ -1332,6 +1387,14 @@ async function listSessions(options = {}) {
             ? new Date(row.updated_at).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
             : null
     }));
+
+    return {
+        items,
+        total: Number(countRows[0]?.total || 0),
+        limit,
+        offset,
+        search
+    };
 }
 
 async function getSessionByJobKey(jobKey) {
@@ -1506,28 +1569,29 @@ async function resetActivationAttemptFailure(scopeType, scopeKey) {
     );
 }
 
-async function getActivationManualHold(accountKey, planType) {
+async function getActivationManualHold(cdkCode) {
+    const code = String(cdkCode || '').trim();
+    if (!code) return null;
     const rows = await runQuery(
         `SELECT id, account_key, account_email, plan_type, failed_job_key, cdk_code,
                 reason, created_at, updated_at
          FROM activation_manual_holds
-         WHERE account_key = ?
-           AND plan_type = ?
+         WHERE cdk_code = ?
            AND resolved_at IS NULL
          ORDER BY id DESC
          LIMIT 1`,
-        [String(accountKey), String(planType || 'plus')]
+        [code]
     );
     return rows[0] || null;
 }
 
 async function createActivationManualHold({ accountKey, accountEmail, planType, failedJobKey, cdkCode, reason }) {
-    const key = String(accountKey || '').trim();
-    if (!key) {
+    const code = String(cdkCode || '').trim();
+    if (!code) {
         return null;
     }
     const type = String(planType || 'plus').trim() || 'plus';
-    const existing = await getActivationManualHold(key, type);
+    const existing = await getActivationManualHold(code);
     if (existing) {
         return existing;
     }
@@ -1536,15 +1600,15 @@ async function createActivationManualHold({ accountKey, accountEmail, planType, 
             (account_key, account_email, plan_type, failed_job_key, cdk_code, reason)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [
-            key,
+            String(accountKey || '').trim(),
             String(accountEmail || '').trim(),
             type,
             String(failedJobKey || '').trim() || null,
-            String(cdkCode || '').trim() || null,
+            code,
             String(reason || '').trim().slice(0, 512)
         ]
     );
-    return getActivationManualHold(key, type);
+    return getActivationManualHold(code);
 }
 
 async function listActivationManualHolds(limit = 200) {
@@ -1561,6 +1625,15 @@ async function listActivationManualHolds(limit = 200) {
 }
 
 async function resolveActivationManualHold(id, resolvedBy = '') {
+    const rows = await runQuery(
+        `SELECT cdk_code
+         FROM activation_manual_holds
+         WHERE id = ?
+           AND resolved_at IS NULL
+         LIMIT 1`,
+        [Number(id)]
+    );
+    const cdkCode = String(rows[0]?.cdk_code || '').trim();
     const result = await runExecute(
         `UPDATE activation_manual_holds
          SET resolved_at = CURRENT_TIMESTAMP,
@@ -1569,7 +1642,12 @@ async function resolveActivationManualHold(id, resolvedBy = '') {
            AND resolved_at IS NULL`,
         [String(resolvedBy || '').trim().slice(0, 128) || 'admin', Number(id)]
     );
-    return Number(result.affectedRows || 0) > 0;
+    if (Number(result.affectedRows || 0) === 0) return false;
+    if (cdkCode) {
+        await resetCdkFailure(cdkCode);
+        await markCdkUnused(cdkCode);
+    }
+    return true;
 }
 
 async function markCdkUsed(cdk) {
@@ -2854,6 +2932,40 @@ async function getTaskStatus(jobKey) {
         [String(jobKey)]
     );
     return rows[0] || null;
+}
+
+async function getAdminTaskLogDetail(jobKey) {
+    const rows = await runQuery(
+        `SELECT job_key, display_time, created_at, updated_at, token_preview, cdk_code, phone, card_last4,
+                status, message, progress, raw_output, failure_screenshots,
+                gpt_api_order_id, gpt_api_task_id, gpt_api_topup_code, gpt_api_raw, gpt_api_captcha
+         FROM task_logs
+         WHERE job_key = ?
+         LIMIT 1`,
+        [String(jobKey || '').trim()]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+        jobKey: row.job_key,
+        displayTime: row.display_time,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        tokenPreview: row.token_preview || '',
+        cdk: row.cdk_code || '',
+        phone: row.phone || '',
+        cardLast4: row.card_last4 || '',
+        status: row.status || '',
+        message: row.message || '',
+        progress: Number(row.progress || 0),
+        rawOutput: row.raw_output || '',
+        failureScreenshots: row.failure_screenshots || '',
+        gptApiOrderId: row.gpt_api_order_id || '',
+        gptApiTaskId: row.gpt_api_task_id || '',
+        gptApiTopupCode: row.gpt_api_topup_code || '',
+        gptApiRaw: row.gpt_api_raw || '',
+        gptApiCaptcha: row.gpt_api_captcha || ''
+    };
 }
 
 async function getRunningTaskByCdk(cdk) {
@@ -4145,6 +4257,7 @@ module.exports = {
     deleteTaskMediaFiles,
     getBillingOverviewStats,
     getTaskStatus,
+    getAdminTaskLogDetail,
     getRunningTaskByCdk,
     getLatestTaskByCdk,
     updateTaskLog,
