@@ -112,13 +112,15 @@
 ### What was done
 - 从任务管理表格移除“截图/录像”列，保留日志和删除操作列。
 - 清理该列专用的前端入口、弹窗和渲染代码；服务端截图/录像接口及文件未删除。
+- 已备份并部署 rn 的三个后台资源文件，未重启应用；同步更新 JS 缓存版本以避免浏览器继续渲染旧列。
 ### Testing
 - `npm test`：3 个测试文件、38 项测试通过。
 - `node --check public/admin.js` 和 `git diff --check`：通过。
 - 检索确认任务管理页面不再包含“截图/录像”列及其前端入口引用。
+- rn 管理页面、CSS 和 JS 均返回 HTTP 200，列和入口移除检查通过，容器保持 healthy。
 ### Notes
-- `public/admin.html`：移除截图/录像弹窗和任务表格列，并更新 CSS 缓存版本。
+- `public/admin.html`：移除截图/录像弹窗和任务表格列，并更新 CSS、JS 缓存版本。
 - `public/admin.css`：将任务表格调整为 7 列并保留操作按钮横向布局。
 - `public/admin.js`：移除截图/录像列渲染、事件入口和前端弹窗逻辑。
 - `progress.md`：记录本轮变更与验证结果。
-- 回滚：恢复以上三个文件本轮修改前的版本；若已部署，则使用部署前备份恢复 rn 对应文件。
+- rn 部署前备份为 `/root/KC-GPT-PAY/public/admin.{html,css,js}.bak-task-table-no-media-20260924`；回滚时分别恢复到对应文件并强制刷新页面。
