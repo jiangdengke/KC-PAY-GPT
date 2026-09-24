@@ -106,3 +106,19 @@
 - `rn:/root/KC-GPT-PAY/public/admin.html`：部署新版 CSS 缓存版本。
 - `progress.md`：记录部署及验证结果。
 - 回滚：在 rn 分别执行 `cp /root/KC-GPT-PAY/public/admin.html.bak-task-table-actions-20260923 /root/KC-GPT-PAY/public/admin.html` 和 `cp /root/KC-GPT-PAY/public/admin.css.bak-task-table-actions-20260923 /root/KC-GPT-PAY/public/admin.css`，再按需清理浏览器缓存。
+
+
+## 2026-09-24 - Task: 移除任务管理截图录像列
+### What was done
+- 从任务管理表格移除“截图/录像”列，保留日志和删除操作列。
+- 清理该列专用的前端入口、弹窗和渲染代码；服务端截图/录像接口及文件未删除。
+### Testing
+- `npm test`：3 个测试文件、38 项测试通过。
+- `node --check public/admin.js` 和 `git diff --check`：通过。
+- 检索确认任务管理页面不再包含“截图/录像”列及其前端入口引用。
+### Notes
+- `public/admin.html`：移除截图/录像弹窗和任务表格列，并更新 CSS 缓存版本。
+- `public/admin.css`：将任务表格调整为 7 列并保留操作按钮横向布局。
+- `public/admin.js`：移除截图/录像列渲染、事件入口和前端弹窗逻辑。
+- `progress.md`：记录本轮变更与验证结果。
+- 回滚：恢复以上三个文件本轮修改前的版本；若已部署，则使用部署前备份恢复 rn 对应文件。

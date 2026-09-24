@@ -718,7 +718,7 @@
         }
 
         .task-records-table {
-            min-width: 1330px;
+            min-width: 1200px;
         }
 
         .task-records-table th {
@@ -731,8 +731,7 @@
         .task-records-table th:nth-child(4) { width: 270px; }
         .task-records-table th:nth-child(5) { width: 150px; }
         .task-records-table th:nth-child(6) { width: 110px; }
-        .task-records-table th:nth-child(7) { width: 130px; }
-        .task-records-table th:nth-child(8) { width: 160px; }
+        .task-records-table th:nth-child(7) { width: 160px; }
 
         .task-records-table td:not(:nth-child(4)) {
             white-space: nowrap;

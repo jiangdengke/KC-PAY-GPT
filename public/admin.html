@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="stylesheet" href="/admin.css?v=20260923-task-table-actions">
+    <link rel="stylesheet" href="/admin.css?v=20260923-task-table-no-media">
 </head>
 
 <body>
@@ -27,17 +27,6 @@
                 <button type="button" class="btn btn-primary" id="admin_confirm_ok"
                     onclick="closeAdminConfirm(true)">确定</button>
             </div>
-        </div>
-    </div>
-
-    <div id="screenshot_modal_overlay" class="screenshot-modal-overlay" role="presentation"
-        onclick="if (event.target === this) closeScreenshotModal()">
-        <div class="screenshot-modal" role="dialog" aria-modal="true" onclick="event.stopPropagation()">
-            <div class="screenshot-modal-header">
-                <h3 style="margin:0; font-size:18px;">截图 / 录像</h3>
-                <button type="button" class="btn btn-success" onclick="closeScreenshotModal()">关闭</button>
-            </div>
-            <div id="screenshot_modal_body" class="screenshot-modal-body"></div>
         </div>
     </div>
 
@@ -1461,7 +1450,6 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                                 <th>任务信息</th>
                                 <th width="150px">进度</th>
                                 <th>状态</th>
-                                <th width="110px" style="text-align:center">截图/录像</th>
                                 <th width="150px" style="text-align:center">操作</th>
                             </tr>
                         </thead>

@@ -627,42 +627,7 @@
             return `<span class="status-badge ${cfg.class}">${cfg.label || String(status || '').toUpperCase()}</span>`;
         }
 
-        let screenshotObjectUrls = [];
-
-        function closeScreenshotModal() {
-            const overlay = document.getElementById('screenshot_modal_overlay');
-            const body = document.getElementById('screenshot_modal_body');
-            if (overlay) {
-                overlay.classList.remove('open');
-            }
-            if (body) {
-                body.innerHTML = '';
-            }
-            screenshotObjectUrls.forEach((url) => URL.revokeObjectURL(url));
-            screenshotObjectUrls = [];
-        }
-
-        function buildScreenshotApiPath(relativePath) {
-            const normalized = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
-            if (!normalized) {
-                return '';
-            }
-            return `/api/admin/screenshots?path=${encodeURIComponent(normalized)}`;
-        }
-
         document.addEventListener('click', (event) => {
-            const screenshotBtn = event.target.closest('[data-view-screenshots]');
-            if (screenshotBtn) {
-                event.preventDefault();
-                showTaskScreenshotsByJobKey(screenshotBtn.getAttribute('data-view-screenshots') || '');
-                return;
-            }
-            const videoBtn = event.target.closest('[data-view-video]');
-            if (videoBtn) {
-                event.preventDefault();
-                showTaskVideoByJobKey(videoBtn.getAttribute('data-view-video') || '');
-                return;
-            }
             const deleteBtn = event.target.closest('[data-delete-task]');
             if (deleteBtn) {
                 event.preventDefault();
@@ -1337,107 +1302,6 @@
             } catch (error) {
                 body.innerHTML = `<p style="margin:0; color:var(--error);">${escapeHtml(error.message || '加载日志失败')}</p>`;
             }
-        }
-
-        function renderTaskMediaCell(task) {
-            const screenshotCount = Array.isArray(task?.screenshots) ? task.screenshots.length : 0;
-            const videoCount = Array.isArray(task?.videos) ? task.videos.length : 0;
-            const shotBtn = screenshotCount > 0
-                ? `<button type="button" class="btn btn-primary" style="padding:6px 10px; font-size:12px;" data-view-screenshots="${escapeHtml(task.id)}">截图 (${screenshotCount})</button>`
-                : '';
-            const videoBtn = videoCount > 0
-                ? `<button type="button" class="btn btn-secondary" style="padding:6px 10px; font-size:12px; margin-top:4px;" data-view-video="${escapeHtml(task.id)}">▶ 录像</button>`
-                : '';
-            if (shotBtn || videoBtn) {
-                return `${shotBtn}${shotBtn && videoBtn ? '<br>' : ''}${videoBtn}`;
-            }
-            return '<span style="color:var(--text-dim); font-size:12px;">任务结束后可刷新查看</span>';
-        }
-
-        async function showTaskScreenshotsByJobKey(jobKey) {
-            const task = (window.__adminLogs || []).find((item) => item.id === jobKey);
-            const screenshots = Array.isArray(task?.screenshots) ? task.screenshots : [];
-            if (!screenshots.length) {
-                showMessage('该任务暂无失败截图', 'warning');
-                return;
-            }
-            await showTaskScreenshots(screenshots, task?.message || '');
-        }
-
-        async function showTaskVideoByJobKey(jobKey) {
-            const task = (window.__adminLogs || []).find((item) => item.id === jobKey);
-            const videos = Array.isArray(task?.videos) ? task.videos : [];
-            if (!videos.length) {
-                showMessage('该任务暂无录像', 'warning');
-                return;
-            }
-            const overlay = document.getElementById('screenshot_modal_overlay');
-            const body = document.getElementById('screenshot_modal_body');
-            if (!overlay || !body) return;
-            closeScreenshotModal();
-            overlay.classList.add('open');
-            body.innerHTML = '<p style="color:var(--text-dim);">加载录像中...</p>';
-
-            const blocks = [];
-            for (const rel of videos) {
-                try {
-                    const res = await authFetch(`/api/admin/video?path=${encodeURIComponent(rel)}`);
-                    if (!res.ok) {
-                        blocks.push(`<p style="color:#f87171;">无法加载录像：${escapeHtml(rel)}</p>`);
-                        continue;
-                    }
-                    const blob = await res.blob();
-                    const objectUrl = URL.createObjectURL(blob);
-                    screenshotObjectUrls.push(objectUrl);
-                    blocks.push(`
-                        <div style="margin-bottom:12px;">
-                            <div style="font-size:12px; color:var(--text-dim); margin-bottom:6px;">${escapeHtml(rel)}</div>
-                            <video src="${objectUrl}" controls autoplay muted style="width:100%; border-radius:8px; background:#000;"></video>
-                        </div>
-                    `);
-                } catch (error) {
-                    blocks.push(`<p style="color:#f87171;">加载失败：${escapeHtml(rel)} (${escapeHtml(error.message)})</p>`);
-                }
-            }
-            body.innerHTML = `<p style="color:var(--text-dim); margin:0 0 12px;">自动化全程录像（可拖动进度条查看卡在哪一步）</p>${blocks.join('') || '<p style="color:var(--text-dim);">暂无录像</p>'}`;
-        }
-
-        async function showTaskScreenshots(screenshots, title = '') {
-            const overlay = document.getElementById('screenshot_modal_overlay');
-            const body = document.getElementById('screenshot_modal_body');
-            if (!overlay || !body) {
-                return;
-            }
-            closeScreenshotModal();
-            overlay.classList.add('open');
-            body.innerHTML = `<p style="color:var(--text-dim); margin:0 0 12px;">${escapeHtml(title || '自动化连续失败，请根据截图人工处理 Stripe 页面')}</p><p style="color:var(--text-dim);">加载截图中...</p>`;
-
-            const blocks = [];
-            for (const relativePath of screenshots) {
-                const apiPath = buildScreenshotApiPath(relativePath);
-                if (!apiPath) {
-                    continue;
-                }
-                try {
-                    const res = await authFetch(apiPath);
-                    if (!res.ok) {
-                        blocks.push(`<p style="color:#f87171;">无法加载：${escapeHtml(relativePath)}</p>`);
-                        continue;
-                    }
-                    const blob = await res.blob();
-                    const objectUrl = URL.createObjectURL(blob);
-                    screenshotObjectUrls.push(objectUrl);
-                    blocks.push(`
-                        <div>
-                            <div style="font-size:12px; color:var(--text-dim); margin-bottom:6px;">${escapeHtml(relativePath)}</div>
-                            <img src="${objectUrl}" alt="${escapeHtml(relativePath)}">
-                        </div>
-                    `);
-                } catch (error) {
-                    blocks.push(`<p style="color:#f87171;">加载失败：${escapeHtml(relativePath)} (${escapeHtml(error.message)})</p>`);
-                }
-            }
-            body.innerHTML = `<p style="color:var(--text-dim); margin:0 0 12px;">${escapeHtml(title || '自动化连续失败，请根据截图人工处理 Stripe 页面')}</p>${blocks.join('') || '<p style="color:var(--text-dim);">暂无截图</p>'}`;
         }
 
         function showMessage(content, type = 'success') {
@@ -3629,12 +3493,11 @@
             }
             const pageData = getPageItems(logs, 'log');
             if (!pageData.items.length) {
-                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color: var(--text-dim); padding: 36px 0;">暂无任务记录</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-dim); padding: 36px 0;">暂无任务记录</td></tr>';
                 renderPagination('log_pagination', 'log', 0);
                 return;
             }
             tbody.innerHTML = pageData.items.map((l) => {
-                const mediaCell = renderTaskMediaCell(l);
                 const infoParts = [];
                 if (l.message) {
                     infoParts.push(escapeHtml(l.message));
@@ -3659,7 +3522,6 @@
                         </div>
                     </td>
                     <td>${renderStatus(l.status)}</td>
-                    <td style="text-align:center">${mediaCell}</td>
                     <td style="text-align:center">
                         <div class="table-action-group">
                             <button type="button" class="btn btn-secondary" style="padding:6px 10px; font-size:12px;" title="查看充值详细日志" data-view-task-log="${escapeHtml(l.id)}"><i data-lucide="scroll-text"></i> 日志</button>
