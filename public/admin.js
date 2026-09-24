@@ -2235,7 +2235,7 @@
                 return;
             }
             if (!sessionList.length) {
-                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color: var(--text-dim); padding: 40px 0;">暂无 Session 记录</td></tr>';
+                tbody.innerHTML = '<tr class="session-empty-row"><td colspan="8" style="text-align:center; color: var(--text-dim); padding: 40px 0;">暂无 Session 记录</td></tr>';
                 lucide.createIcons();
                 return;
             }
@@ -2249,27 +2249,27 @@
                     && renewInfo?.ok
                     && renewInfo?.hasActiveSubscription;
                 const sessionCell = canView
-                    ? `<button type="button" class="session-preview-link" data-view-session="${jobKey}" title="点击查看完整 Session">${preview}</button>`
-                    : `<code>${preview}</code>`;
+                    ? `<button type="button" class="session-preview-link session-text-preview" data-view-session="${jobKey}" title="点击查看完整 Session">${preview}</button>`
+                    : `<code class="session-text-preview">${preview}</code>`;
                 const cancelRenewBtn = canManageRenew && renewInfo.autoRenewRaw === true
-                    ? `<button type="button" class="btn btn-danger" style="padding:4px 8px; font-size:12px;" data-cancel-renew="${jobKey}" title="取消自动续费">取消续费</button>`
+                    ? `<button type="button" class="btn btn-danger session-renewal-action" data-cancel-renew="${jobKey}" title="取消自动续费">取消续费</button>`
                     : '';
                 const enableRenewBtn = canManageRenew && renewInfo.autoRenewRaw === false
-                    ? `<button type="button" class="btn btn-success" style="padding:4px 8px; font-size:12px;" data-enable-renew="${jobKey}" title="开启自动续费">开启续费</button>`
+                    ? `<button type="button" class="btn btn-success session-renewal-action" data-enable-renew="${jobKey}" title="开启自动续费">开启续费</button>`
                     : '';
                 return `
-                <tr>
-                    <td>${escapeHtml(row.time || row.created_at || '-')}</td>
-                    <td><code>${escapeHtml(row.cdk_code || '-')}</code></td>
-                    <td>${sessionCell}</td>
-                    <td style="text-align:center">${escapeHtml(row.card_last4 || '-')}</td>
-                    <td>${escapeHtml(row.message || '-')}</td>
-                    <td>${renderStatus(row.status)}</td>
-                    <td style="text-align:center">${renderAutoRenewCell(row)}</td>
-                    <td style="text-align:center">
-                        <div class="table-action-group">
-                            <button type="button" class="btn btn-primary" style="padding:4px 8px; font-size:12px;" data-copy-session="${jobKey}" title="复制 Session">复制</button>
-                            <button type="button" class="btn btn-success" style="padding:4px 8px; font-size:12px;" data-export-session="${jobKey}" title="导出 Session">导出</button>
+                <tr class="session-record">
+                    <td data-label="执行时间"><span class="session-text-preview">${escapeHtml(row.time || row.created_at || '-')}</span></td>
+                    <td data-label="激活码"><code class="session-text-preview">${escapeHtml(row.cdk_code || '-')}</code></td>
+                    <td data-label="Session">${sessionCell}</td>
+                    <td class="session-cell-center" data-label="卡尾号">${escapeHtml(row.card_last4 || '-')}</td>
+                    <td class="session-cell-message" data-label="任务信息">${escapeHtml(row.message || '-')}</td>
+                    <td data-label="状态">${renderStatus(row.status)}</td>
+                    <td class="session-cell-center" data-label="自动续费">${renderAutoRenewCell(row)}</td>
+                    <td class="session-cell-actions session-cell-center" data-label="操作">
+                        <div class="session-actions">
+                            <button type="button" class="btn btn-primary" data-copy-session="${jobKey}" title="复制 Session">复制</button>
+                            <button type="button" class="btn btn-success" data-export-session="${jobKey}" title="导出 Session">导出</button>
                             ${enableRenewBtn}
                             ${cancelRenewBtn}
                             <button type="button" class="btn-delete" title="删除此任务记录" data-delete-task="${jobKey}">

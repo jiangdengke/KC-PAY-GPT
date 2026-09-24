@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="stylesheet" href="/admin.css?v=20260923-task-table-no-media">
+    <link rel="stylesheet" href="/admin.css?v=20260924-table-actions">
 </head>
 
 <body>
@@ -726,7 +726,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 </div>
 
                 <div class="table-container">
-                    <table>
+                    <table class="admin-action-table proxy-pool-table">
                         <thead>
                             <tr>
                                 <th width="72px" style="text-align:center">启用</th>
@@ -942,7 +942,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 </div>
 
                 <div class="table-container">
-                    <table>
+                    <table class="admin-action-table address-pool-table">
                         <thead>
                             <tr>
                                 <th>街道地址</th>
@@ -1109,7 +1109,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 </div>
 
                 <div class="table-container">
-                    <table>
+                    <table class="admin-action-table card-pool-table">
                         <thead>
                             <tr>
                                 <th width="200px">卡号</th>
@@ -1141,7 +1141,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     开卡优先渠道 3 Mastercard（BIN 55565979），再使用渠道 3 Visa 4004；使用渠道 1 时仅创建 Mastercard 5556 卡头。4002 系列暂不新开也不复用。每张卡的复用上限在“Orbitcard 开卡策略”中配置。点击“刷新记录”会查询余额并对照 Orbitcard 卡列表；上游列表中缺失的卡会标记为“上游已删除”，失败卡在确认未扣款后可手动恢复。
                 </p>
                 <div class="table-container">
-                    <table class="orbitcard-usage-table">
+                    <table class="admin-action-table orbitcard-usage-table">
                         <thead>
                             <tr>
                                 <th width="110px">卡 ID</th>
@@ -1361,18 +1361,18 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                         </button>
                     </div>
                 </div>
-                <div class="table-container">
+                <div class="table-container session-table-container">
                     <table class="session-table">
                         <thead>
                             <tr>
-                                <th width="180px">执行时间</th>
-                                <th width="150px">激活码</th>
-                                <th width="180px">Session</th>
-                                <th width="100px" style="text-align:center">卡尾号</th>
-                                <th width="320px">任务信息</th>
-                                <th width="120px">状态</th>
-                                <th width="100px" style="text-align:center">自动续费</th>
-                                <th width="340px" style="text-align:center">操作</th>
+                                <th class="session-column-time">执行时间</th>
+                                <th class="session-column-code">激活码</th>
+                                <th class="session-column-account">Session</th>
+                                <th class="session-column-card session-cell-center">卡尾号</th>
+                                <th class="session-column-message">任务信息</th>
+                                <th class="session-column-status">状态</th>
+                                <th class="session-column-renewal session-cell-center">自动续费</th>
+                                <th class="session-column-actions session-cell-center">操作</th>
                             </tr>
                         </thead>
                         <tbody id="session_body"></tbody>
@@ -1441,7 +1441,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     <span class="log-page-toolbar-hint">默认每 3 秒自动拉取概览与下方表格；停止后仅在你点击「立即刷新」时更新。可在表格中删除单条任务记录。前台自助开通由子进程执行，无法在此强制杀进程，可开维护模式拒绝新单。</span>
                 </div>
                 <div class="table-container">
-                    <table class="task-records-table">
+                    <table class="admin-action-table task-records-table">
                         <thead>
                             <tr>
                                 <th>执行时间</th>
@@ -1470,7 +1470,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     </button>
                 </div>
                 <div class="table-container">
-                    <table class="manual-holds-table">
+                    <table class="admin-action-table manual-holds-table">
                         <thead>
                             <tr>
                                 <th>账号</th>
@@ -1555,7 +1555,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     <span id="billing_total_hint" style="font-size:13px; color:var(--text-dim);"></span>
                 </div>
                 <div class="table-container">
-                    <table class="data-table">
+                    <table class="admin-action-table data-table billing-table">
                         <thead>
                             <tr>
                                 <th>支付时间</th>
@@ -1652,7 +1652,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
         </div>
     </main>
 
-    <script src="/admin.js?v=20260923-task-table-no-media"></script>
+    <script src="/admin.js?v=20260924-table-actions"></script>
 </body>
 
 </html>

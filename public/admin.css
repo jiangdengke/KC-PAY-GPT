@@ -629,19 +629,157 @@
             min-width: 220px;
         }
 
+        .session-table-container {
+            container: session-records / inline-size;
+        }
+
         .session-table {
-            min-width: 1490px;
+            width: 100%;
+            min-width: 0;
             table-layout: fixed;
         }
 
+        .session-table th,
         .session-table td {
+            padding: 8px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .session-table th {
+            font-size: 11px;
+            letter-spacing: 0;
             white-space: nowrap;
         }
 
-        .session-table td:nth-child(5) {
+        .session-table .session-column-time { width: 11%; }
+        .session-table .session-column-code { width: 13%; }
+        .session-table .session-column-account { width: 17%; }
+        .session-table .session-column-card { width: 6%; }
+        .session-table .session-column-message { width: 19%; }
+        .session-table .session-column-status { width: 8%; }
+        .session-table .session-column-renewal { width: 8%; }
+        .session-table .session-column-actions { width: 18%; }
+
+        .session-table td {
             white-space: normal;
             overflow-wrap: anywhere;
-            word-break: break-word;
+        }
+
+        .session-table .session-cell-center {
+            text-align: center;
+        }
+
+        .session-table .session-text-preview {
+            display: block;
+            width: 100%;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .session-table code.session-text-preview {
+            padding: 2px 4px;
+        }
+
+        .session-table .session-preview-link {
+            border: 0;
+            background: transparent;
+            padding: 2px 0;
+            font: inherit;
+            text-align: left;
+        }
+
+        .session-table .status-badge {
+            padding: 3px 6px;
+            font-size: 10px;
+            white-space: nowrap;
+        }
+
+        .session-table .session-actions {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) 28px;
+            gap: 4px;
+            align-items: center;
+        }
+
+        .session-table .session-actions .btn {
+            min-width: 0;
+            min-height: 28px;
+            padding: 4px 6px;
+            font-size: 12px;
+            justify-content: center;
+        }
+
+        .session-table .session-actions .btn-delete {
+            width: 28px;
+            height: 28px;
+        }
+
+        .session-table .session-renewal-action {
+            grid-column: 1 / -1;
+        }
+
+        /* Stack record fields when eight readable columns no longer fit. */
+        @container session-records (max-width: 820px) {
+            .session-table,
+            .session-table tbody {
+                display: block;
+                width: 100%;
+            }
+
+            .session-table thead {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                overflow: hidden;
+                clip-path: inset(50%);
+            }
+
+            .session-table .session-record {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px 16px;
+                padding: 12px;
+                border-bottom: 1px solid var(--divider);
+            }
+
+            .session-table .session-record:last-child {
+                border-bottom: 0;
+            }
+
+            .session-table .session-record td {
+                min-width: 0;
+                padding: 0;
+                border: 0;
+                text-align: left;
+            }
+
+            .session-table .session-record td::before {
+                content: attr(data-label);
+                display: block;
+                color: var(--text-dim);
+                font-size: 11px;
+                margin-bottom: 2px;
+            }
+
+            .session-table .session-cell-message,
+            .session-table .session-cell-actions {
+                grid-column: 1 / -1;
+            }
+
+            .session-table .session-actions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+            }
+
+            .session-table .session-empty-row,
+            .session-table .session-empty-row td {
+                display: block;
+                width: 100%;
+            }
         }
 
         .pagination-meta {
@@ -710,6 +848,56 @@
             width: 100%;
             border-collapse: collapse;
             background: var(--surface);
+        }
+
+        /* Keep destructive and review actions reachable while wide tables scroll. */
+        .admin-action-table th:last-child,
+        .admin-action-table td:last-child {
+            position: sticky;
+            right: 0;
+            z-index: 2;
+            min-width: 88px;
+            white-space: nowrap;
+            background: var(--surface);
+            box-shadow: -10px 0 14px -14px rgba(15, 23, 42, 0.5);
+        }
+
+        .admin-action-table th:last-child {
+            z-index: 3;
+            background: var(--surface-soft);
+        }
+
+        .admin-action-table tr:hover td:last-child {
+            background: var(--surface-soft);
+        }
+
+        .admin-action-table td[colspan]:last-child {
+            position: static;
+            min-width: 0;
+            box-shadow: none;
+            white-space: normal;
+        }
+
+        .admin-action-table td:last-child > div,
+        .admin-action-table td:last-child > .table-action-group {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            flex-wrap: nowrap;
+            max-width: 100%;
+        }
+
+        .admin-action-table td:last-child .btn,
+        .admin-action-table td:last-child .btn-delete {
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+
+        .admin-action-table .action-text-button {
+            min-width: 0;
+            padding: 5px 8px;
+            font-size: 12px;
         }
 
         .task-records-table,

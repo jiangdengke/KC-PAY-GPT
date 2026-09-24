@@ -124,3 +124,42 @@
 - `public/admin.js`：移除截图/录像列渲染、事件入口和前端弹窗逻辑。
 - `progress.md`：记录本轮变更与验证结果。
 - rn 部署前备份为 `/root/KC-GPT-PAY/public/admin.{html,css,js}.bak-task-table-no-media-20260924`；回滚时分别恢复到对应文件并强制刷新页面。
+
+
+## 2026-09-23 - Task: 紧凑 Session 管理布局
+### What was done
+- 收紧 Session 列表的列宽、字号和操作按钮间距，桌面端可直接看到右侧操作。
+- 在容器宽度不足时将记录切换为分组信息卡片，把操作按钮放到可见区域，避免横向滑动。
+- 为 CSS 和 JS 更新缓存版本，避免浏览器继续使用旧布局资源。
+### Testing
+- `npm test`：3 个测试文件、38 项测试通过。
+- `node --check public/admin.js`：通过。
+- `git diff --check`：通过。
+- `ReadLints`：当前环境未提供该工具，已使用 JavaScript 语法检查和项目测试替代。
+### Notes
+- `public/admin.html`：为 Session 表格补充响应式列标识并更新资源缓存版本。
+- `public/admin.css`：新增紧凑列宽和窄容器卡片式布局，避免 Session 操作列被横向滚动隐藏。
+- `public/admin.js`：为 Session 行和操作区域补充响应式结构，保留复制、导出、续费和删除功能。
+- `docs/admin-session-layout.md`：记录 Session 管理界面的自适应使用方式。
+- `progress.md`：记录本轮改动与验证结果。
+- 回滚：恢复 `ba14735` 版本中的上述三个前端文件，并移除本轮新增文档；本轮未执行提交或线上部署。
+
+
+## 2026-09-24 - Task: 统一后台列表操作列布局
+### What was done
+- 收紧 Session 列表的列宽、字号和操作按钮间距，桌面端可直接看到右侧操作。
+- 在容器宽度不足时将 Session 记录切换为分组信息卡片，把操作按钮放到可见区域，避免横向滑动。
+- 为代理池、地址池、银行卡、Orbitcard、任务、待人工确认和账单列表增加固定操作列，数据横向滚动时操作仍保持可见。
+- 为 CSS 和 JS 更新缓存版本，避免浏览器继续使用旧布局资源。
+### Testing
+- `npm test`：3 个测试文件、38 项测试通过。
+- `node --check public/admin.js`：通过。
+- `git diff --check`：通过。
+- `ReadLints`：当前环境未提供该工具，已使用 JavaScript 语法检查和项目测试替代。
+### Notes
+- `public/admin.html`：为数据列表补充操作表格标识，并更新 CSS、JS 缓存版本。
+- `public/admin.css`：新增紧凑列宽、窄容器卡片式布局和统一固定操作列样式。
+- `public/admin.js`：为 Session 行和操作区域补充响应式结构，保留复制、导出、续费和删除功能。
+- `docs/admin-session-layout.md`：记录 Session 与其他后台列表的自适应使用方式。
+- `progress.md`：记录本轮改动与验证结果。
+- 回滚：恢复 `ba14735` 版本中的三个前端文件，并移除本轮新增文档；本轮未执行提交或线上部署。
