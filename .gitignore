@@ -1,3 +1,6 @@
+# Local Pi agent configuration
+.pi/
+
 # Node
 node_modules/
 npm-debug.log*
@@ -42,3 +45,4 @@ Thumbs.db
 
 # Sister project (kept as a separate repo)
 plus_gopay/
+.cortexkit/magic-context/
