@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="stylesheet" href="/admin.css?v=20260924-table-actions">
+    <link rel="stylesheet" href="/admin.css?v=20261007-orbitcard-usage-filters">
 </head>
 
 <body>
@@ -1048,33 +1048,6 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 <p>管理 Stripe 支付使用的银行卡资源（通过 API 导入与维护）</p>
             </div>
 
-            <div class="stat-grid" style="margin-bottom: 20px;">
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <span class="stat-label">卡片总数</span>
-                    </div>
-                    <div id="card_stat_total" class="stat-value" style="color: #d8b4fe;">0</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <span class="stat-label">可用</span>
-                    </div>
-                    <div id="card_stat_active" class="stat-value" style="color: var(--success);">0</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <span class="stat-label">冷却中</span>
-                    </div>
-                    <div id="card_stat_cooldown" class="stat-value" style="color: #fbbf24;">0</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <span class="stat-label">已报废</span>
-                    </div>
-                    <div id="card_stat_exhausted" class="stat-value" style="color: #f87171;">0</div>
-                </div>
-            </div>
-
             <div class="admin-switcher" data-switcher="card-assets">
                 <div class="admin-switcher-tabs" role="tablist" aria-label="卡池类型">
                     <button type="button" class="admin-switcher-tab is-active" role="tab" aria-selected="true" data-switcher-tab="local" onclick="switchAdminSection('card-assets', 'local')">银行卡列表</button>
@@ -1132,19 +1105,54 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="orbitcard" hidden>
                 <div class="panel-header">
                     <h2 class="panel-title">Orbitcard 用卡记录</h2>
-                    <button type="button" class="btn btn-primary" onclick="loadOrbitcardUsage(true, true)">
-                        <i data-lucide="refresh-cw"></i>
-                        刷新记录
-                    </button>
+                    <div class="table-toolbar-actions">
+                        <button type="button" class="btn btn-primary" id="orbitcard_sync_btn" onclick="syncOrbitcardCards()">
+                            <i data-lucide="cloud-download"></i>
+                            同步卡台卡片
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="loadOrbitcardUsage(true, true)">
+                            <i data-lucide="refresh-cw"></i>
+                            刷新记录
+                        </button>
+                    </div>
                 </div>
                 <p id="orbitcard_usage_hint" style="font-size:13px; color:var(--text-dim); margin:0 0 12px;">
-                    开卡优先渠道 3 Mastercard（BIN 55565979），再使用渠道 3 Visa 4004；使用渠道 1 时仅创建 Mastercard 5556 卡头。4002 系列暂不新开也不复用。每张卡的复用上限在“Orbitcard 开卡策略”中配置。点击“刷新记录”会查询余额并对照 Orbitcard 卡列表；上游列表中缺失的卡会标记为“上游已删除”，失败卡在确认未扣款后可手动恢复。
+                    开卡优先渠道 3 Mastercard（BIN 55565979），再使用渠道 3 Visa 4004；使用渠道 1 时仅创建 Mastercard 5556 卡头。4002 系列暂不新开也不复用。同步卡台卡片后，请在每张卡的“操作”列手动绑定套餐；可同时填写单卡使用上限（1-20），留空则使用该套餐默认上限。绑定后，卡片会按单卡上限参与自动选卡。点击“刷新记录”会查询余额并对照 Orbitcard 卡列表；上游列表中缺失的卡会标记为“上游已删除”，失败卡在确认未扣款后可手动恢复。
                 </p>
+                <form id="orbitcard_usage_filters" class="orbitcard-usage-filters" onsubmit="applyOrbitcardUsageFilters(event)">
+                    <input id="orbitcard_usage_keyword" class="asset-input" type="search" maxlength="80" placeholder="搜索卡 ID / 后四位 / 产品编码 / 账号邮箱 / 订单号" aria-label="搜索 Orbitcard 用卡记录">
+                    <select id="orbitcard_usage_plan" class="asset-input" aria-label="按套餐筛选">
+                        <option value="">全部套餐</option>
+                        <option value="plus">Plus</option>
+                        <option value="pro_5x">Pro 5x</option>
+                        <option value="pro_20x">Pro 20x</option>
+                    </select>
+                    <select id="orbitcard_usage_card_status" class="asset-input" aria-label="按卡片状态筛选">
+                        <option value="">全部卡片状态</option>
+                        <option value="reusable">可复用</option>
+                        <option value="in_use">使用中</option>
+                        <option value="unassigned">未绑定套餐</option>
+                        <option value="retired">已退役</option>
+                        <option value="provider_deleted">上游已删除</option>
+                        <option value="cancelled">已取消</option>
+                    </select>
+                    <select id="orbitcard_usage_recharge_status" class="asset-input" aria-label="按充值结果筛选">
+                        <option value="">全部充值状态</option>
+                        <option value="success">成功</option>
+                        <option value="processing">处理中</option>
+                        <option value="failed">失败</option>
+                    </select>
+                    <div class="orbitcard-usage-filter-actions">
+                        <button type="submit" class="btn btn-primary">查询</button>
+                        <button type="button" class="btn btn-secondary" onclick="resetOrbitcardUsageFilters()">重置</button>
+                    </div>
+                </form>
                 <div class="table-container">
                     <table class="admin-action-table orbitcard-usage-table">
                         <thead>
                             <tr>
                                 <th width="110px">卡 ID</th>
+                                <th width="260px">卡片资料</th>
                                 <th width="90px">后四位</th>
                                 <th width="100px">套餐</th>
                                 <th width="110px" style="text-align:center">已用/上限</th>
@@ -1652,7 +1660,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
         </div>
     </main>
 
-    <script src="/admin.js?v=20260924-table-actions"></script>
+    <script src="/admin.js?v=20261007-orbitcard-usage-filters"></script>
 </body>
 
 </html>

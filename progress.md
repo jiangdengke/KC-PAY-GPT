@@ -163,3 +163,102 @@
 - `docs/admin-session-layout.md`：记录 Session 与其他后台列表的自适应使用方式。
 - `progress.md`：记录本轮改动与验证结果。
 - 回滚：恢复 `ba14735` 版本中的三个前端文件，并移除本轮新增文档；本轮未执行提交或线上部署。
+
+
+## 2026-09-23 - Task: 增加 Orbitcard 卡台卡片同步
+### What was done
+- 在 Orbitcard 用卡记录中增加“同步卡台卡片”操作，读取卡台列表和逐卡详情后登记本地记录。
+- 本地记录保存完整卡号、有效期、CVC、持卡人、产品代码、状态和余额；不写入本地 Stripe 银行卡池。
+- 已有用卡次数、套餐、充值历史和退役状态在同步时保留；没有敏感卡资料权限的卡片仍会登记并提示详情失败。
+### Testing
+- `npm test`：3 个测试文件、38 项测试通过。
+- `node --check public/admin.js` 和 `node --check server.js`：通过。
+- `git diff --check`：通过。
+### Notes
+- `mysql-store.js`：为 Orbitcard 用卡记录增加卡资料字段，并实现卡台卡片 upsert 同步。
+- `server.js`：增加受后台二次认证保护的 `/api/admin/orbitcard/sync` 接口。
+- `public/admin.html`：增加同步按钮和卡片资料列。
+- `public/admin.js`：调用同步接口并展示完整卡片资料、产品代码和详情失败提示。
+- `public/admin.css`：增加 Orbitcard 卡片资料展示样式。
+- `docs/orbitcard-card-reuse.md`：说明同步行为和敏感卡资料存储范围。
+- `progress.md`：记录本轮变更与验证结果。
+- 回滚：恢复本轮修改文件并重启 app；数据库新增字段可保留，不影响旧用卡记录读取。
+
+
+## 2026-09-28 - Task: 支持同步 Orbitcard 卡手动绑定套餐
+### What was done
+- 在 Orbitcard 用卡记录的操作列增加套餐选择和绑定功能，支持 Plus、Pro 5x、Pro 20x。
+- 绑定时使用当前套餐配置的复用上限；未绑定套餐的同步卡不会参与自动选卡。
+- 自动代充选卡改为检查所有已绑定套餐的 ACTIVE 卡，包括复用上限为 1 但尚未使用的卡。
+### Testing
+- `npm test`：3 个测试文件、38 项测试通过。
+- `node --check server.js`、`node --check mysql-store.js` 和 `node --check public/admin.js`：通过。
+- `git diff --check`：通过。
+- ReadLints：修改文件无诊断。
+### Notes
+- `mysql-store.js`：新增 Orbitcard 卡套餐绑定更新函数并导出。
+- `server.js`：新增受后台二次认证保护的 Orbitcard 卡套餐绑定接口，并让已绑定卡参与所有套餐的首次选卡。
+- `public/admin.js`：增加套餐选择、绑定操作和绑定后刷新。
+- `public/admin.css`：增加套餐绑定控件样式。
+- `public/admin.html`：更新操作说明和前端资源缓存版本。
+- `docs/orbitcard-card-reuse.md`：补充同步卡套餐绑定和自动选卡规则。
+- `progress.md`：记录本轮变更与验证结果。
+- 回滚：恢复上述文件并重启 app；数据库字段和已有卡片套餐值可保留，不影响旧记录读取。
+
+
+## 2026-09-28 - Task: 部署 Orbitcard 卡套餐绑定到 rn
+### What was done
+- 将后端同步与套餐绑定接口、Orbitcard 数据库迁移和后台套餐绑定界面部署到 rn。
+- 重启 `kc-gpt-pay2-app` 使后端代码和数据库字段迁移生效；MySQL 未重启、未删除数据。
+- 重新上传前端静态资源并确认运行容器读取到套餐绑定功能。
+### Testing
+- rn `kc-gpt-pay2-app`：`healthy / running`。
+- rn `kc-gpt-pay2-mysql`：`healthy / running`。
+- `orbitcard_card_usage` 已包含 `card_number`、`card_expiry`、`card_cvc`、`card_holder`、`product_code`、`card_last4` 字段。
+- rn 前端 CSS/JS HTTP 200，`setOrbitcardCardPlan` marker 存在。
+- 未认证访问套餐绑定接口返回 HTTP 401，确认接口已加载且仍受后台认证保护。
+- 本地与 rn 后端、前端文件 SHA256 校验一致。
+### Notes
+- rn 部署文件：`/root/KC-GPT-PAY/server.js`、`/root/KC-GPT-PAY/mysql-store.js`、`/root/KC-GPT-PAY/public/admin.html`、`/root/KC-GPT-PAY/public/admin.css`、`/root/KC-GPT-PAY/public/admin.js`。
+- rn 备份：上述文件对应 `/root/KC-GPT-PAY*.bak-orbitcard-plan-binding-20260928-053249`，public 文件位于 `/root/KC-GPT-PAY/public/` 下同名备份。
+- 回滚：恢复该时间戳备份后执行 `cd /root/KC-GPT-PAY && docker compose restart app`；数据库新增字段可保留，不影响旧记录读取。
+
+
+## 2026-09-28 - Task: 支持 Orbitcard 单卡使用上限
+### What was done
+- 在 Orbitcard 卡片操作中增加单卡使用上限输入，范围为 1-20 次；留空时沿用所选套餐默认上限。
+- 单卡上限只更新当前卡，不修改套餐全局配置；已用次数、充值历史和退役状态保持不变。
+- 自动选卡继续按卡片自身的 `max_usage_count` 判断，调整为超过已用次数后仍需手动恢复退役卡。
+### Testing
+- `npm test`：3 个测试文件、38 项测试通过。
+- `node --check server.js`、`node --check mysql-store.js` 和 `node --check public/admin.js`：通过。
+- `git diff --check`：通过。
+- ReadLints：修改文件无诊断。
+### Notes
+- `server.js`：套餐绑定接口支持可选 `max_usage_count`，并校验 1-20 整数。
+- `public/admin.js`：增加单卡上限输入和保存请求。
+- `public/admin.css`：增加单卡上限输入框样式。
+- `public/admin.html`：更新 Orbitcard 操作说明和资源缓存版本。
+- `docs/orbitcard-card-reuse.md`：补充单卡上限规则。
+- `progress.md`：记录本轮变更与验证结果。
+- 回滚：恢复上述文件并重启 app；数据库中的既有 `max_usage_count` 值可保留，不影响旧记录读取。
+
+
+## 2026-09-29 - Task: 部署 Orbitcard 单卡使用上限到 rn
+### What was done
+- 将单卡使用上限输入、保存逻辑和缓存版本部署到 rn 后台。
+- 保留已部署的套餐绑定后端接口；未修改任何现有卡片上限，也未触发同步或充值。
+- 清理了一次误上传到项目根目录的前端同名文件，最终仅保留 `public/` 下的运行资源。
+### Testing
+- `npm test`：3 个测试文件、38 项测试通过。
+- `node --check server.js`、`node --check mysql-store.js` 和 `node --check public/admin.js`：通过。
+- `git diff --check`：通过；ReadLints：无诊断。
+- rn `/admin` 返回 HTTP 200，引用 `20260929-orbitcard-card-limit` 资源版本。
+- rn CSS/JS 返回 HTTP 200，单卡上限输入和请求 marker 存在。
+- 未认证访问套餐绑定接口返回 HTTP 401。
+- rn `kc-gpt-pay2-app` 和 `kc-gpt-pay2-mysql` 均为 `healthy / running`。
+- 本地与 rn 部署文件 SHA256 校验一致。
+### Notes
+- rn 部署文件：`/root/KC-GPT-PAY/server.js`、`/root/KC-GPT-PAY/mysql-store.js`、`/root/KC-GPT-PAY/public/admin.html`、`/root/KC-GPT-PAY/public/admin.css`、`/root/KC-GPT-PAY/public/admin.js`。
+- rn 备份：`/root/KC-GPT-PAY*.bak-orbitcard-card-limit-20260928-201539`，public 文件位于 `/root/KC-GPT-PAY/public/` 下同名备份。
+- 回滚：恢复上述备份后执行 `cd /root/KC-GPT-PAY && docker compose restart app`；数据库中的 `max_usage_count` 字段可保留，不影响旧记录读取。

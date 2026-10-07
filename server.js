@@ -2976,14 +2976,23 @@ app.get('/api/admin/cards', requireSecondaryAuth, async (req, res) => {
 app.get('/api/admin/orbitcard/usage', requireSecondaryAuth, async (req, res) => {
     try {
         await ensureStoreReady();
-        const pageSize = Math.max(1, Math.min(100, Number(req.query.page_size || req.query.limit) || 20));
-        let page = Math.max(1, Number(req.query.page) || 1);
-        const countRows = await store.runQuery('SELECT COUNT(*) AS total FROM orbitcard_card_usage');
-        const total = Number(countRows[0]?.total || 0);
-        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        const requestedPageSize = Number.parseInt(String(req.query.page_size || req.query.limit || ''), 10);
+        const requestedPage = Number.parseInt(String(req.query.page || ''), 10);
+        const pageSize = Number.isInteger(requestedPageSize)
+            ? Math.max(1, Math.min(100, requestedPageSize))
+            : 20;
+        let page = Number.isInteger(requestedPage) ? Math.max(1, requestedPage) : 1;
+        const filters = {
+            keyword: String(req.query.keyword || '').trim().slice(0, 80),
+            planType: String(req.query.plan_type || '').trim(),
+            cardStatus: String(req.query.card_status || '').trim(),
+            rechargeStatus: String(req.query.recharge_status || '').trim()
+        };
+        let total = await store.countOrbitcardUsage(filters);
+        let totalPages = Math.max(1, Math.ceil(total / pageSize));
         page = Math.min(page, totalPages);
-        const offset = (page - 1) * pageSize;
-        const cards = await store.listOrbitcardUsage(pageSize, offset);
+        let offset = (page - 1) * pageSize;
+        let cards = await store.listOrbitcardUsage(pageSize, offset, filters);
         if (String(req.query.refresh || '') === '1' && cards.length) {
             const cfg = await store.getGptApiConfig();
             if (cfg.card_source !== 'orbitcard') {
@@ -3001,6 +3010,13 @@ app.get('/api/admin/orbitcard/usage', requireSecondaryAuth, async (req, res) => 
             const providerCardIdSet = new Set(providerCardIds.map((cardId) => Number(cardId)));
             if (providerList.success) {
                 await store.markMissingOrbitcardCards(providerCardIds);
+                // Provider reconciliation can move cards in or out of a status filter.
+                // Re-read the requested page so cards and total describe one filtered state.
+                total = await store.countOrbitcardUsage(filters);
+                totalPages = Math.max(1, Math.ceil(total / pageSize));
+                page = Math.min(page, totalPages);
+                offset = (page - 1) * pageSize;
+                cards = await store.listOrbitcardUsage(pageSize, offset, filters);
             }
             await Promise.all(cards.map(async (card) => {
                 if (providerList.success && !providerCardIdSet.has(Number(card.cardId))) {
@@ -3043,6 +3059,73 @@ app.get('/api/admin/orbitcard/usage', requireSecondaryAuth, async (req, res) => 
     }
 });
 
+app.post('/api/admin/orbitcard/sync', requireSecondaryAuth, async (req, res) => {
+    try {
+        await ensureStoreReady();
+        const cfg = await store.getGptApiConfig();
+        if (!cfg.orbitcard_api_key || !cfg.orbitcard_api_secret) {
+            return res.status(400).json({ success: false, message: '请先配置 Orbitcard API Key 和 Secret' });
+        }
+        const orbitCfg = {
+            base_url: cfg.orbitcard_base_url,
+            api_key: cfg.orbitcard_api_key,
+            api_secret: cfg.orbitcard_api_secret
+        };
+        const providerList = await orbitcard.getCardList(orbitCfg, { status: '' });
+        if (!providerList.success) {
+            return res.status(502).json({
+                success: false,
+                message: `Orbitcard 卡片列表查询失败: ${providerList.error || '未知错误'}`
+            });
+        }
+
+        const syncedCards = [];
+        const detailFailures = [];
+        for (const providerCard of providerList.data) {
+            let detail = null;
+            try {
+                const detailResult = await orbitcard.getCardDetail(orbitCfg, providerCard.cardId);
+                if (detailResult.success) {
+                    detail = detailResult.data;
+                } else {
+                    detailFailures.push({
+                        cardId: providerCard.cardId,
+                        error: detailResult.error || '卡片详情查询失败'
+                    });
+                }
+            } catch (error) {
+                detailFailures.push({
+                    cardId: providerCard.cardId,
+                    error: error.message || '卡片详情查询失败'
+                });
+            }
+
+            syncedCards.push({
+                ...providerCard,
+                cardNumber: detail?.cardNumber || '',
+                cardExpiry: detail?.expiry || '',
+                cardCvc: detail?.cvc || '',
+                cardHolder: detail?.holder || ''
+            });
+        }
+
+        const syncResult = await store.syncOrbitcardCards(syncedCards);
+        await store.markMissingOrbitcardCards(providerList.data.map((card) => card.cardId));
+        return res.json({
+            success: true,
+            total: syncResult.total,
+            inserted: syncResult.inserted,
+            updated: syncResult.updated,
+            detailFailures,
+            message: detailFailures.length
+                ? `已同步 ${syncResult.total} 张卡，其中 ${detailFailures.length} 张未获取完整卡资料`
+                : `已同步 ${syncResult.total} 张卡台卡片`
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 app.post('/api/admin/orbitcard/cards/:cardId/restore', requireSecondaryAuth, async (req, res) => {
     try {
         await ensureStoreReady();
@@ -3082,6 +3165,55 @@ app.post('/api/admin/orbitcard/cards/:cardId/restore', requireSecondaryAuth, asy
             return res.status(409).json({ success: false, message: '卡片已达到使用上限，不能恢复' });
         }
         return res.json({ success: true, message: '卡片已解冻并恢复可用' });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/admin/orbitcard/cards/:cardId/plan', requireSecondaryAuth, async (req, res) => {
+    try {
+        await ensureStoreReady();
+        const cardId = Number(req.params.cardId);
+        const planType = String(req.body?.plan_type || '').trim();
+        if (!Number.isInteger(cardId) || cardId <= 0) {
+            return res.status(400).json({ success: false, message: '卡片编号无效' });
+        }
+        if (!['plus', 'pro_5x', 'pro_20x'].includes(planType)) {
+            return res.status(400).json({ success: false, message: '套餐类型无效' });
+        }
+        const cfg = await store.getGptApiConfig();
+        if (cfg.card_source !== 'orbitcard') {
+            return res.status(400).json({ success: false, message: '当前卡源不是 Orbitcard' });
+        }
+        const requestedMaxUsageCount = req.body?.max_usage_count;
+        const hasCustomMaxUsageCount = requestedMaxUsageCount !== undefined
+            && requestedMaxUsageCount !== null
+            && String(requestedMaxUsageCount).trim() !== '';
+        const maxUsageCount = hasCustomMaxUsageCount
+            ? Number(requestedMaxUsageCount)
+            : orbitcard.getPlanReuseLimit(planType, cfg.orbitcard_reuse_limits);
+        if (!Number.isInteger(maxUsageCount) || maxUsageCount < 1 || maxUsageCount > 20) {
+            return res.status(400).json({ success: false, message: '单卡使用上限必须是 1-20 的整数' });
+        }
+        const result = await store.assignOrbitcardCardPlan(cardId, planType, maxUsageCount);
+        if (result.success) {
+            return res.json({
+                success: true,
+                planType,
+                maxUsageCount,
+                message: `卡片已绑定 ${planType === 'plus' ? 'Plus' : planType === 'pro_5x' ? 'Pro 5x' : 'Pro 20x'} 套餐，单卡上限 ${maxUsageCount} 次`
+            });
+        }
+        const errorMessages = {
+            invalid: '卡片参数无效',
+            not_found: '本地没有这张 Orbitcard 记录',
+            in_use: '卡片当前正在使用，暂时不能修改套餐',
+            usage_exceeded: `卡片当前已使用 ${maxUsageCount} 次，单卡上限不能低于已用次数`
+        };
+        return res.status(result.reason === 'not_found' ? 404 : 409).json({
+            success: false,
+            message: errorMessages[result.reason] || '绑定套餐失败'
+        });
     } catch (error) {
         return res.status(500).json({ success: false, message: error.message });
     }
@@ -3700,16 +3832,15 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             const requestedProductCode = String(cfg.orbitcard_product_code || '').trim();
             const reuseLimits = cfg.orbitcard_reuse_limits || null;
             const reuseLimit = orbitcard.getPlanReuseLimit(planType, reuseLimits);
-            if (reuseLimit > 1) {
-                await setProgress('running', 12, '正在准备支付方式...');
-                const cardList = await orbitcard.getCardList(orbitCfg);
-                if (!cardList.success) throw new Error(`Orbitcard 卡列表查询失败: ${cardList.error}`);
-                const reusableCards = cardList.data.filter((card) => !orbitcard.isBlockedCardProduct(card));
-                reservedOrbitcard = await store.reserveOrbitcardCard(reusableCards, `gptapi_${jobKey}`, {
-                    planType,
-                    maxUsageCount: reuseLimit
-                });
-            }
+            // 已在后台绑定套餐的同步卡也要参与首次使用，即使该套餐复用上限为 1。
+            await setProgress('running', 12, '正在准备支付方式...');
+            const cardList = await orbitcard.getCardList(orbitCfg);
+            if (!cardList.success) throw new Error(`Orbitcard 卡列表查询失败: ${cardList.error}`);
+            const reusableCards = cardList.data.filter((card) => !orbitcard.isBlockedCardProduct(card));
+            reservedOrbitcard = await store.reserveOrbitcardCard(reusableCards, `gptapi_${jobKey}`, {
+                planType,
+                maxUsageCount: reuseLimit
+            });
 
             await setProgress('running', 14, '正在准备支付信息...');
             let selection = null;

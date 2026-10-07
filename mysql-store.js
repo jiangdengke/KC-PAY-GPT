@@ -343,6 +343,12 @@ async function ensureOrbitcardUsageTable() {
     await ensureColumn('orbitcard_card_usage', 'provider_balance_currency', 'VARCHAR(8) NULL DEFAULT NULL');
     await ensureColumn('orbitcard_card_usage', 'provider_status', 'VARCHAR(32) NULL DEFAULT NULL');
     await ensureColumn('orbitcard_card_usage', 'provider_balance_updated_at', 'TIMESTAMP NULL DEFAULT NULL');
+    await ensureColumn('orbitcard_card_usage', 'card_number', 'VARCHAR(32) NULL DEFAULT NULL');
+    await ensureColumn('orbitcard_card_usage', 'card_expiry', 'VARCHAR(16) NULL DEFAULT NULL');
+    await ensureColumn('orbitcard_card_usage', 'card_cvc', 'VARCHAR(16) NULL DEFAULT NULL');
+    await ensureColumn('orbitcard_card_usage', 'card_holder', 'VARCHAR(255) NULL DEFAULT NULL');
+    await ensureColumn('orbitcard_card_usage', 'product_code', 'VARCHAR(128) NULL DEFAULT NULL');
+    await ensureColumn('orbitcard_card_usage', 'card_last4', 'VARCHAR(4) NULL DEFAULT NULL');
     await runQuery(`
         CREATE TABLE IF NOT EXISTS orbitcard_card_recharges (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -3479,6 +3485,40 @@ async function restoreOrbitcardCard(cardId) {
     return Number(result.affectedRows || 0) > 0;
 }
 
+async function assignOrbitcardCardPlan(cardId, planType, maxUsageCount) {
+    const id = Number(cardId);
+    const normalizedPlanType = String(planType || '').trim();
+    const usageLimit = Math.max(1, Number(maxUsageCount) || 1);
+    if (!Number.isInteger(id) || id <= 0 || !normalizedPlanType) {
+        return { success: false, reason: 'invalid' };
+    }
+
+    const rows = await runQuery(
+        `SELECT card_id, usage_count, in_use
+         FROM orbitcard_card_usage
+         WHERE card_id = ?`,
+        [id]
+    );
+    if (!rows.length) {
+        return { success: false, reason: 'not_found' };
+    }
+    const card = rows[0];
+    if (Number(card.in_use || 0) === 1) {
+        return { success: false, reason: 'in_use' };
+    }
+    if (Number(card.usage_count || 0) > usageLimit) {
+        return { success: false, reason: 'usage_exceeded' };
+    }
+
+    await runExecute(
+        `UPDATE orbitcard_card_usage
+         SET plan_type = ?, max_usage_count = ?
+         WHERE card_id = ?`,
+        [normalizedPlanType, usageLimit, id]
+    );
+    return { success: true, planType: normalizedPlanType, maxUsageCount: usageLimit };
+}
+
 async function createOrbitcardRecharge({
     cardId,
     jobKey,
@@ -3530,18 +3570,115 @@ async function updateOrbitcardRecharge(jobKey, {
     );
 }
 
-async function listOrbitcardUsage(limit = 200, offset = 0) {
+const ORBITCARD_USAGE_CARD_STATUSES = new Set([
+    'reusable',
+    'in_use',
+    'retired',
+    'provider_deleted',
+    'cancelled',
+    'unassigned'
+]);
+const ORBITCARD_USAGE_RECHARGE_STATUSES = new Set(['success', 'processing', 'failed']);
+
+function normalizeOrbitcardUsageFilters(filters = {}) {
+    const keyword = String(filters.keyword || '').trim().slice(0, 80);
+    const planType = String(filters.planType || filters.plan_type || '').trim();
+    const cardStatus = String(filters.cardStatus || filters.card_status || '').trim().toLowerCase();
+    const rechargeStatus = String(filters.rechargeStatus || filters.recharge_status || '').trim().toLowerCase();
+    return {
+        keyword,
+        planType: ['plus', 'pro_5x', 'pro_20x'].includes(planType) ? planType : '',
+        cardStatus: ORBITCARD_USAGE_CARD_STATUSES.has(cardStatus) ? cardStatus : '',
+        rechargeStatus: ORBITCARD_USAGE_RECHARGE_STATUSES.has(rechargeStatus) ? rechargeStatus : ''
+    };
+}
+
+function buildOrbitcardUsageFilter(filters = {}) {
+    const normalized = normalizeOrbitcardUsageFilters(filters);
+    const conditions = [];
+    const params = [];
+
+    if (normalized.keyword) {
+        const keywordPattern = `%${normalized.keyword}%`;
+        conditions.push(`(
+            CAST(cu.card_id AS CHAR) LIKE ?
+            OR COALESCE(cu.card_last4, '') LIKE ?
+            OR RIGHT(COALESCE(cu.card_number, ''), 4) LIKE ?
+            OR COALESCE(cu.product_code, '') LIKE ?
+            OR EXISTS (
+                SELECT 1
+                FROM orbitcard_card_recharges keyword_recharge
+                WHERE keyword_recharge.card_id = cu.card_id
+                  AND (keyword_recharge.account_email LIKE ? OR keyword_recharge.order_id LIKE ? OR keyword_recharge.card_last4 LIKE ?)
+            )
+        )`);
+        params.push(keywordPattern, keywordPattern, keywordPattern, keywordPattern, keywordPattern, keywordPattern, keywordPattern);
+    }
+
+    if (normalized.planType) {
+        conditions.push('cu.plan_type = ?');
+        params.push(normalized.planType);
+    }
+
+    const cardStatusConditions = {
+        reusable: "cu.status NOT IN ('PROVIDER_DELETED', 'RETIRED', 'CANCELLED') AND cu.in_use = 0 AND cu.plan_type IS NOT NULL",
+        in_use: "cu.status NOT IN ('PROVIDER_DELETED', 'RETIRED', 'CANCELLED') AND cu.in_use = 1",
+        retired: "cu.status = 'RETIRED'",
+        provider_deleted: "cu.status = 'PROVIDER_DELETED'",
+        cancelled: "cu.status = 'CANCELLED'",
+        unassigned: "cu.status NOT IN ('PROVIDER_DELETED', 'RETIRED', 'CANCELLED') AND cu.plan_type IS NULL"
+    };
+    if (normalized.cardStatus) {
+        conditions.push(cardStatusConditions[normalized.cardStatus]);
+    }
+
+    const rechargeStatusConditions = {
+        success: "LOWER(recharge_filter.status) IN ('success', 'succeeded')",
+        processing: "LOWER(recharge_filter.status) IN ('processing', 'running', 'pending')",
+        failed: "LOWER(recharge_filter.status) IN ('failed', 'error')"
+    };
+    if (normalized.rechargeStatus) {
+        conditions.push(`EXISTS (
+            SELECT 1
+            FROM orbitcard_card_recharges recharge_filter
+            WHERE recharge_filter.card_id = cu.card_id
+              AND ${rechargeStatusConditions[normalized.rechargeStatus]}
+        )`);
+    }
+
+    return {
+        normalized,
+        whereSql: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '',
+        params
+    };
+}
+
+async function countOrbitcardUsage(filters = {}) {
+    const { whereSql, params } = buildOrbitcardUsageFilter(filters);
+    const rows = await runQuery(
+        `SELECT COUNT(*) AS total
+         FROM orbitcard_card_usage cu
+         ${whereSql}`,
+        params
+    );
+    return Number(rows[0]?.total || 0);
+}
+
+async function listOrbitcardUsage(limit = 200, offset = 0, filters = {}) {
     const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
-    const safeOffset = Math.max(0, Number(offset) || 0);
+    const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
+    const { whereSql, params: filterParams } = buildOrbitcardUsageFilter(filters);
     const cards = await runQuery(
-        `SELECT card_id, usage_count, plan_type, max_usage_count, initial_amount,
-                provider_balance, provider_balance_currency, provider_status, provider_balance_updated_at,
-                daily_usage_count, cooldown_until, in_use, locked_at, locked_by,
-                last_used_at, status, created_at, updated_at
-         FROM orbitcard_card_usage
-         ORDER BY updated_at DESC, card_id DESC
+        `SELECT cu.card_id, cu.usage_count, cu.plan_type, cu.max_usage_count, cu.initial_amount,
+                cu.provider_balance, cu.provider_balance_currency, cu.provider_status, cu.provider_balance_updated_at,
+                cu.card_number, cu.card_expiry, cu.card_cvc, cu.card_holder, cu.product_code, cu.card_last4,
+                cu.daily_usage_count, cu.cooldown_until, cu.in_use, cu.locked_at, cu.locked_by,
+                cu.last_used_at, cu.status, cu.created_at, cu.updated_at
+         FROM orbitcard_card_usage cu
+         ${whereSql}
+         ORDER BY cu.updated_at DESC, cu.card_id DESC
          LIMIT ? OFFSET ?`,
-        [safeLimit, safeOffset]
+        [...filterParams, safeLimit, safeOffset]
     );
     const cardIds = cards.map((row) => Number(row.card_id)).filter((id) => Number.isInteger(id) && id > 0);
     if (!cardIds.length) return [];
@@ -3576,7 +3713,14 @@ async function listOrbitcardUsage(limit = 200, offset = 0) {
     }
     return cards.map((row) => ({
         cardId: Number(row.card_id),
-        cardLast4: historyByCard.get(String(row.card_id))?.find((item) => item.cardLast4)?.cardLast4 || '',
+        cardLast4: historyByCard.get(String(row.card_id))?.find((item) => item.cardLast4)?.cardLast4
+            || row.card_last4
+            || String(row.card_number || '').slice(-4),
+        cardNumber: row.card_number || '',
+        cardExpiry: row.card_expiry || '',
+        cardCvc: row.card_cvc || '',
+        cardHolder: row.card_holder || '',
+        productCode: row.product_code || '',
         planType: row.plan_type || null,
         usageCount: Number(row.usage_count || 0),
         maxUsageCount: Math.max(1, Number(row.max_usage_count || 1)),
@@ -3596,6 +3740,83 @@ async function listOrbitcardUsage(limit = 200, offset = 0) {
         updatedAt: row.updated_at,
         recharges: historyByCard.get(String(row.card_id)) || []
     }));
+}
+
+async function syncOrbitcardCards(cards = []) {
+    const normalizedCards = (Array.isArray(cards) ? cards : [])
+        .map((card) => ({
+            cardId: Number(card?.cardId ?? card?.card_id ?? card?.id),
+            status: String(card?.status || 'ACTIVE').trim().toUpperCase() || 'ACTIVE',
+            last4: String(card?.last4 || card?.cardLast4 || card?.card_last4 || '').replace(/\D/g, '').slice(-4),
+            cardNumber: String(card?.cardNumber || card?.card_number || '').replace(/[\s-]+/g, '').trim(),
+            cardExpiry: String(card?.cardExpiry || card?.card_expiry || '').trim(),
+            cardCvc: String(card?.cardCvc || card?.card_cvc || '').trim(),
+            cardHolder: String(card?.cardHolder || card?.card_holder || '').trim(),
+            productCode: String(card?.productCode || card?.product_code || '').trim(),
+            balance: card?.balance == null || card.balance === '' ? null : Number(card.balance),
+            currency: String(card?.currency || '').trim().toUpperCase().slice(0, 8)
+        }))
+        .filter((card) => Number.isInteger(card.cardId) && card.cardId > 0)
+        .map((card) => ({
+            ...card,
+            last4: card.last4 || card.cardNumber.slice(-4),
+            balance: card.balance != null && Number.isFinite(card.balance) ? card.balance : null
+        }));
+
+    if (!normalizedCards.length) {
+        return { total: 0, inserted: 0, updated: 0 };
+    }
+
+    return withTransaction(async (connection) => {
+        const ids = normalizedCards.map((card) => card.cardId);
+        const placeholders = ids.map(() => '?').join(', ');
+        const [existingRows] = await connection.query(
+            `SELECT card_id FROM orbitcard_card_usage WHERE card_id IN (${placeholders})`,
+            ids
+        );
+        const existingIds = new Set(existingRows.map((row) => Number(row.card_id)));
+
+        for (const card of normalizedCards) {
+            await connection.query(
+                `INSERT INTO orbitcard_card_usage
+                    (card_id, status, provider_status, provider_balance, provider_balance_currency,
+                    provider_balance_updated_at, card_number, card_expiry, card_cvc, card_holder, product_code, card_last4)
+                 VALUES (?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE
+                    status = CASE WHEN orbitcard_card_usage.status = 'RETIRED' THEN orbitcard_card_usage.status ELSE VALUES(status) END,
+                    provider_status = VALUES(provider_status),
+                    provider_balance = COALESCE(VALUES(provider_balance), orbitcard_card_usage.provider_balance),
+                    provider_balance_currency = COALESCE(VALUES(provider_balance_currency), orbitcard_card_usage.provider_balance_currency),
+                    provider_balance_updated_at = CASE WHEN VALUES(provider_balance) IS NULL THEN orbitcard_card_usage.provider_balance_updated_at ELSE CURRENT_TIMESTAMP END,
+                    card_number = COALESCE(NULLIF(VALUES(card_number), ''), orbitcard_card_usage.card_number),
+                    card_expiry = COALESCE(NULLIF(VALUES(card_expiry), ''), orbitcard_card_usage.card_expiry),
+                    card_cvc = COALESCE(NULLIF(VALUES(card_cvc), ''), orbitcard_card_usage.card_cvc),
+                    card_holder = COALESCE(NULLIF(VALUES(card_holder), ''), orbitcard_card_usage.card_holder),
+                    product_code = COALESCE(NULLIF(VALUES(product_code), ''), orbitcard_card_usage.product_code),
+                    card_last4 = COALESCE(NULLIF(VALUES(card_last4), ''), orbitcard_card_usage.card_last4)`,
+                [
+                    card.cardId,
+                    card.status,
+                    card.status,
+                    card.balance,
+                    card.currency || null,
+                    card.balance,
+                    card.cardNumber || null,
+                    card.cardExpiry || null,
+                    card.cardCvc || null,
+                    card.cardHolder || null,
+                    card.productCode || null,
+                    card.last4 || null
+                ]
+            );
+        }
+
+        return {
+            total: normalizedCards.length,
+            inserted: normalizedCards.filter((card) => !existingIds.has(card.cardId)).length,
+            updated: normalizedCards.filter((card) => existingIds.has(card.cardId)).length
+        };
+    });
 }
 
 async function updateOrbitcardCardBalance(cardId, {
@@ -4283,9 +4504,12 @@ module.exports = {
     releaseOrbitcardCard,
     retireOrbitcardCard,
     restoreOrbitcardCard,
+    assignOrbitcardCardPlan,
     createOrbitcardRecharge,
     updateOrbitcardRecharge,
+    countOrbitcardUsage,
     listOrbitcardUsage,
+    syncOrbitcardCards,
     updateOrbitcardCardBalance,
     markMissingOrbitcardCards,
     recordOrbitcardCardUsage,
