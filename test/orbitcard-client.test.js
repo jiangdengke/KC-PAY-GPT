@@ -177,6 +177,58 @@ describe('orbitcard client', () => {
         ]);
     });
 
+    it('honors a manually selected available product outside the automatic channel allowlist', () => {
+        const catalog = { list: [
+            { product_code: 'amzkeys:55565979', bin: '55565979', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] },
+            { product_code: 'G5321KC', bin: '53211329', network: 'MASTERCARD', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '20.00' }] },
+            { product_code: 'NO-PLUS-PRICE', bin: '40005224', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'pro', price: '90.00' }] },
+            { product_code: 'amzkeys:400242001', bin: '400242001', open_card_inventory_mode: 'tracked', remaining_open_card_num: 10, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] }
+        ] };
+
+        const automatic = orbitcard.getProductSelectionsForPlan(catalog, 'plus');
+        expect(automatic.map((item) => item.product.productCode)).toEqual(['amzkeys:55565979']);
+        expect(orbitcard.getProductOptionsForPlan(catalog, 'plus').map((item) => item.product.productCode)).toEqual([
+            'amzkeys:55565979'
+        ]);
+
+        const manual = orbitcard.getProductSelectionsForPlan(catalog, 'plus', { preferredProductCode: 'G5321KC' });
+        expect(manual).toHaveLength(1);
+        expect(manual[0]).toMatchObject({
+            product: { productCode: 'G5321KC', bin: '53211329' },
+            planPrice: { id: 'plus', price: 20 },
+            channel: null,
+            amount: '85.00'
+        });
+        expect(orbitcard.getProductSelectionsForPlan(catalog, 'plus', {
+            preferredProductCode: 'NO-PLUS-PRICE'
+        })).toEqual([]);
+        expect(orbitcard.getProductSelectionsForPlan(catalog, 'plus', {
+            preferredProductCode: 'amzkeys:400242001'
+        })).toEqual([]);
+    });
+
+    it('includes every available non-blocked product in the strategy catalog without changing automatic priority', () => {
+        const catalog = orbitcard.buildProductStrategyCatalog({ list: [
+            { product_code: 'G5321KC', bin: '53211329', network: 'MASTERCARD', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '20.00' }] },
+            { product_code: 'P5556XV', bin: '555659', network: 'MASTERCARD', open_card_inventory_mode: 'tracked', remaining_open_card_num: 2187, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.70' }] },
+            { product_code: 'G4000KC', bin: '40005224', network: 'VISA', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '16.00' }] },
+            { product_code: 'OUT-OF-STOCK', bin: '53219999', open_card_inventory_mode: 'tracked', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '16.00' }] },
+            { product_code: 'BLOCKED-4002', bin: '400242001', open_card_inventory_mode: 'provider_validated', remaining_open_card_num: 0, min_initial_amount: '20', gpt_plan_prices: [{ id: 'plus', price: '15.00' }] }
+        ] });
+
+        expect(catalog.products.map((product) => product.product_code)).toEqual([
+            'P5556XV', 'G4000KC', 'G5321KC'
+        ]);
+        expect(catalog.products.find((product) => product.product_code === 'G5321KC')).toMatchObject({
+            channel: null,
+            plans: { plus: { plan_price: 20 } }
+        });
+        expect(catalog.automatic.plus).toMatchObject({
+            product_code: 'P5556XV',
+            channel: 1
+        });
+    });
+
     it('builds one live product catalog with amounts for all supported plans', () => {
         const catalog = orbitcard.buildProductStrategyCatalog({ list: [{
             product_code: 'P5556XV',

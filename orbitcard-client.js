@@ -195,10 +195,12 @@ function isBlockedCardProduct(product = {}) {
     ));
 }
 
-function isProductAvailable(product) {
+function isProductAvailable(product, options = {}) {
     if (product.remainingOpenCardNum == null || product.remainingOpenCardNum > 0) return true;
     // Provider-validated products expose 0 when the card table checks stock at open time.
-    return product.inventoryMode === 'provider_validated' && getChannel3Priority(product) != null;
+    if (product.inventoryMode !== 'provider_validated') return false;
+    return options.includeZeroInventoryProviderValidated === true
+        || getChannel3Priority(product) != null;
 }
 
 function normalizeProductList(data) {
@@ -218,10 +220,10 @@ function resolveProductPlanPrice(product, planType) {
     return null;
 }
 
-function getSelectableProductItems(data, planType = 'plus') {
+function getSelectableProductItems(data, planType = 'plus', options = {}) {
     return normalizeProductList(data)
         .filter((product) => !isBlockedCardProduct(product))
-        .filter(isProductAvailable)
+        .filter((product) => isProductAvailable(product, options))
         .map((product) => ({ product, planPrice: resolveProductPlanPrice(product, planType) }));
 }
 
@@ -305,9 +307,10 @@ function getProductSelectionsForPlan(data, planType = 'plus', options = {}) {
     const preferredProductCode = String(options?.preferredProductCode || '').trim().toLowerCase();
     const reuseLimits = options?.reuseLimits || null;
     if (preferredProductCode) {
-        const preferred = getSelectableProductItems(data, planType).find(({ product }) => (
-            product.productCode.toLowerCase() === preferredProductCode
-            && (getChannel3Priority(product) !== null || getChannel1Priority(product) !== null)
+        const preferred = getSelectableProductItems(data, planType, {
+            includeZeroInventoryProviderValidated: true
+        }).find(({ product, planPrice }) => (
+            product.productCode.toLowerCase() === preferredProductCode && Boolean(planPrice)
         ));
         return preferred ? [buildProductSelection(preferred.product, preferred.planPrice, planType, reuseLimits)] : [];
     }
@@ -317,15 +320,15 @@ function getProductSelectionsForPlan(data, planType = 'plus', options = {}) {
 }
 
 function getProductOptionsForPlan(data, planType = 'plus', options = {}) {
-    return getSelectableProductItems(data, planType)
-        .filter(({ product }) => getChannel3Priority(product) !== null || getChannel1Priority(product) !== null)
+    return getSelectableProductItems(data, planType, options)
         .map(({ product, planPrice }) => buildProductSelection(product, planPrice, planType, options?.reuseLimits || null));
 }
 
 function buildProductStrategyCatalog(data, options = {}) {
+    const catalogOptions = { ...options, includeZeroInventoryProviderValidated: true };
     const productMap = new Map();
     for (const planType of SUPPORTED_PLAN_TYPES) {
-        for (const selection of getProductOptionsForPlan(data, planType, options)) {
+        for (const selection of getProductOptionsForPlan(data, planType, catalogOptions)) {
             const code = selection.product.productCode;
             if (!productMap.has(code)) {
                 productMap.set(code, {

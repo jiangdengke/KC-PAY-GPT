@@ -2976,6 +2976,11 @@
         let orbitcardStrategyAutomatic = {};
         let orbitcardStrategyReuseLimits = { plus: 4, pro_5x: 1, pro_20x: 1 };
 
+        function orbitcardProductGroupLabel(product) {
+            const channel = Number(product?.channel);
+            return Number.isFinite(channel) && channel > 0 ? `渠道 ${channel}` : '其他产品';
+        }
+
         function orbitcardInventoryLabel(product) {
             if (String(product?.inventory_mode || '').toLowerCase() === 'provider_validated') {
                 return '库存开卡时实时校验';
@@ -3015,7 +3020,7 @@
             const selected = orbitcardStrategyProducts.find((item) => item.product_code === selectedCode);
             if (selectedCode && selected) {
                 summary.innerHTML = `<div style="display:flex; gap:18px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:14px 16px; border:1px solid var(--border); border-radius:8px; background:var(--bg-secondary);">
-                    <div><strong>持续指定产品</strong><div style="font-size:13px; color:var(--text-dim); margin-top:5px;">渠道 ${Number(selected.channel || 0) || '-'} · ${escapeHtml(selected.network || '卡')} · BIN ${escapeHtml(selected.bin || '未知')} · ${escapeHtml(selected.product_code)}</div></div>
+                    <div><strong>持续指定产品</strong><div style="font-size:13px; color:var(--text-dim); margin-top:5px;">${escapeHtml(orbitcardProductGroupLabel(selected))} · ${escapeHtml(selected.network || '卡')} · BIN ${escapeHtml(selected.bin || '未知')} · ${escapeHtml(selected.product_code)}</div></div>
                     <div style="font-size:13px; font-weight:600;">${escapeHtml(orbitcardInventoryLabel(selected))}</div>
                 </div>`;
             } else {
@@ -3069,7 +3074,7 @@
                 for (const product of orbitcardStrategyProducts) {
                     const option = document.createElement('option');
                     option.value = product.product_code || '';
-                    option.textContent = `渠道 ${product.channel || '-'} ${product.network || '卡'} · BIN ${product.bin || '未知'} · ${product.product_code} · ${orbitcardInventoryLabel(product)}`;
+                    option.textContent = `${orbitcardProductGroupLabel(product)} ${product.network || '卡'} · BIN ${product.bin || '未知'} · ${product.product_code} · ${orbitcardInventoryLabel(product)}`;
                     select.appendChild(option);
                 }
                 const available = Array.from(select.options).some((option) => option.value === configured);

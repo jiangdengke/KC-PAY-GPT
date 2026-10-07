@@ -2652,7 +2652,7 @@ app.post('/api/admin/orbitcard/product-strategy', async (req, res) => {
                 }).length > 0
             ));
             if (!selectable) {
-                return res.status(400).json({ success: false, message: '所选产品已不可用，请刷新上游库存后重新选择' });
+                return res.status(400).json({ success: false, message: '所选产品已不可用或缺少有效套餐价格，请刷新上游库存后重新选择' });
             }
         }
         await store.setAppConfigValue('orbitcard_product_code', productCode);
@@ -3854,7 +3854,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                         reuseLimits
                     });
                     if (!requestedSelection.length) {
-                        throw new Error(`指定的 Orbitcard 产品 ${requestedProductCode} 当前不可用，请重新选择`);
+                        throw new Error(`指定的 Orbitcard 产品 ${requestedProductCode} 当前不可用或缺少 ${getPlanTypeLabel(planType)} 套餐价格，请重新选择`);
                     }
                 }
                 const selections = orbitcard.getProductSelectionsForPlan(productResult.data, planType, requestedProductCode

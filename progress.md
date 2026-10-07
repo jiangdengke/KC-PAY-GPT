@@ -262,3 +262,19 @@
 - rn 部署文件：`/root/KC-GPT-PAY/server.js`、`/root/KC-GPT-PAY/mysql-store.js`、`/root/KC-GPT-PAY/public/admin.html`、`/root/KC-GPT-PAY/public/admin.css`、`/root/KC-GPT-PAY/public/admin.js`。
 - rn 备份：`/root/KC-GPT-PAY*.bak-orbitcard-card-limit-20260928-201539`，public 文件位于 `/root/KC-GPT-PAY/public/` 下同名备份。
 - 回滚：恢复上述备份后执行 `cd /root/KC-GPT-PAY && docker compose restart app`；数据库中的 `max_usage_count` 字段可保留，不影响旧记录读取。
+
+
+## 2026-10-07 - Task: 展示全部 Orbitcard 开卡产品
+### What was done
+- 开卡策略目录展示所有可用且非 4002 的上游产品，包括实时校验型产品。
+- 自动开卡继续保持既有渠道优先级；手动选择的可用产品会传递到实际开卡流程。
+- 补充产品目录与已开出卡片的区别说明，避免把产品数量当成同步卡片数量。
+### Testing
+- `npm test`：3 个测试文件、40 项测试通过。
+- `node --check orbitcard-client.js`、`node --check server.js` 和 `node --check public/admin.js`：通过。
+- `git diff --check`：通过。
+### Notes
+- `orbitcard-client.js`：手动策略路径允许库存数为 0 的 `provider_validated` 产品，自动路径保持原规则。
+- `server.js`：保存策略和新开卡流程支持手动指定的非优先产品。
+- `public/admin.js`：未分类产品显示为“其他产品”。
+- `test/orbitcard-client.test.js`：覆盖目录展示、手动选择、自动优先级和 4002 排除。
