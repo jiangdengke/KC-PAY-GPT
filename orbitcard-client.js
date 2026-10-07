@@ -142,7 +142,68 @@ function getPlanReuseLimit(planType, reuseLimits = null) {
     return PLAN_REUSE_LIMITS[key] || PLAN_REUSE_LIMITS.plus;
 }
 
-function normalizeProduct(row = {}) {
+const CHANNEL_ALIASES = Object.freeze({
+    '1': 1,
+    '2': 2,
+    '3': 3,
+    channel1: 1,
+    channel2: 2,
+    channel3: 3,
+    vmcardio: 1,
+    fizzbolt: 2,
+    amzkeys: 3
+});
+
+function normalizeChannelIdentifier(value) {
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 3) {
+        return value;
+    }
+    const key = String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+    return Object.prototype.hasOwnProperty.call(CHANNEL_ALIASES, key) ? CHANNEL_ALIASES[key] : null;
+}
+
+function getProductChannel(row = {}) {
+    const source = row && typeof row === 'object' ? row : {};
+    return normalizeChannelIdentifier(
+        source.channel ?? source.channel_id ?? source.channelId ?? source.channel_name ?? source.channelName
+        ?? source.provider ?? source.provider_id ?? source.providerId ?? source.provider_name ?? source.providerName
+    );
+}
+
+function hasProductCode(row = {}) {
+    return Boolean(String(row.product_code || row.productCode || '').trim());
+}
+
+function collectProductRows(value, inheritedChannel, rows) {
+    if (Array.isArray(value)) {
+        value.forEach((item) => collectProductRows(item, inheritedChannel, rows));
+        return;
+    }
+    if (!value || typeof value !== 'object') return;
+    if (hasProductCode(value)) {
+        rows.push({ row: value, channelHint: inheritedChannel });
+        return;
+    }
+
+    const objectChannel = getProductChannel(value);
+    const channel = objectChannel ?? inheritedChannel;
+    for (const [key, child] of Object.entries(value)) {
+        const keyChannel = normalizeChannelIdentifier(key);
+        if (keyChannel !== null) {
+            collectProductRows(child, keyChannel, rows);
+            continue;
+        }
+        if (['channels', 'providers', 'list', 'products', 'items', 'data'].includes(key)) {
+            collectProductRows(child, channel, rows);
+        }
+    }
+}
+
+function normalizeProductChannel(row = {}, channelHint = null) {
+    return getProductChannel(row) ?? normalizeChannelIdentifier(channelHint);
+}
+
+function normalizeProduct(row = {}, channelHint = null) {
     const prices = Array.isArray(row.gpt_plan_prices)
         ? row.gpt_plan_prices.map((price) => ({
             id: String(price?.id || '').trim().toLowerCase(),
@@ -162,12 +223,14 @@ function normalizeProduct(row = {}) {
         cardType: String(row.card_type || '').trim(),
         network: String(row.network || '').trim(),
         issuingArea: String(row.issuing_area || '').trim(),
+        channel: normalizeProductChannel(row, channelHint),
         prices,
         raw: row
     };
 }
 
 function getChannel3Priority(product) {
+    if (product?.channel != null && product.channel !== 3) return null;
     const code = String(product?.productCode || '').trim().toLowerCase();
     const bin = String(product?.bin || '').replace(/\s+/g, '').trim();
     const index = CHANNEL3_PRODUCT_PRIORITY.findIndex((item) => (
@@ -177,6 +240,7 @@ function getChannel3Priority(product) {
 }
 
 function getChannel1Priority(product) {
+    if (product?.channel != null && product.channel !== 1) return null;
     if (String(product?.inventoryMode || '').trim().toLowerCase() !== 'tracked') return null;
     const bin = String(product?.bin || '').replace(/\s+/g, '').trim();
     const index = CHANNEL1_PRODUCT_PRIORITY.findIndex((item) => bin.startsWith(item.binPrefix));
@@ -204,11 +268,19 @@ function isProductAvailable(product, options = {}) {
 }
 
 function normalizeProductList(data) {
-    const source = data && typeof data === 'object' ? data : {};
-    const rows = Array.isArray(source)
-        ? source
-        : (Array.isArray(source.list) ? source.list : (Array.isArray(source.products) ? source.products : []));
-    return rows.map(normalizeProduct).filter((product) => product.productCode);
+    const rows = [];
+    collectProductRows(data, null, rows);
+    const products = new Map();
+    for (const { row, channelHint } of rows) {
+        const product = normalizeProduct(row, channelHint);
+        if (!product.productCode) continue;
+        const key = product.productCode.toLowerCase();
+        const existing = products.get(key);
+        if (!existing || (existing.channel == null && product.channel != null)) {
+            products.set(key, product);
+        }
+    }
+    return Array.from(products.values());
 }
 
 function resolveProductPlanPrice(product, planType) {
@@ -298,7 +370,7 @@ function buildProductSelection(product, planPrice, planType, reuseLimits = null)
         planPrice,
         amount,
         maxUsageCount: reuseLimit,
-        channel: channel3Priority !== null ? 3 : (channel1Priority !== null ? 1 : null),
+        channel: product.channel ?? (channel3Priority !== null ? 3 : (channel1Priority !== null ? 1 : null)),
         channelPriority: channel3Priority ?? channel1Priority,
     };
 }
@@ -679,7 +751,9 @@ async function testConnection(cfg) {
             bin: product.bin,
             network: product.network,
             inventoryMode: product.inventoryMode,
-            channel: getChannel3Priority(product) == null ? null : 3,
+            channel: product.channel ?? (getChannel3Priority(product) == null
+                ? (getChannel1Priority(product) == null ? null : 1)
+                : 3),
             channelPriority: getChannel3Priority(product),
             remainingOpenCardNum: product.remainingOpenCardNum,
             minInitialAmount: product.minInitialAmount,
@@ -700,6 +774,8 @@ module.exports = {
     PLAN_REUSE_LIMITS,
     CHANNEL3_PRODUCT_PRIORITY,
     CHANNEL1_PRODUCT_PRIORITY,
+    normalizeChannelIdentifier,
+    getProductChannel,
     getPlanReuseLimit,
     getChannel3Priority,
     getChannel1Priority,

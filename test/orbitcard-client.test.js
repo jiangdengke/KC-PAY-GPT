@@ -83,6 +83,109 @@ describe('orbitcard client', () => {
         ] }, 'pro_20x').amount).toBe('145.00');
     });
 
+    it('flattens grouped channel responses, normalizes aliases, and deduplicates products', () => {
+        const products = orbitcard.normalizeProductList({
+            channels: {
+                vmcardio: { products: [{ product_code: 'channel-1' }] },
+                channel2: { products: [{ product_code: 'explicit-channel', channel: 1 }] },
+                3: { list: [{ product_code: 'channel-3' }] }
+            },
+            providers: {
+                fizzbolt: [{ product_code: 'provider-channel-2' }],
+                amzkeys: [{ product_code: 'channel-3' }]
+            },
+            list: [{ product_code: 'channel-1' }]
+        });
+        expect(products.map((product) => product.productCode).sort()).toEqual([
+            'channel-1', 'channel-3', 'explicit-channel', 'provider-channel-2'
+        ]);
+        expect(Object.fromEntries(products.map((product) => [product.productCode, product.channel]))).toEqual({
+            'channel-1': 1,
+            'explicit-channel': 1,
+            'channel-3': 3,
+            'provider-channel-2': 2
+        });
+    });
+
+    it('preserves catalog channel fields while keeping automatic priority and 4002 exclusion', () => {
+        const catalog = orbitcard.buildProductStrategyCatalog({
+            channels: {
+                vmcardio: { products: [{
+                    product_code: 'channel-1-product',
+                    bin: '53211329',
+                    open_card_inventory_mode: 'provider_validated',
+                    remaining_open_card_num: 0,
+                    min_initial_amount: '20',
+                    gpt_plan_prices: [{ id: 'plus', price: '20.00' }]
+                }] },
+                fizzbolt: { products: [{
+                    product_code: 'channel-2-product',
+                    bin: '40005224',
+                    open_card_inventory_mode: 'provider_validated',
+                    remaining_open_card_num: 0,
+                    min_initial_amount: '20',
+                    gpt_plan_prices: [{ id: 'plus', price: '16.00' }]
+                }] },
+                amzkeys: { products: [
+                    {
+                        product_code: 'amzkeys:55565979',
+                        bin: '55565979',
+                        open_card_inventory_mode: 'provider_validated',
+                        remaining_open_card_num: 0,
+                        min_initial_amount: '20',
+                        gpt_plan_prices: [{ id: 'plus', price: '15.00' }]
+                    },
+                    {
+                        product_code: 'blocked-4002',
+                        bin: '400242001',
+                        open_card_inventory_mode: 'provider_validated',
+                        remaining_open_card_num: 0,
+                        min_initial_amount: '20',
+                        gpt_plan_prices: [{ id: 'plus', price: '15.00' }]
+                    }
+                ] }
+            }
+        });
+        expect(catalog.products.map((product) => [product.product_code, product.channel])).toEqual([
+            ['channel-1-product', 1],
+            ['channel-2-product', 2],
+            ['amzkeys:55565979', 3]
+        ]);
+        expect(catalog.automatic.plus).toMatchObject({
+            product_code: 'amzkeys:55565979',
+            channel: 3
+        });
+    });
+
+    it('does not let an explicit channel 2 product claim channel 3 or channel 1 priority', () => {
+        const data = {
+            channels: {
+                channel2: { products: [{
+                    product_code: 'channel-2-masquerade',
+                    bin: '55565979',
+                    open_card_inventory_mode: 'provider_validated',
+                    remaining_open_card_num: 10,
+                    min_initial_amount: '20',
+                    gpt_plan_prices: [{ id: 'plus', price: '1.00' }]
+                }] },
+                channel1: { products: [{
+                    product_code: 'channel-1-priority',
+                    bin: '555659',
+                    open_card_inventory_mode: 'tracked',
+                    remaining_open_card_num: 10,
+                    min_initial_amount: '20',
+                    gpt_plan_prices: [{ id: 'plus', price: '2.00' }]
+                }] }
+            }
+        };
+
+        expect(orbitcard.getChannel3Priority({ channel: 2, productCode: 'amzkeys:55565979', bin: '55565979' })).toBe(null);
+        expect(orbitcard.getChannel1Priority({ channel: 2, inventoryMode: 'tracked', bin: '555659' })).toBe(null);
+        expect(orbitcard.getProductSelectionsForPlan(data, 'plus').map((item) => item.product.productCode)).toEqual([
+            'channel-1-priority'
+        ]);
+    });
+
     it('budgets a Plus card for four sequential charges', () => {
         const selection = orbitcard.chooseProductForPlan({ list: [
             {
