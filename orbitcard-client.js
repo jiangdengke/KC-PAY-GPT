@@ -154,6 +154,12 @@ const CHANNEL_ALIASES = Object.freeze({
     amzkeys: 3
 });
 
+const PRODUCT_CODE_CHANNEL_PREFIXES = Object.freeze([
+    { prefix: 'p', channel: 1 },
+    { prefix: 's', channel: 2 },
+    { prefix: 'amzkeys:', channel: 3 }
+]);
+
 function normalizeChannelIdentifier(value) {
     if (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 3) {
         return value;
@@ -199,8 +205,32 @@ function collectProductRows(value, inheritedChannel, rows) {
     }
 }
 
+function inferProductChannelFromCode(productCode) {
+    const code = String(productCode || '').trim().toLowerCase();
+    const match = PRODUCT_CODE_CHANNEL_PREFIXES.find(({ prefix }) => code.startsWith(prefix));
+    return match ? match.channel : null;
+}
+
 function normalizeProductChannel(row = {}, channelHint = null) {
-    return getProductChannel(row) ?? normalizeChannelIdentifier(channelHint);
+    const productCode = row?.product_code || row?.productCode;
+    return getProductChannel(row)
+        ?? normalizeChannelIdentifier(channelHint)
+        ?? inferProductChannelFromCode(productCode);
+}
+
+function getProductChannelSourceRank(row = {}, channelHint = null) {
+    if (getProductChannel(row) !== null) return 3;
+    if (normalizeChannelIdentifier(channelHint) !== null) return 2;
+    const productCode = row?.product_code || row?.productCode;
+    if (inferProductChannelFromCode(productCode) !== null) return 1;
+    return 0;
+}
+
+function isMissingProductField(value) {
+    return value === undefined || value === null
+        || (typeof value === 'string' && !value.trim())
+        || (Array.isArray(value) && value.length === 0)
+        || (typeof value === 'number' && !Number.isFinite(value));
 }
 
 function normalizeProduct(row = {}, channelHint = null) {
@@ -271,14 +301,35 @@ function normalizeProductList(data) {
     const rows = [];
     collectProductRows(data, null, rows);
     const products = new Map();
+    const channelSourceRanks = new Map();
     for (const { row, channelHint } of rows) {
         const product = normalizeProduct(row, channelHint);
         if (!product.productCode) continue;
         const key = product.productCode.toLowerCase();
+        const sourceRank = getProductChannelSourceRank(row, channelHint);
         const existing = products.get(key);
-        if (!existing || (existing.channel == null && product.channel != null)) {
+        if (!existing) {
             products.set(key, product);
+            channelSourceRanks.set(key, sourceRank);
+            continue;
         }
+
+        // A grouped/channel row can be only a product-code reference. Merge it
+        // with the richer duplicate row instead of dropping prices/inventory;
+        // stronger channel metadata may replace weaker fields, but a weaker
+        // duplicate must not overwrite the authoritative row's details.
+        const existingSourceRank = channelSourceRanks.get(key) || 0;
+        const mergedRaw = { ...(existing.raw || {}) };
+        for (const [field, value] of Object.entries(row)) {
+            if ((sourceRank > existingSourceRank && !isMissingProductField(value))
+                || isMissingProductField(mergedRaw[field])) {
+                mergedRaw[field] = value;
+            }
+        }
+        const merged = normalizeProduct(mergedRaw, channelHint);
+        merged.channel = sourceRank > existingSourceRank ? product.channel : existing.channel;
+        products.set(key, merged);
+        if (sourceRank > existingSourceRank) channelSourceRanks.set(key, sourceRank);
     }
     return Array.from(products.values());
 }

@@ -107,6 +107,141 @@ describe('orbitcard client', () => {
         });
     });
 
+    it('infers flat product-code channels after explicit and grouped metadata', () => {
+        const products = orbitcard.normalizeProductList({
+            channels: {
+                channel3: { products: [
+                    { product_code: 'P5556XV' },
+                    { product_code: 'P40005224', bin: 'grouped-bin' }
+                ] },
+                channel1: { products: [{ product_code: 'S24600L' }] }
+            },
+            list: [
+                { product_code: 'P5378OX', channel: 2 },
+                { product_code: 'amzkeys:55565979' },
+                { product_code: 'P40005224', channel: 2, bin: 'explicit-bin' },
+                { product_code: 'P40005224', bin: 'prefix-bin' }
+            ]
+        });
+        expect(Object.fromEntries(products.map((product) => [product.productCode, product.channel]))).toEqual({
+            P5556XV: 3,
+            P5378OX: 2,
+            P40005224: 2,
+            S24600L: 1,
+            'amzkeys:55565979': 3
+        });
+        expect(products.find((product) => product.productCode === 'P40005224')).toMatchObject({
+            channel: 2,
+            bin: 'explicit-bin'
+        });
+
+        const flatProducts = orbitcard.normalizeProductList([
+            { product_code: 'P5556XV' },
+            { product_code: 'P5378OX' },
+            { product_code: 'P40005224' },
+            { product_code: 'S24600L' },
+            { product_code: 'S53211329' },
+            { product_code: 'amzkeys:40041641' }
+        ]);
+        expect(Object.fromEntries(flatProducts.map((product) => [product.productCode, product.channel]))).toEqual({
+            P5556XV: 1,
+            P5378OX: 1,
+            P40005224: 1,
+            S24600L: 2,
+            S53211329: 2,
+            'amzkeys:40041641': 3
+        });
+    });
+
+    it('merges duplicate rows without losing catalog details when channel metadata wins', () => {
+        const products = orbitcard.normalizeProductList({
+            list: [
+                {
+                    product_code: 'P5556XV',
+                    bin: '555659',
+                    open_card_inventory_mode: 'tracked',
+                    remaining_open_card_num: 10,
+                    gpt_plan_prices: [{ id: 'plus', price: '15.70' }]
+                },
+                {
+                    product_code: 'S24600L',
+                    provider: 'fizzbolt',
+                    bin: '53211329',
+                    open_card_inventory_mode: 'provider_validated',
+                    remaining_open_card_num: 10,
+                    gpt_plan_prices: [{ id: 'plus', price: '16.00' }]
+                },
+                {
+                    product_code: 'amzkeys:55565979',
+                    bin: '55565979',
+                    open_card_inventory_mode: 'provider_validated',
+                    remaining_open_card_num: 10,
+                    gpt_plan_prices: [{ id: 'plus', price: '15.00' }]
+                }
+            ],
+            channels: {
+                channel3: { products: [{ product_code: 'P5556XV', gpt_plan_prices: [] }] },
+                channel1: { products: [{ product_code: 'S24600L' }] },
+                channel2: { products: [{ product_code: 'amzkeys:55565979' }] }
+            }
+        });
+        expect(Object.fromEntries(products.map((product) => [product.productCode, product.channel]))).toEqual({
+            P5556XV: 3,
+            S24600L: 2,
+            'amzkeys:55565979': 2
+        });
+        expect(products).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                productCode: 'P5556XV',
+                bin: '555659',
+                remainingOpenCardNum: 10,
+                prices: [{ id: 'plus', name: '', price: 15.7, currency: 'USD' }]
+            }),
+            expect.objectContaining({
+                productCode: 'S24600L',
+                channel: 2,
+                bin: '53211329',
+                prices: [{ id: 'plus', name: '', price: 16, currency: 'USD' }]
+            })
+        ]));
+
+        const explicitProvider = orbitcard.normalizeProductList({
+            channels: { channel1: { products: [{ product_code: 'amzkeys:40041641' }] } },
+            list: [{ product_code: 'amzkeys:40041641', provider: 'amzkeys' }]
+        });
+        expect(explicitProvider[0].channel).toBe(3);
+    });
+
+    it('keeps channel 2 products visible without changing channel 3 then channel 1 automatic priority', () => {
+        const data = { list: [
+            {
+                product_code: 'S24600L',
+                bin: '55565979',
+                open_card_inventory_mode: 'provider_validated',
+                remaining_open_card_num: 10,
+                min_initial_amount: '20',
+                gpt_plan_prices: [{ id: 'plus', price: '1.00' }]
+            },
+            {
+                product_code: 'P5556XV',
+                bin: '555659',
+                open_card_inventory_mode: 'tracked',
+                remaining_open_card_num: 10,
+                min_initial_amount: '20',
+                gpt_plan_prices: [{ id: 'plus', price: '20.00' }]
+            }
+        ] };
+        expect(orbitcard.getProductOptionsForPlan(data, 'plus').map((item) => item.product.productCode)).toEqual([
+            'S24600L', 'P5556XV'
+        ]);
+        expect(orbitcard.getProductSelectionsForPlan(data, 'plus').map((item) => item.product.productCode)).toEqual([
+            'P5556XV'
+        ]);
+        expect(orbitcard.getProductSelectionsForPlan(data, 'plus', {
+            preferredProductCode: 'S24600L'
+        })).toMatchObject([{ product: { productCode: 'S24600L' }, channel: 2 }]);
+    });
+
     it('preserves catalog channel fields while keeping automatic priority and 4002 exclusion', () => {
         const catalog = orbitcard.buildProductStrategyCatalog({
             channels: {
