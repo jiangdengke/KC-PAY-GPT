@@ -12,7 +12,7 @@ ALTER TABLE card_assets
 
 -- 2. cdk_codes 扩展字段：套餐类型绑定
 ALTER TABLE cdk_codes
-    ADD COLUMN IF NOT EXISTS plan_type VARCHAR(16) NOT NULL DEFAULT 'plus' COMMENT 'plus/pro_5x/pro_20x' AFTER type;
+    ADD COLUMN IF NOT EXISTS plan_type VARCHAR(16) NOT NULL DEFAULT 'plus' COMMENT 'plus/pro100/pro200/pro500；兼容读取 pro_5x/pro_20x' AFTER type;
 
 -- 3. 新增免税地址模板表
 CREATE TABLE IF NOT EXISTS tax_free_addresses (
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS billing_records (
     card_last4 VARCHAR(4) NOT NULL COMMENT '卡片后四位',
     amount DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '支付金额',
     currency VARCHAR(8) NOT NULL DEFAULT 'USD' COMMENT '币种',
-    plan_type VARCHAR(16) NOT NULL DEFAULT 'plus' COMMENT 'plus/pro_5x/pro_20x',
+    plan_type VARCHAR(16) NOT NULL DEFAULT 'plus' COMMENT 'plus/pro100/pro200/pro500；兼容读取 pro_5x/pro_20x',
     stripe_session_id VARCHAR(128) NULL COMMENT 'Stripe Session ID',
     cdk_code VARCHAR(32) NULL COMMENT '关联 CDK',
     email VARCHAR(255) NULL COMMENT '关联邮箱',

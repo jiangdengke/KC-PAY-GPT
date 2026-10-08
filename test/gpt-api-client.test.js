@@ -173,11 +173,22 @@ describe('gpt api client', () => {
         });
         expect(out.planMappings).toEqual({
             plus: 'chatgptplusplan',
-            pro_5x: 'chatgptprolite',
-            pro_20x: 'chatgptpro'
+            pro100: null,
+            pro200: null,
+            pro500: null
         });
-        expect(out.message).toContain('Pro 5x=chatgptprolite');
-        expect(out.message).toContain('Pro 20x=chatgptpro');
+        expect(out.message).toContain('Pro 100=未配置');
+        expect(out.message).toContain('Pro 200=未配置');
+        expect(out.message).toContain('Pro 500=未配置');
+    });
+
+    it('requires explicit Desolate mappings for Pro tiers and rejects legacy or unknown plan types', () => {
+        expect(() => client.resolveOpenPlanCode('pro100')).toThrow(/Pro 100.*未配置/);
+        expect(client.resolveOpenPlanCode('pro100', {
+            plan_mappings: { pro100: 'operator-confirmed-pro100' }
+        })).toBe('operator-confirmed-pro100');
+        expect(() => client.resolveOpenPlanCode('pro_5x')).toThrow(/必须是 plus \/ pro100 \/ pro200 \/ pro500/);
+        expect(() => client.resolveOpenPlanCode('not-a-plan')).toThrow(/必须是 plus \/ pro100 \/ pro200 \/ pro500/);
     });
 
     it('maps the Desolate Open order fields and unwraps its response envelope', async () => {
@@ -194,7 +205,7 @@ describe('gpt api client', () => {
         };
         const out = await client.submitPay(
             { base_url: 'https://recharge.desolate.run/api/v1/open', api_key: 'ap_live_test' },
-            { planKey: 'chatgptplusplan', session, newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' } }
+            { planKey: 'chatgptplusplan', session, idempotencyKey: 'job-abc', newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' } }
         );
         expect(out).toMatchObject({ success: true, orderId: 'ord_abc', taskId: null });
         expect(spy.mock.calls[0][0].url).toBe('https://recharge.desolate.run/api/v1/open/orders');
@@ -204,8 +215,34 @@ describe('gpt api client', () => {
             expiryMonth: 12,
             expiryYear: 2032,
             securityCode: '123',
-            session
+            session,
+            clientRequestId: 'job-abc'
         });
+        expect(spy.mock.calls[0][0].headers['X-Request-ID']).toBeUndefined();
+        expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toBeUndefined();
+    });
+
+    it('preserves Desolate duplicate clientRequestId as business code 40005', async () => {
+        vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: { code: 40005, message: '重复请求', data: null }
+        });
+        const out = await client.submitPay(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_live_test' },
+            {
+                planKey: 'chatgptplusplan',
+                session: {
+                    user: { id: 'user_1', email: 'demo@example.com' },
+                    account: { id: 'acct_1' },
+                    accessToken: 'aaa.bbb.ccc',
+                    sessionToken: 'opaque-cookie-token',
+                    expires: '2099-12-31T00:00:00Z'
+                },
+                idempotencyKey: 'same-job',
+                newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' }
+            }
+        );
+        expect(out).toMatchObject({ success: false, businessCode: 40005, error: '重复请求' });
     });
 
     it('requires code zero for Desolate Open API success', async () => {

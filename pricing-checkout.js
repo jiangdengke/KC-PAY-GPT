@@ -3,6 +3,7 @@
 const { getRegionConfig } = require('./region-config');
 const { assertChatGptLoggedIn } = require('./session-auth');
 const { clearHumanVerification } = require('./human-verification');
+const { requireReadablePlanType } = require('./plan-registry');
 
 const PRICING_URL = 'https://chatgpt.com/#pricing';
 
@@ -45,6 +46,9 @@ const SKIP_REGION_BUTTON_TEXT = /^(Upgrade|Personal|Business|Free|Plus|Pro|Subsc
 
 const PLAN_UPGRADE_PATTERNS = {
     plus: [/升级至\s*Plus/i, /Upgrade to Plus/i, /Get Plus/i, /Subscribe to Plus/i, /^Upgrade$/i],
+    pro100: [/升级至\s*Pro/i, /Upgrade to Pro/i, /Get Pro/i, /^Upgrade$/i],
+    pro200: [/升级至\s*Pro/i, /Upgrade to Pro/i, /Get Pro/i, /^Upgrade$/i],
+    pro500: [/升级至\s*Pro/i, /Upgrade to Pro/i, /Get Pro/i, /^Upgrade$/i],
     pro_5x: [/升级至\s*Pro/i, /Upgrade to Pro/i, /Get Pro/i, /^Upgrade$/i],
     pro_20x: [/升级至\s*Pro/i, /Upgrade to Pro/i, /Get Pro/i, /^Upgrade$/i]
 };
@@ -633,8 +637,8 @@ async function selectPricingRegion(page, regionCode) {
  * 点击对应套餐的升级按钮
  */
 async function clickPlanUpgrade(page, planType) {
-    const plan = String(planType || 'plus').toLowerCase();
-    const patterns = PLAN_UPGRADE_PATTERNS[plan] || PLAN_UPGRADE_PATTERNS.plus;
+    const plan = requireReadablePlanType(planType, 'plan_type');
+    const patterns = PLAN_UPGRADE_PATTERNS[plan];
     console.log(`📦 [步骤] 正在点击升级按钮 (套餐: ${plan})...`);
 
     await assertChatGptLoggedIn(page, '升级前');

@@ -15,6 +15,9 @@ The admin frontend is server-rendered HTML with vanilla JavaScript in `public/ad
 - Pagination and refresh actions must call the same loader without reconstructing or dropping the current filters.
 - Empty results and request failures must render an in-table message and clear stale pagination controls.
 - Escape values before inserting record data into HTML; use bounded input attributes as a first line of UI validation while retaining server-side validation.
+- New-write selectors expose exactly Plus, Pro 100, Pro 200, and Pro 500. Read/filter views may additionally expose Pro 5x and Pro 20x with an explicit historical label.
+- Unknown values render as unknown/raw values and neutral styling; they must not use the Plus label or color.
+- Orbitcard strategy edits and Desolate mapping fields remain tier-specific. An empty Pro provider mapping must be shown as unconfigured rather than populated from Plus.
 
 Example:
 

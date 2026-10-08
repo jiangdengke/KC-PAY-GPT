@@ -16,7 +16,7 @@ The project uses `mysql2` through the helpers in `mysql-store.js`. Database-faci
    - `listOrbitcardUsage(limit, offset, filters) -> Promise<CardUsage[]>`
    - SQL reads from `orbitcard_card_usage` (`cu`) and uses `EXISTS` against `orbitcard_card_recharges` for recharge-history filters.
 3. **Contracts**:
-   - Request filters: `keyword` (trimmed, max 80 chars), `planType` (`plus`, `pro_5x`, `pro_20x`), `cardStatus` (`reusable`, `in_use`, `unassigned`, `retired`, `provider_deleted`, `cancelled`), and `rechargeStatus` (`success`, `processing`, `failed`).
+   - Request filters: `keyword` (trimmed, max 80 chars), `planType` (canonical `plus`, `pro100`, `pro200`, `pro500`; legacy read/filter compatibility for `pro_5x`, `pro_20x`), `cardStatus` (`reusable`, `in_use`, `unassigned`, `retired`, `provider_deleted`, `cancelled`), and `rechargeStatus` (`success`, `processing`, `failed`).
    - Pagination: `limit` is bounded to 1-500 in the store; the admin route bounds `page_size` to 1-100 and defaults to 20.
    - The API must return a count from the same normalized filters as the list query.
 4. **Validation & Error Matrix**:
@@ -43,6 +43,13 @@ The project uses `mysql2` through the helpers in `mysql-store.js`. Database-faci
    conditions.push('COALESCE(cu.product_code, \'\') LIKE ?');
    params.push(`%${normalized.keyword}%`);
    ```
+
+## Plan Tier Persistence Contract
+
+- Canonical values for all new writes are exactly `plus`, `pro100`, `pro200`, and `pro500`.
+- `pro_5x` and `pro_20x` remain valid only when reading, filtering, displaying, or continuing historical records; never rewrite them by guessing a canonical mapping.
+- Explicit unknown values must be rejected and must never silently become `plus`. A `plus` default is allowed only for a genuinely absent field from a historical row whose schema default predates the four-tier registry.
+- Keep `plan_type` columns as `VARCHAR`; existing widths already fit all canonical and legacy values.
 
 ## Migrations
 

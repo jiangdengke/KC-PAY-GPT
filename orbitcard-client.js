@@ -2,6 +2,14 @@
 
 const crypto = require('crypto');
 const axios = require('axios');
+const {
+    CANONICAL_PLAN_TYPES,
+    READABLE_PLAN_TYPES,
+    getOrbitcardPriceAliases,
+    getDefaultReuseLimit,
+    getDefaultSafetyMargin,
+    getPlanLabel
+} = require('./plan-registry');
 
 const DEFAULT_BASE_URL = 'https://orbitcard.cc';
 
@@ -101,25 +109,14 @@ async function getProductCode(cfg) {
     return request('/api/open/v1/getProductCode', cfg, {});
 }
 
-const PLAN_PRICE_ALIASES = Object.freeze({
-    plus: ['plus'],
-    pro_5x: ['pro_5x', 'pro5x', 'prolite', 'pro'],
-    pro_20x: ['pro_20x', 'pro20x', 'pro-20x']
-});
+const PLAN_REUSE_LIMITS = Object.freeze(Object.fromEntries(
+    READABLE_PLAN_TYPES.map((planType) => [
+        planType,
+        getDefaultReuseLimit(planType, { includeLegacy: true })
+    ])
+));
 
-const FALLBACK_CARD_AMOUNTS = Object.freeze({
-    plus: 20,
-    pro_5x: 100,
-    pro_20x: 150
-});
-
-const PLAN_REUSE_LIMITS = Object.freeze({
-    plus: 4,
-    pro_5x: 1,
-    pro_20x: 1
-});
-
-const SUPPORTED_PLAN_TYPES = Object.freeze(['plus', 'pro_5x', 'pro_20x']);
+const SUPPORTED_PLAN_TYPES = CANONICAL_PLAN_TYPES;
 
 const CHANNEL3_PRODUCT_PRIORITY = Object.freeze([
     { bin: '55565979', network: 'MASTERCARD', label: '渠道 3 Mastercard' },
@@ -134,12 +131,30 @@ const CHANNEL1_PRODUCT_PRIORITY = Object.freeze([
 const BLOCKED_CARD_BIN_PREFIXES = Object.freeze(['4002']);
 
 function getPlanReuseLimit(planType, reuseLimits = null) {
-    const key = String(planType || 'plus').trim();
+    const key = String(planType || '').trim().toLowerCase();
+    const fallback = PLAN_REUSE_LIMITS[key];
+    if (!Number.isInteger(fallback)) {
+        throw new Error(`Orbitcard 不支持套餐: ${String(planType || '空值')}`);
+    }
     const configured = reuseLimits && typeof reuseLimits === 'object'
         ? Number(reuseLimits[key])
         : NaN;
     if (Number.isInteger(configured) && configured >= 1 && configured <= 20) return configured;
-    return PLAN_REUSE_LIMITS[key] || PLAN_REUSE_LIMITS.plus;
+    return fallback;
+}
+
+function getPlanSafetyMargin(planType, safetyMargins = null) {
+    const key = String(planType || '').trim().toLowerCase();
+    const fallback = getDefaultSafetyMargin(key, { includeLegacy: true });
+    if (!Number.isFinite(fallback)) {
+        throw new Error(`Orbitcard 不支持套餐: ${String(planType || '空值')}`);
+    }
+    const configured = safetyMargins && typeof safetyMargins === 'object'
+        ? Number(safetyMargins[key])
+        : NaN;
+    return Number.isFinite(configured) && configured >= 0 && configured <= 100
+        ? configured
+        : fallback;
 }
 
 const CHANNEL_ALIASES = Object.freeze({
@@ -335,9 +350,11 @@ function normalizeProductList(data) {
 }
 
 function resolveProductPlanPrice(product, planType) {
-    const aliases = PLAN_PRICE_ALIASES[String(planType || 'plus').trim()] || PLAN_PRICE_ALIASES.plus;
+    const aliases = getOrbitcardPriceAliases(planType, { includeLegacy: true });
+    if (!aliases.length) return null;
     for (const alias of aliases) {
-        const match = product.prices.find((price) => price.id === alias);
+        const aliasKey = String(alias || '').trim().toLowerCase();
+        const match = product.prices.find((price) => String(price.id || '').trim().toLowerCase() === aliasKey);
         if (match) return match;
     }
     return null;
@@ -347,7 +364,8 @@ function getSelectableProductItems(data, planType = 'plus', options = {}) {
     return normalizeProductList(data)
         .filter((product) => !isBlockedCardProduct(product))
         .filter((product) => isProductAvailable(product, options))
-        .map((product) => ({ product, planPrice: resolveProductPlanPrice(product, planType) }));
+        .map((product) => ({ product, planPrice: resolveProductPlanPrice(product, planType) }))
+        .filter(({ planPrice }) => Boolean(planPrice));
 }
 
 function rankProductsForPlan(data, planType = 'plus') {
@@ -400,7 +418,10 @@ function rankProductsForPlan(data, planType = 'plus') {
     return products;
 }
 
-function buildProductSelection(product, planPrice, planType, reuseLimits = null) {
+function buildProductSelection(product, planPrice, planType, reuseLimits = null, safetyMargins = null) {
+    if (!planPrice || !Number.isFinite(Number(planPrice.price)) || Number(planPrice.price) <= 0) {
+        throw new Error(`${getPlanLabel(planType)} 缺少 Orbitcard 实时套餐价格`);
+    }
     const minimum = Number.isFinite(product.minInitialAmount) && product.minInitialAmount > 0
         ? product.minInitialAmount
         : 20;
@@ -408,10 +429,8 @@ function buildProductSelection(product, planPrice, planType, reuseLimits = null)
         ? product.minRetainedBalance
         : 0;
     const reuseLimit = getPlanReuseLimit(planType, reuseLimits);
-    const fallback = FALLBACK_CARD_AMOUNTS[String(planType || 'plus').trim()] || FALLBACK_CARD_AMOUNTS.plus;
-    const priceTarget = planPrice
-        ? planPrice.price * reuseLimit + retained + 1
-        : (reuseLimit > 1 ? fallback * reuseLimit : fallback);
+    const safetyMargin = getPlanSafetyMargin(planType, safetyMargins);
+    const priceTarget = Number(planPrice.price) * reuseLimit + retained + safetyMargin;
     const rawAmount = Math.max(minimum, priceTarget);
     const amount = (Math.ceil(rawAmount / 5) * 5).toFixed(2);
     const channel3Priority = getChannel3Priority(product);
@@ -429,22 +448,29 @@ function buildProductSelection(product, planPrice, planType, reuseLimits = null)
 function getProductSelectionsForPlan(data, planType = 'plus', options = {}) {
     const preferredProductCode = String(options?.preferredProductCode || '').trim().toLowerCase();
     const reuseLimits = options?.reuseLimits || null;
+    const safetyMargins = options?.safetyMargins || null;
     if (preferredProductCode) {
         const preferred = getSelectableProductItems(data, planType, {
             includeZeroInventoryProviderValidated: true
         }).find(({ product, planPrice }) => (
             product.productCode.toLowerCase() === preferredProductCode && Boolean(planPrice)
         ));
-        return preferred ? [buildProductSelection(preferred.product, preferred.planPrice, planType, reuseLimits)] : [];
+        return preferred ? [buildProductSelection(preferred.product, preferred.planPrice, planType, reuseLimits, safetyMargins)] : [];
     }
     return rankProductsForPlan(data, planType).map(({ product, planPrice }) => (
-        buildProductSelection(product, planPrice, planType, reuseLimits)
+        buildProductSelection(product, planPrice, planType, reuseLimits, safetyMargins)
     ));
 }
 
 function getProductOptionsForPlan(data, planType = 'plus', options = {}) {
     return getSelectableProductItems(data, planType, options)
-        .map(({ product, planPrice }) => buildProductSelection(product, planPrice, planType, options?.reuseLimits || null));
+        .map(({ product, planPrice }) => buildProductSelection(
+            product,
+            planPrice,
+            planType,
+            options?.reuseLimits || null,
+            options?.safetyMargins || null
+        ));
 }
 
 function buildProductStrategyCatalog(data, options = {}) {
@@ -823,11 +849,13 @@ module.exports = {
     getAccountBalance,
     getProductCode,
     PLAN_REUSE_LIMITS,
+    SUPPORTED_PLAN_TYPES,
     CHANNEL3_PRODUCT_PRIORITY,
     CHANNEL1_PRODUCT_PRIORITY,
     normalizeChannelIdentifier,
     getProductChannel,
     getPlanReuseLimit,
+    getPlanSafetyMargin,
     getChannel3Priority,
     getChannel1Priority,
     isBlockedCardProduct,

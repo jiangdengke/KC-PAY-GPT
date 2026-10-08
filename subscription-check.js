@@ -4,6 +4,7 @@ const axios = require('axios');
 const { request: playwrightRequest } = require('playwright');
 const { extractProfileFromToken } = require('./session-auth');
 const { preparePlaywrightProxy } = require('./playwright-proxy');
+const { normalizeCredentialPlan, getPlanLabel } = require('./plan-registry');
 
 const CHECK_V4_BASE = 'https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27';
 const CANCEL_SUBSCRIPTION_URL = 'https://chatgpt.com/backend-api/subscriptions/cancel';
@@ -13,7 +14,9 @@ const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 
 const PLAN_LABELS = {
     plus: 'ChatGPT Plus',
-    pro: 'ChatGPT Pro',
+    pro100: 'ChatGPT Pro 100',
+    pro200: 'ChatGPT Pro 200',
+    pro500: 'ChatGPT Pro 500',
     team: 'ChatGPT Team',
     free: '免费版',
     unknown: '未知'
@@ -31,23 +34,7 @@ const ORIGIN_LABELS = {
 };
 
 function normalizeSubscriptionPlan(subPlan, hasActive) {
-    const raw = String(subPlan || '').trim().toLowerCase();
-    if (!raw) {
-        return hasActive ? 'unknown' : 'free';
-    }
-    if (raw.includes('team')) {
-        return 'team';
-    }
-    if (raw.includes('pro') && !raw.includes('plus')) {
-        return 'pro';
-    }
-    if (raw.includes('plus')) {
-        return 'plus';
-    }
-    if (raw.includes('free')) {
-        return 'free';
-    }
-    return raw.slice(0, 40);
+    return normalizeCredentialPlan(subPlan, hasActive);
 }
 
 function formatPlanLabel(planKey, rawPlan) {
@@ -55,7 +42,7 @@ function formatPlanLabel(planKey, rawPlan) {
         return PLAN_LABELS[planKey];
     }
     if (rawPlan) {
-        return rawPlan;
+        return getPlanLabel(rawPlan, { full: true });
     }
     return PLAN_LABELS.unknown;
 }

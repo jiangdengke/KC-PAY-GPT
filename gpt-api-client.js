@@ -13,17 +13,15 @@
 
 const axios = require('axios');
 const orbitcard = require('./orbitcard-client');
+const {
+    CANONICAL_PLAN_TYPES,
+    getPlanLabel,
+    resolveDesolatePlanCode
+} = require('./plan-registry');
 
 const DEFAULT_BASE_URL = 'https://kc.vpss.eu.cc/';
 const DEFAULT_OPEN_BASE_URL = 'https://recharge.desolate.run/api/v1/open';
 const OPEN_PROVIDER_HOST = 'recharge.desolate.run';
-const OPEN_PLAN_ALIASES = Object.freeze({
-    plus: 'chatgptplusplan',
-    pro5x: 'chatgptprolite',
-    pro_5x: 'chatgptprolite',
-    pro20x: 'chatgptpro',
-    pro_20x: 'chatgptpro'
-});
 
 function normalizeBaseUrl(raw) {
     const url = String(raw || '').trim().replace(/\/+$/, '');
@@ -53,27 +51,31 @@ function resolveBaseUrl(cfg = {}) {
     return `${raw}/api/v1/open`;
 }
 
-function resolveOpenPlanCode(planKey) {
-    const value = String(planKey || '').trim();
-    return OPEN_PLAN_ALIASES[value.toLowerCase()] || value || OPEN_PLAN_ALIASES.plus;
+function normalizeOpenPlanMappingConfig(config = {}) {
+    if (config && typeof config === 'object') {
+        const nested = config.plan_mappings || config.desolate_plan_codes || config;
+        return Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [
+            planType,
+            String(nested?.[planType] ?? (planType === 'plus' ? config.plan_key : '') ?? '').trim()
+        ]));
+    }
+    const legacyPlus = String(config || '').trim();
+    return { plus: legacyPlus, pro100: '', pro200: '', pro500: '' };
 }
 
-function resolveOpenPlanMappings(planKey) {
-    const configured = String(planKey || '').trim();
-    const standardCodes = new Set([
-        'chatgptplusplan',
-        'chatgptprolite',
-        'chatgptpro',
-        ...Object.keys(OPEN_PLAN_ALIASES)
-    ]);
-    if (configured && !standardCodes.has(configured.toLowerCase())) {
-        return { plus: configured, pro_5x: configured, pro_20x: configured };
-    }
-    return {
-        plus: resolveOpenPlanCode('plus'),
-        pro_5x: resolveOpenPlanCode('pro_5x'),
-        pro_20x: resolveOpenPlanCode('pro_20x')
-    };
+function resolveOpenPlanCode(planType, config = {}) {
+    return resolveDesolatePlanCode(planType, normalizeOpenPlanMappingConfig(config));
+}
+
+function resolveOpenPlanMappings(config = {}) {
+    const mappings = normalizeOpenPlanMappingConfig(config);
+    return Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => {
+        try {
+            return [planType, resolveOpenPlanCode(planType, mappings)];
+        } catch (_) {
+            return [planType, null];
+        }
+    }));
 }
 
 function maskApiKey(key) {
@@ -127,6 +129,9 @@ async function request(method, path, cfg, { body, headers: extraHeaders, timeout
             headers: responseHeaders,
             retryAfterMs: Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
                 ? retryAfterSeconds * 1000
+                : null,
+            businessCode: openProtocol && Number.isInteger(Number(data?.code)) && Number(data.code) !== 0
+                ? Number(data.code)
                 : null,
             error: ok ? undefined : extractErrorDetail(data, response.status)
         };
@@ -211,7 +216,7 @@ async function fetchPlans(cfg) {
     if (isDesolateOpenProtocol(cfg)) {
         const account = await queryAccount(cfg);
         if (!account.success) return account;
-        const planMappings = resolveOpenPlanMappings(cfg.plan_key);
+        const planMappings = resolveOpenPlanMappings(cfg);
         return {
             success: true,
             status: account.status,
@@ -262,8 +267,12 @@ async function inspectPay(cfg, { planKey, session, sessionToken }) {
     const sessionBody = session && typeof session === 'object'
         ? session
         : (sessionToken ? { access_token: sessionToken } : {});
+    const normalizedPlanKey = String(planKey || '').trim();
+    if (!normalizedPlanKey) {
+        return { success: false, status: 400, error: '缺少 plan_key，禁止默认回退 Plus' };
+    }
     const body = {
-        plan_key: planKey || 'plus',
+        plan_key: normalizedPlanKey,
         session: sessionBody
     };
     const res = await request('POST', '/pay/inspect', cfg, { body, timeoutMs: 30000 });
@@ -302,17 +311,16 @@ async function submitPay(cfg, { planKey, session, sessionToken, country, currenc
             securityCode,
             session: checked.session
         };
-        const headers = {};
-        if (idempotencyKey && /^[0-9a-f-]{16,}$/i.test(String(idempotencyKey))) {
-            headers['X-Request-ID'] = String(idempotencyKey);
-        }
-        const res = await request('POST', '/orders', cfg, { body, headers, timeoutMs: 60000 });
+        const clientRequestId = String(idempotencyKey || clientRef || '').trim();
+        if (clientRequestId) body.clientRequestId = clientRequestId;
+        const res = await request('POST', '/orders', cfg, { body, timeoutMs: 60000 });
         if (!res.success) return res;
         const payload = unwrapOpenResponse(res.data) || {};
         const orderId = payload.orderId || null;
         return {
             success: true,
             status: res.status,
+            businessCode: res.businessCode,
             orderId,
             taskId: null,
             id: orderId,
@@ -597,9 +605,11 @@ async function testConnection(cfg) {
     if (isDesolateOpenProtocol(cfg)) {
         const account = await queryAccount(cfg);
         if (!account.success) return { success: false, error: `账户查询失败: ${account.error}` };
-        const planMappings = resolveOpenPlanMappings(cfg.plan_key);
+        const planMappings = resolveOpenPlanMappings(cfg);
         const points = account.data?.availablePoints;
-        const mappingText = `Plus=${planMappings.plus}、Pro 5x=${planMappings.pro_5x}、Pro 20x=${planMappings.pro_20x}`;
+        const mappingText = CANONICAL_PLAN_TYPES
+            .map((planType) => `${getPlanLabel(planType)}=${planMappings[planType] || '未配置'}`)
+            .join('、');
         return {
             success: true,
             message: `${cardSource.message}；API 连接成功（可用积分 ${points == null ? '—' : points}；套餐映射 ${mappingText}）`,
@@ -664,7 +674,7 @@ async function testCardSource(cfg = {}) {
     if (!result.success) return result;
     const planAmounts = {};
     const planProducts = {};
-    for (const planType of ['plus', 'pro_5x', 'pro_20x']) {
+    for (const planType of CANONICAL_PLAN_TYPES) {
         const selection = orbitcard.chooseProductForPlan(result.products, planType);
         planAmounts[planType] = selection.success ? selection.amount : null;
         planProducts[planType] = selection.success
@@ -688,7 +698,7 @@ async function testCardSource(cfg = {}) {
             planAmounts,
             planProducts
         },
-        message: `${result.message}；渠道 3 Mastercard 优先，Visa 为备选；首充建议 Plus ${planAmounts.plus || '—'} USD（最多 4 次）、Pro 5x ${planAmounts.pro_5x || '—'} USD、Pro 20x ${planAmounts.pro_20x || '—'} USD`,
+        message: `${result.message}；渠道 3 Mastercard 优先，Visa 为备选；首充建议 ${CANONICAL_PLAN_TYPES.map((planType) => `${getPlanLabel(planType)} ${planAmounts[planType] || '—'} USD`).join('、')}`,
         cards: result.cards
     };
 }
@@ -719,6 +729,7 @@ module.exports = {
     resolveBaseUrl,
     resolveOpenPlanCode,
     resolveOpenPlanMappings,
+    normalizeOpenPlanMappingConfig,
     queryAccount,
     validateOpenSession
 };

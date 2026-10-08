@@ -317,11 +317,16 @@
                     <p id="gpt_api_key_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
                 </div>
                 <div class="form-group" style="margin-top: 16px;">
-                    <label>套餐代码（可选覆盖）</label>
-                    <input type="text" id="gpt_api_plan_key" class="asset-input" placeholder="chatgptplusplan" autocomplete="off">
+                    <label>Desolate 套餐代码映射</label>
                     <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
-                        留空或使用标准代码时按 CDK 类型选择 chatgptplusplan / chatgptprolite / chatgptpro；只有填入自定义代码时才统一覆盖。
+                        Plus 使用公开文档定义的 chatgptplusplan；Pro 100 / 200 / 500 仅接受运营方提供的明确代码，留空时该档提交会清晰报错，不会降级到 Plus。
                     </p>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-top:8px;">
+                        <input type="text" id="gpt_api_plan_key" class="asset-input" placeholder="Plus: chatgptplusplan" autocomplete="off">
+                        <input type="text" id="gpt_api_plan_key_pro100" class="asset-input" placeholder="Pro 100: 未配置" autocomplete="off">
+                        <input type="text" id="gpt_api_plan_key_pro200" class="asset-input" placeholder="Pro 200: 未配置" autocomplete="off">
+                        <input type="text" id="gpt_api_plan_key_pro500" class="asset-input" placeholder="Pro 500: 未配置" autocomplete="off">
+                    </div>
                 </div>
                 <div class="form-group" style="margin-top: 16px;">
                     <label for="gpt_api_card_source">代充卡源</label>
@@ -975,8 +980,9 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                         <label style="margin-bottom: 6px;">套餐类型</label>
                         <select id="checkout_plan_type" class="asset-input" onchange="syncCheckoutPlanName()">
                             <option value="plus">Plus — chatgptplusplan</option>
-                            <option value="pro_5x">Pro 5x — chatgptprolite</option>
-                            <option value="pro_20x">Pro 20x — chatgptpro</option>
+                            <option value="pro100">Pro 100 — 需配置 plan_name</option>
+                            <option value="pro200">Pro 200 — 需配置 plan_name</option>
+                            <option value="pro500">Pro 500 — 需配置 plan_name</option>
                         </select>
                     </div>
                     <div class="form-group" style="margin-bottom: 0;">
@@ -1124,8 +1130,11 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     <select id="orbitcard_usage_plan" class="asset-input" aria-label="按套餐筛选">
                         <option value="">全部套餐</option>
                         <option value="plus">Plus</option>
-                        <option value="pro_5x">Pro 5x</option>
-                        <option value="pro_20x">Pro 20x</option>
+                        <option value="pro100">Pro 100</option>
+                        <option value="pro200">Pro 200</option>
+                        <option value="pro500">Pro 500</option>
+                        <option value="pro_5x">Pro 5x（历史）</option>
+                        <option value="pro_20x">Pro 20x（历史）</option>
                     </select>
                     <select id="orbitcard_usage_card_status" class="asset-input" aria-label="按卡片状态筛选">
                         <option value="">全部卡片状态</option>
@@ -1200,12 +1209,19 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px;">
                         <label style="font-size:13px; color:var(--text-secondary);">ChatGPT Plus
                             <input id="orbitcard_reuse_limit_plus" class="asset-input" type="number" min="1" max="20" step="1" value="4" style="margin-top:6px;">
+                            <input id="orbitcard_safety_margin_plus" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
                         </label>
-                        <label style="font-size:13px; color:var(--text-secondary);">Pro 5x
-                            <input id="orbitcard_reuse_limit_pro_5x" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
+                        <label style="font-size:13px; color:var(--text-secondary);">Pro 100
+                            <input id="orbitcard_reuse_limit_pro100" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
+                            <input id="orbitcard_safety_margin_pro100" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
                         </label>
-                        <label style="font-size:13px; color:var(--text-secondary);">Pro 20x
-                            <input id="orbitcard_reuse_limit_pro_20x" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
+                        <label style="font-size:13px; color:var(--text-secondary);">Pro 200
+                            <input id="orbitcard_reuse_limit_pro200" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
+                            <input id="orbitcard_safety_margin_pro200" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
+                        </label>
+                        <label style="font-size:13px; color:var(--text-secondary);">Pro 500
+                            <input id="orbitcard_reuse_limit_pro500" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
+                            <input id="orbitcard_safety_margin_pro500" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
                         </label>
                     </div>
                 </div>
@@ -1259,8 +1275,9 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                             style="width: 220px;" oninput="handleCdkSearch(this.value)">
                         <select id="cdk_plan_type" class="asset-input" style="width: 130px;">
                             <option value="plus" selected>Plus</option>
-                            <option value="pro_5x">Pro 5x</option>
-                            <option value="pro_20x">Pro 20x</option>
+                            <option value="pro100">Pro 100</option>
+                            <option value="pro200">Pro 200</option>
+                            <option value="pro500">Pro 500</option>
                         </select>
                         <input type="number" id="cdk_count" value="1" min="1" max="100" class="asset-input"
                             style="width: 80px;">
@@ -1305,8 +1322,11 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                         <div id="filter_menu_cdk_plan_type_filter" class="filter-menu">
                             <button class="filter-option active" onclick="selectCdkPlanTypeFilter('all', '全部套餐')">全部套餐</button>
                             <button class="filter-option" onclick="selectCdkPlanTypeFilter('plus', 'Plus')">Plus</button>
-                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro_5x', 'Pro 5x')">Pro 5x</button>
-                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro_20x', 'Pro 20x')">Pro 20x</button>
+                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro100', 'Pro 100')">Pro 100</button>
+                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro200', 'Pro 200')">Pro 200</button>
+                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro500', 'Pro 500')">Pro 500</button>
+                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro_5x', 'Pro 5x（历史）')">Pro 5x（历史）</button>
+                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro_20x', 'Pro 20x（历史）')">Pro 20x（历史）</button>
                         </div>
                     </div>
                     <button class="btn btn-success" onclick="togglePageSelection('cdk')">
@@ -1541,8 +1561,11 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                         <select id="billing_plan_type" class="asset-input">
                             <option value="">全部</option>
                             <option value="plus">Plus</option>
-                            <option value="pro_5x">Pro 5x</option>
-                            <option value="pro_20x">Pro 20x</option>
+                            <option value="pro100">Pro 100</option>
+                            <option value="pro200">Pro 200</option>
+                            <option value="pro500">Pro 500</option>
+                            <option value="pro_5x">Pro 5x（历史）</option>
+                            <option value="pro_20x">Pro 20x（历史）</option>
                         </select>
                     </div>
                     <div class="form-group" style="margin-bottom:0;">

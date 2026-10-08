@@ -14,6 +14,7 @@ const store = require('./mysql-store');
 const { completeStripeCardPayment, readCheckoutDueAmount, estimateTaxFreeAmount } = require('./stripe-payment');
 const { pickBillingAddressForCheckout, markAddressBound } = require('./tax-free-address');
 const { getRegionConfig } = require('./region-config');
+const { requireReadablePlanType } = require('./plan-registry');
 
 const MAX_CARD_ATTEMPTS = Number(process.env.PAYMENT_MAX_CARD_ATTEMPTS) || 3;
 const MAX_AUTOMATION_ATTEMPTS = MAX_CARD_ATTEMPTS;
@@ -64,7 +65,8 @@ async function resolveBilledAmountForRecord(page, paymentResult, preTaxAmount, c
  * @returns {Promise<{ success: boolean, error?: string, cardLast4?: string, manualIntervention?: boolean, screenshots?: string[] }>}
  */
 async function executePaymentWithRetry(page, options) {
-    const { planType, cdkCode, email, onProgress, stripeSessionId } = options || {};
+    const { planType: requestedPlanType, cdkCode, email, onProgress, stripeSessionId } = options || {};
+    const planType = requireReadablePlanType(requestedPlanType, 'plan_type');
 
     const progress = (msg) => {
         console.log(`[PaymentRetry] ${msg}`);
@@ -121,7 +123,7 @@ async function executePaymentWithRetry(page, options) {
                     card_last4: '----',
                     amount: billedAmount,
                     currency: billedCurrency,
-                    plan_type: planType || 'plus',
+                    plan_type: planType,
                     cdk_code: cdkCode,
                     email,
                     stripe_session_id: stripeSessionId || null,
@@ -180,7 +182,7 @@ async function executePaymentWithRetry(page, options) {
                     card_last4: cardLast4,
                     amount: billedAmount,
                     currency: billedCurrency,
-                    plan_type: planType || 'plus',
+                    plan_type: planType,
                     cdk_code: cdkCode,
                     email,
                     stripe_session_id: stripeSessionId || null,
@@ -207,7 +209,7 @@ async function executePaymentWithRetry(page, options) {
                     card_last4: cardLast4,
                     amount: billedAmount,
                     currency: billedCurrency,
-                    plan_type: planType || 'plus',
+                    plan_type: planType,
                     cdk_code: cdkCode,
                     email,
                     stripe_session_id: stripeSessionId || null,
@@ -247,7 +249,7 @@ async function executePaymentWithRetry(page, options) {
                 card_last4: cardLast4,
                 amount: billedAmount,
                 currency: billedCurrency,
-                plan_type: planType || 'plus',
+                plan_type: planType,
                 cdk_code: cdkCode,
                 email,
                 stripe_session_id: stripeSessionId || null,

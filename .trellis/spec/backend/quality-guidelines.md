@@ -42,7 +42,7 @@ Apply this contract when changing `getProductCode`, product normalization, `/api
 - `normalizeProductList(data) -> NormalizedProduct[]`
 - `getProductSelectionsForPlan(data, planType, options) -> ProductSelection[]`
 - `buildProductStrategyCatalog(data, options) -> { products, automatic }`
-- `GET /api/admin/orbitcard/products -> { products, automatic, selected_product_code, reuse_limits }`
+- `GET /api/admin/orbitcard/products -> { products, automatic, selected_product_code, reuse_limits, safety_margins }`
 - `POST /api/admin/orbitcard/product-strategy` validates a selected `product_code` through `getProductSelectionsForPlan(..., { preferredProductCode })` before saving it.
 
 #### 3. Contracts
@@ -53,6 +53,9 @@ Apply this contract when changing `getProductCode`, product normalization, `/api
 - `buildProductStrategyCatalog.products` contains all available, non-4002 products with valid plan data for at least one supported plan. `channel` is additive and is used by the admin UI label.
 - Automatic selection without `preferredProductCode` keeps the existing channel 3 and channel 1 priority order. Explicit channel metadata prevents a product from another channel from matching those priority rules.
 - Manual selection may choose any displayed, available product with a valid price for the requested plan; the create-card request continues to use its saved `product_code`.
+- Supported automatic/catalog tiers are exactly `plus`, `pro100`, `pro200`, and `pro500`. Orbitcard price IDs are matched case-insensitively through explicit registry aliases; unknown plan IDs do not fall back to Plus.
+- Opening amount is `max(min_initial_amount, plan_price × reuse_limit + min_retained_balance + safety_margin)`, rounded up to the next USD 5 increment. Missing or invalid live plan prices make the product unavailable for that tier.
+- `pro_5x` and `pro_20x` aliases remain available only for historical execution/read compatibility; new strategy configuration and card-plan assignment use canonical tiers.
 
 #### 4. Validation & Error Matrix
 
@@ -95,6 +98,14 @@ const manual = getProductSelectionsForPlan(data, planType, {
     preferredProductCode: selectedCode
 });
 ```
+
+## Four-Tier Provider Contract
+
+- `plan-registry.js` is the canonical source for tier enums, labels, credential aliases, Checkout mappings, Desolate mappings, Orbitcard aliases, reuse limits, and safety margins.
+- Subscription Credential parsing preserves exact `plus`, `pro100`, `pro200`, and `pro500` states; unknown active values remain visible as unknown/raw values rather than becoming Plus.
+- Desolate Open has a documented default only for Plus (`chatgptplusplan`). Pro codes must be supplied explicitly by operator configuration until documented; missing mappings and provider unsupported-plan errors are surfaced clearly.
+- Desolate order creation uses the body field `clientRequestId` for the local idempotency key. Do not substitute undocumented `X-Request-ID` or silently resubmit a provider duplicate (`40005`) as a new order.
+- New CDK creation/import and new card-plan assignment accept only canonical tiers. Historical task execution, display, notification, billing filter, and CDK lookup remain readable for `pro_5x` and `pro_20x`.
 
 ## Testing Requirements
 

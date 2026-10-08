@@ -24,6 +24,17 @@ const DEFAULT_ADMIN_SECONDARY_PASSWORD = String(process.env.ADMIN_SECONDARY_PASS
 const DEFAULT_ADMIN_LOGIN_PATH = String(process.env.ADMIN_LOGIN_PATH || 'admin-login').trim().toLowerCase();
 const DEFAULT_ADMIN_PANEL_PATH = String(process.env.ADMIN_PANEL_PATH || 'admin').trim().toLowerCase();
 const { normalizeAdminPaths } = require('./admin-paths');
+const {
+    CANONICAL_PLAN_TYPES,
+    READABLE_PLAN_TYPES,
+    isReadablePlanType,
+    requireCanonicalPlanType,
+    requireReadablePlanType,
+    resolveCheckoutPlanName,
+    getDefaultReuseLimit,
+    getDefaultSafetyMargin,
+    PLAN_NAME_MAP
+} = require('./plan-registry');
 
 const DEFAULT_GPT_API_BASE_URL = 'https://recharge.desolate.run/api/v1/open';
 const DEFAULT_GPT_API_PLAN_KEY = 'chatgptplusplan';
@@ -57,22 +68,11 @@ function getPool() {
 // 资产占用最长保留时间（ms），超过这个时长仍未释放视为崩溃，自动回收
 const ASSET_LOCK_STALE_MS = Number(process.env.ASSET_LOCK_STALE_MS || 15 * 60 * 1000);
 
-// CDK 套餐类型 → OpenAI plan_name 映射（custom checkout API）
-const PLAN_NAME_MAP = {
-    plus: 'chatgptplusplan',
-    pro_5x: 'chatgptprolite',
-    pro_20x: 'chatgptpro'
-};
-
-const VALID_PLAN_TYPES = new Set(Object.keys(PLAN_NAME_MAP));
-
 /**
- * 将 plan_type 解析为 OpenAI plan_name
- * @param {string} planType - 'plus' | 'pro_5x' | 'pro_20x'
- * @returns {string} 对应的 plan_name，未知值默认返回 'chatgptplusplan'
+ * 将 plan_type 解析为 OpenAI plan_name。未知或未配置套餐直接报错，禁止降级为 Plus。
  */
-function resolvePlanName(planType) {
-    return PLAN_NAME_MAP[planType] || PLAN_NAME_MAP.plus;
+function resolvePlanName(planType, overrides = {}) {
+    return resolveCheckoutPlanName(planType, overrides);
 }
 
 function createPasswordHash(password) {
@@ -284,6 +284,10 @@ const GPT_API_CONFIG_KEYS = [
     'gpt_api_base_url',
     'gpt_api_key',
     'gpt_api_plan_key',
+    'gpt_api_plan_key_plus',
+    'gpt_api_plan_key_pro100',
+    'gpt_api_plan_key_pro200',
+    'gpt_api_plan_key_pro500',
     'gpt_api_country',
     'gpt_api_currency',
     'gpt_api_card_source',
@@ -293,19 +297,30 @@ const GPT_API_CONFIG_KEYS = [
     'orbitcard_api_key',
     'orbitcard_api_secret',
     'orbitcard_reuse_limit_plus',
-    'orbitcard_reuse_limit_pro_5x',
-    'orbitcard_reuse_limit_pro_20x'
+    'orbitcard_reuse_limit_pro100',
+    'orbitcard_reuse_limit_pro200',
+    'orbitcard_reuse_limit_pro500',
+    'orbitcard_safety_margin_plus',
+    'orbitcard_safety_margin_pro100',
+    'orbitcard_safety_margin_pro200',
+    'orbitcard_safety_margin_pro500'
 ];
 
-const DEFAULT_ORBITCARD_REUSE_LIMITS = Object.freeze({
-    plus: 4,
-    pro_5x: 1,
-    pro_20x: 1
-});
+const DEFAULT_ORBITCARD_REUSE_LIMITS = Object.freeze(Object.fromEntries(
+    CANONICAL_PLAN_TYPES.map((planType) => [planType, getDefaultReuseLimit(planType)])
+));
+const DEFAULT_ORBITCARD_SAFETY_MARGINS = Object.freeze(Object.fromEntries(
+    CANONICAL_PLAN_TYPES.map((planType) => [planType, getDefaultSafetyMargin(planType)])
+));
 
 function parseOrbitcardReuseLimit(value, fallback) {
     const parsed = Number(value);
     return Number.isInteger(parsed) && parsed >= 1 && parsed <= 20 ? parsed : fallback;
+}
+
+function parseOrbitcardSafetyMargin(value, fallback) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : fallback;
 }
 
 async function ensureGptApiColumns() {
@@ -410,6 +425,10 @@ async function ensureGptApiConfigDefaults() {
         ['gpt_api_base_url', DEFAULT_GPT_API_BASE_URL],
         ['gpt_api_key', ''],
         ['gpt_api_plan_key', DEFAULT_GPT_API_PLAN_KEY],
+        ['gpt_api_plan_key_plus', DEFAULT_GPT_API_PLAN_KEY],
+        ['gpt_api_plan_key_pro100', ''],
+        ['gpt_api_plan_key_pro200', ''],
+        ['gpt_api_plan_key_pro500', ''],
         ['gpt_api_country', 'PH'],
         ['gpt_api_currency', 'PHP'],
         ['gpt_api_card_source', 'local'],
@@ -418,9 +437,10 @@ async function ensureGptApiConfigDefaults() {
         ['orbitcard_base_url', 'https://orbitcard.cc'],
         ['orbitcard_api_key', ''],
         ['orbitcard_api_secret', ''],
-        ['orbitcard_reuse_limit_plus', String(DEFAULT_ORBITCARD_REUSE_LIMITS.plus)],
-        ['orbitcard_reuse_limit_pro_5x', String(DEFAULT_ORBITCARD_REUSE_LIMITS.pro_5x)],
-        ['orbitcard_reuse_limit_pro_20x', String(DEFAULT_ORBITCARD_REUSE_LIMITS.pro_20x)]
+        ...CANONICAL_PLAN_TYPES.flatMap((planType) => ([
+            [`orbitcard_reuse_limit_${planType}`, String(DEFAULT_ORBITCARD_REUSE_LIMITS[planType])],
+            [`orbitcard_safety_margin_${planType}`, String(DEFAULT_ORBITCARD_SAFETY_MARGINS[planType])]
+        ]))
     ];
     for (const [key, value] of defaults) {
         await runExecute(
@@ -440,12 +460,31 @@ async function getGptApiConfig() {
         GPT_API_CONFIG_KEYS
     );
     const map = Object.fromEntries(rows.map((row) => [row.config_key, row.config_value]));
+    const legacyPlusPlanKey = String(map.gpt_api_plan_key || DEFAULT_GPT_API_PLAN_KEY).trim() || DEFAULT_GPT_API_PLAN_KEY;
+    const planMappings = Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [
+        planType,
+        String(map[`gpt_api_plan_key_${planType}`] || (planType === 'plus' ? legacyPlusPlanKey : '')).trim()
+    ]));
+    const reuseLimits = Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [
+        planType,
+        parseOrbitcardReuseLimit(
+            map[`orbitcard_reuse_limit_${planType}`],
+            DEFAULT_ORBITCARD_REUSE_LIMITS[planType]
+        )
+    ]));
+    const safetyMargins = Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [
+        planType,
+        parseOrbitcardSafetyMargin(
+            map[`orbitcard_safety_margin_${planType}`],
+            DEFAULT_ORBITCARD_SAFETY_MARGINS[planType]
+        )
+    ]));
     return {
         enabled: String(map.gpt_api_enabled || '0') === '1',
-        base_url: String(map.gpt_api_base_url || DEFAULT_GPT_API_BASE_URL).trim()
-            || DEFAULT_GPT_API_BASE_URL,
+        base_url: String(map.gpt_api_base_url || DEFAULT_GPT_API_BASE_URL).trim() || DEFAULT_GPT_API_BASE_URL,
         api_key: String(map.gpt_api_key || '').trim(),
-        plan_key: String(map.gpt_api_plan_key || DEFAULT_GPT_API_PLAN_KEY).trim() || DEFAULT_GPT_API_PLAN_KEY,
+        plan_key: planMappings.plus,
+        plan_mappings: planMappings,
         country: String(map.gpt_api_country || 'PH').trim().toUpperCase() || 'PH',
         currency: String(map.gpt_api_currency || 'PHP').trim().toUpperCase() || 'PHP',
         card_source: String(map.gpt_api_card_source || 'local').trim().toLowerCase() === 'orbitcard' ? 'orbitcard' : 'local',
@@ -453,11 +492,8 @@ async function getGptApiConfig() {
         orbitcard_base_url: String(map.orbitcard_base_url || 'https://orbitcard.cc').trim().replace(/\/+$/, '') || 'https://orbitcard.cc',
         orbitcard_api_key: String(map.orbitcard_api_key || '').trim(),
         orbitcard_api_secret: String(map.orbitcard_api_secret || ORBITCARD_API_SECRET || '').trim(),
-        orbitcard_reuse_limits: {
-            plus: parseOrbitcardReuseLimit(map.orbitcard_reuse_limit_plus, DEFAULT_ORBITCARD_REUSE_LIMITS.plus),
-            pro_5x: parseOrbitcardReuseLimit(map.orbitcard_reuse_limit_pro_5x, DEFAULT_ORBITCARD_REUSE_LIMITS.pro_5x),
-            pro_20x: parseOrbitcardReuseLimit(map.orbitcard_reuse_limit_pro_20x, DEFAULT_ORBITCARD_REUSE_LIMITS.pro_20x)
-        }
+        orbitcard_reuse_limits: reuseLimits,
+        orbitcard_safety_margins: safetyMargins
     };
 }
 
@@ -468,25 +504,48 @@ async function saveGptApiConfig(config = {}) {
         ? String(config.orbitcard_product_code || '').trim()
         : existing.orbitcard_product_code;
     const orbitcardApiSecret = String(config.orbitcard_api_secret || '').trim() || existing.orbitcard_api_secret || '';
+    const requestedMappings = config.plan_mappings && typeof config.plan_mappings === 'object' ? config.plan_mappings : {};
+    const planMappings = Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [
+        planType,
+        String(requestedMappings[planType] ?? (planType === 'plus' ? config.plan_key : undefined)
+            ?? existing.plan_mappings?.[planType] ?? '').trim()
+    ]));
+    if (!planMappings.plus) planMappings.plus = DEFAULT_GPT_API_PLAN_KEY;
+    const requestedReuseLimits = config.orbitcard_reuse_limits && typeof config.orbitcard_reuse_limits === 'object'
+        ? config.orbitcard_reuse_limits
+        : {};
+    const requestedSafetyMargins = config.orbitcard_safety_margins && typeof config.orbitcard_safety_margins === 'object'
+        ? config.orbitcard_safety_margins
+        : {};
+    const entries = [
+        ['gpt_api_enabled', config.enabled ? '1' : '0'],
+        ['gpt_api_base_url', String(config.base_url || existing.base_url || DEFAULT_GPT_API_BASE_URL).trim().replace(/\/+$/, '') || DEFAULT_GPT_API_BASE_URL],
+        ['gpt_api_key', apiKey],
+        ['gpt_api_plan_key', planMappings.plus],
+        ...CANONICAL_PLAN_TYPES.map((planType) => [`gpt_api_plan_key_${planType}`, planMappings[planType]]),
+        ['gpt_api_country', String(config.country || existing.country || 'PH').trim().toUpperCase() || 'PH'],
+        ['gpt_api_currency', String(config.currency || existing.currency || 'PHP').trim().toUpperCase() || 'PHP'],
+        ['gpt_api_card_source', String(config.card_source || existing.card_source || 'local').trim().toLowerCase() === 'orbitcard' ? 'orbitcard' : 'local'],
+        ['orbitcard_product_code', productCode],
+        ['orbitcard_next_product_code', ''],
+        ['orbitcard_base_url', String(config.orbitcard_base_url || existing.orbitcard_base_url || 'https://orbitcard.cc').trim().replace(/\/+$/, '') || 'https://orbitcard.cc'],
+        ['orbitcard_api_key', String(config.orbitcard_api_key || existing.orbitcard_api_key || '').trim()],
+        ['orbitcard_api_secret', orbitcardApiSecret],
+        ...CANONICAL_PLAN_TYPES.flatMap((planType) => ([
+            [`orbitcard_reuse_limit_${planType}`, String(parseOrbitcardReuseLimit(
+                requestedReuseLimits[planType],
+                existing.orbitcard_reuse_limits?.[planType] ?? DEFAULT_ORBITCARD_REUSE_LIMITS[planType]
+            ))],
+            [`orbitcard_safety_margin_${planType}`, String(parseOrbitcardSafetyMargin(
+                requestedSafetyMargins[planType],
+                existing.orbitcard_safety_margins?.[planType] ?? DEFAULT_ORBITCARD_SAFETY_MARGINS[planType]
+            ))]
+        ]))
+    ];
     await runExecute(
-        `INSERT INTO app_config (config_key, config_value)
-         VALUES (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)
+        `INSERT INTO app_config (config_key, config_value) VALUES ${entries.map(() => '(?, ?)').join(', ')}
          ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)`,
-        [
-            'gpt_api_enabled', config.enabled ? '1' : '0',
-            'gpt_api_base_url', String(config.base_url || existing.base_url || DEFAULT_GPT_API_BASE_URL).trim()
-                .replace(/\/+$/, '') || DEFAULT_GPT_API_BASE_URL,
-            'gpt_api_key', apiKey,
-            'gpt_api_plan_key', String(config.plan_key || existing.plan_key || DEFAULT_GPT_API_PLAN_KEY).trim() || DEFAULT_GPT_API_PLAN_KEY,
-            'gpt_api_country', String(config.country || existing.country || 'PH').trim().toUpperCase() || 'PH',
-            'gpt_api_currency', String(config.currency || existing.currency || 'PHP').trim().toUpperCase() || 'PHP',
-            'gpt_api_card_source', String(config.card_source || existing.card_source || 'local').trim().toLowerCase() === 'orbitcard' ? 'orbitcard' : 'local',
-            'orbitcard_product_code', productCode,
-            'orbitcard_next_product_code', '',
-            'orbitcard_base_url', String(config.orbitcard_base_url || existing.orbitcard_base_url || 'https://orbitcard.cc').trim().replace(/\/+$/, '') || 'https://orbitcard.cc',
-            'orbitcard_api_key', String(config.orbitcard_api_key || existing.orbitcard_api_key || '').trim(),
-            'orbitcard_api_secret', orbitcardApiSecret
-        ]
+        entries.flat()
     );
 }
 
@@ -1451,7 +1510,7 @@ async function insertCdks(cdks, options = {}) {
     }
 
     const type = options.type || '自助';
-    const planType = VALID_PLAN_TYPES.has(options.plan_type) ? options.plan_type : 'plus';
+    const planType = requireCanonicalPlanType(options.plan_type, 'plan_type');
     const values = normalized.map((cdk) => [cdk, 1, type, planType]);
     console.log(`正在插入 ${values.length} 个 CDK, 类型: ${type}, 套餐: ${planType}`);
 
@@ -1596,7 +1655,7 @@ async function createActivationManualHold({ accountKey, accountEmail, planType, 
     if (!code) {
         return null;
     }
-    const type = String(planType || 'plus').trim() || 'plus';
+    const type = requireReadablePlanType(planType || 'plus', 'plan_type');
     const existing = await getActivationManualHold(code);
     if (existing) {
         return existing;
@@ -3385,7 +3444,8 @@ async function reserveCard(ownerKey) {
  * Sensitive card data is never persisted in this table.
  */
 async function reserveOrbitcardCard(cards, ownerKey, options = {}) {
-    const planType = String(options.planType || '').trim() || null;
+    const rawPlanType = String(options.planType || '').trim();
+    const planType = rawPlanType ? requireReadablePlanType(rawPlanType, 'plan_type') : null;
     const maxUsageCount = Math.max(1, Number(options.maxUsageCount) || 1);
     const initialAmount = Number.isFinite(Number(options.initialAmount)) ? Number(options.initialAmount) : null;
     const persistMetadata = options.persistMetadata === true;
@@ -3487,7 +3547,12 @@ async function restoreOrbitcardCard(cardId) {
 
 async function assignOrbitcardCardPlan(cardId, planType, maxUsageCount) {
     const id = Number(cardId);
-    const normalizedPlanType = String(planType || '').trim();
+    let normalizedPlanType;
+    try {
+        normalizedPlanType = requireCanonicalPlanType(planType, 'plan_type');
+    } catch (_) {
+        return { success: false, reason: 'invalid_plan' };
+    }
     const usageLimit = Math.max(1, Number(maxUsageCount) || 1);
     if (!Number.isInteger(id) || id <= 0 || !normalizedPlanType) {
         return { success: false, reason: 'invalid' };
@@ -3532,6 +3597,7 @@ async function createOrbitcardRecharge({
     const id = Number(cardId);
     const key = String(jobKey || '').trim();
     if (!Number.isInteger(id) || id <= 0 || !key) return false;
+    const normalizedPlanType = requireReadablePlanType(planType || 'plus', 'plan_type');
     await runExecute(
         `INSERT INTO orbitcard_card_recharges
             (card_id, job_key, plan_type, card_last4, account_email, use_number, max_usage_count, initial_amount, status)
@@ -3542,7 +3608,7 @@ async function createOrbitcardRecharge({
         [
             id,
             key,
-            String(planType || 'plus').trim() || 'plus',
+            normalizedPlanType,
             String(cardLast4 || '').replace(/\D/g, '').slice(-4),
             String(accountEmail || '').trim().slice(0, 255),
             Math.max(1, Number(useNumber) || 1),
@@ -3587,7 +3653,7 @@ function normalizeOrbitcardUsageFilters(filters = {}) {
     const rechargeStatus = String(filters.rechargeStatus || filters.recharge_status || '').trim().toLowerCase();
     return {
         keyword,
-        planType: ['plus', 'pro_5x', 'pro_20x'].includes(planType) ? planType : '',
+        planType: READABLE_PLAN_TYPES.includes(planType) ? planType : '',
         cardStatus: ORBITCARD_USAGE_CARD_STATUSES.has(cardStatus) ? cardStatus : '',
         rechargeStatus: ORBITCARD_USAGE_RECHARGE_STATUSES.has(rechargeStatus) ? rechargeStatus : ''
     };
@@ -4194,6 +4260,7 @@ async function setPaymentRegion(regionCode) {
  * @returns {Promise<number>} 插入记录的 ID
  */
 async function createBillingRecord(data) {
+    const planType = requireReadablePlanType(data.plan_type || 'plus', 'plan_type');
     const result = await runExecute(
         `INSERT INTO billing_records
             (payment_time, card_number, card_last4, amount, currency, plan_type, stripe_session_id, cdk_code, email, status, error_code, error_message)
@@ -4204,7 +4271,7 @@ async function createBillingRecord(data) {
             String(data.card_last4 || ''),
             Number(data.amount || 0),
             String(data.currency || 'USD'),
-            String(data.plan_type || 'plus'),
+            planType,
             data.stripe_session_id || null,
             data.cdk_code || null,
             data.email || null,
@@ -4243,8 +4310,11 @@ async function listBillingRecords(filters = {}, page = 1, pageSize = 20) {
         params.push(String(filters.cardLast4));
     }
     if (filters.planType) {
-        conditions.push('plan_type = ?');
-        params.push(String(filters.planType));
+        const normalizedPlanType = String(filters.planType).trim().toLowerCase();
+        if (isReadablePlanType(normalizedPlanType)) {
+            conditions.push('plan_type = ?');
+            params.push(normalizedPlanType);
+        }
     }
     if (filters.status) {
         conditions.push('status = ?');
@@ -4294,8 +4364,11 @@ async function exportBillingRecordsCSV(filters = {}) {
         params.push(String(filters.cardLast4));
     }
     if (filters.planType) {
-        conditions.push('plan_type = ?');
-        params.push(String(filters.planType));
+        const normalizedPlanType = String(filters.planType).trim().toLowerCase();
+        if (isReadablePlanType(normalizedPlanType)) {
+            conditions.push('plan_type = ?');
+            params.push(normalizedPlanType);
+        }
     }
     if (filters.status) {
         conditions.push('status = ?');

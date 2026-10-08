@@ -23,6 +23,12 @@ const { buildWorkerRuntimeEnv } = require('./browser-runtime');
 const { querySubscriptionBySession, validateSessionTokenForQuery, cancelAutoRenew, resumeAutoRenew } = require('./subscription-check');
 const gptApi = require('./gpt-api-client');
 const orbitcard = require('./orbitcard-client');
+const {
+    CANONICAL_PLAN_TYPES,
+    requireCanonicalPlanType,
+    requireReadablePlanType,
+    getPlanLabel
+} = require('./plan-registry');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -2538,6 +2544,9 @@ app.get('/api/admin/gpt-api', async (req, res) => {
                 api_key_saved: Boolean(cfg.api_key),
                 api_key_preview: masked,
                 plan_key: cfg.plan_key,
+                plan_mappings: cfg.plan_mappings,
+                orbitcard_reuse_limits: cfg.orbitcard_reuse_limits,
+                orbitcard_safety_margins: cfg.orbitcard_safety_margins,
                 country: cfg.country,
                 currency: cfg.currency,
                 card_source: cfg.card_source,
@@ -2563,6 +2572,9 @@ app.post('/api/admin/gpt-api', async (req, res) => {
             base_url: body.base_url,
             api_key: body.api_key,
             plan_key: body.plan_key,
+            plan_mappings: body.plan_mappings,
+            orbitcard_reuse_limits: body.orbitcard_reuse_limits,
+            orbitcard_safety_margins: body.orbitcard_safety_margins,
             country: body.country,
             currency: body.currency,
             card_source: body.card_source,
@@ -2583,7 +2595,7 @@ app.get('/api/admin/orbitcard/products', async (req, res) => {
         if (!cfg.orbitcard_api_key || !cfg.orbitcard_api_secret) {
             return res.status(400).json({ success: false, message: '请先配置 Orbitcard API Key 和 Secret' });
         }
-        const planTypes = ['plus', 'pro_5x', 'pro_20x'];
+        const planTypes = CANONICAL_PLAN_TYPES;
         const planType = planTypes.includes(String(req.query.plan || '').trim())
             ? String(req.query.plan).trim()
             : 'plus';
@@ -2596,7 +2608,8 @@ app.get('/api/admin/orbitcard/products', async (req, res) => {
             return res.status(502).json({ success: false, message: `Orbitcard 产品目录查询失败: ${result.error || '未知错误'}` });
         }
         const strategyCatalog = orbitcard.buildProductStrategyCatalog(result.data, {
-            reuseLimits: cfg.orbitcard_reuse_limits
+            reuseLimits: cfg.orbitcard_reuse_limits,
+            safetyMargins: cfg.orbitcard_safety_margins
         });
         const products = strategyCatalog.products.map((product) => ({
             ...product,
@@ -2612,6 +2625,7 @@ app.get('/api/admin/orbitcard/products', async (req, res) => {
             fetched_at: new Date().toISOString(),
             automatic: strategyCatalog.automatic,
             reuse_limits: cfg.orbitcard_reuse_limits,
+            safety_margins: cfg.orbitcard_safety_margins,
             products
         });
     } catch (error) {
@@ -2625,13 +2639,22 @@ app.post('/api/admin/orbitcard/product-strategy', async (req, res) => {
         const cfg = await store.getGptApiConfig();
         const productCode = String(req.body?.product_code || '').trim();
         const reuseLimits = { ...cfg.orbitcard_reuse_limits };
-        for (const planType of ['plus', 'pro_5x', 'pro_20x']) {
+        const safetyMargins = { ...cfg.orbitcard_safety_margins };
+        for (const planType of CANONICAL_PLAN_TYPES) {
             if (!Object.prototype.hasOwnProperty.call(req.body?.reuse_limits || {}, planType)) continue;
             const value = Number(req.body.reuse_limits[planType]);
             if (!Number.isInteger(value) || value < 1 || value > 20) {
                 return res.status(400).json({ success: false, message: `${planType} 的一卡几冲必须是 1-20 的整数` });
             }
             reuseLimits[planType] = value;
+        }
+        for (const planType of CANONICAL_PLAN_TYPES) {
+            if (!Object.prototype.hasOwnProperty.call(req.body?.safety_margins || {}, planType)) continue;
+            const value = Number(req.body.safety_margins[planType]);
+            if (!Number.isFinite(value) || value < 0 || value > 100) {
+                return res.status(400).json({ success: false, message: `${planType} 的开卡安全余量必须是 0-100 的数字` });
+            }
+            safetyMargins[planType] = value;
         }
         if (productCode) {
             if (!cfg.orbitcard_api_key || !cfg.orbitcard_api_secret) {
@@ -2645,10 +2668,11 @@ app.post('/api/admin/orbitcard/product-strategy', async (req, res) => {
             if (!result.success) {
                 return res.status(502).json({ success: false, message: `Orbitcard 产品目录查询失败: ${result.error || '未知错误'}` });
             }
-            const selectable = ['plus', 'pro_5x', 'pro_20x'].some((planType) => (
+            const selectable = CANONICAL_PLAN_TYPES.some((planType) => (
                 orbitcard.getProductSelectionsForPlan(result.data, planType, {
                     preferredProductCode: productCode,
-                    reuseLimits
+                    reuseLimits,
+                    safetyMargins
                 }).length > 0
             ));
             if (!selectable) {
@@ -2657,13 +2681,15 @@ app.post('/api/admin/orbitcard/product-strategy', async (req, res) => {
         }
         await store.setAppConfigValue('orbitcard_product_code', productCode);
         await store.setAppConfigValue('orbitcard_next_product_code', '');
-        await store.setAppConfigValue('orbitcard_reuse_limit_plus', reuseLimits.plus);
-        await store.setAppConfigValue('orbitcard_reuse_limit_pro_5x', reuseLimits.pro_5x);
-        await store.setAppConfigValue('orbitcard_reuse_limit_pro_20x', reuseLimits.pro_20x);
+        for (const planType of CANONICAL_PLAN_TYPES) {
+            await store.setAppConfigValue(`orbitcard_reuse_limit_${planType}`, reuseLimits[planType]);
+            await store.setAppConfigValue(`orbitcard_safety_margin_${planType}`, safetyMargins[planType]);
+        }
         return res.json({
             success: true,
             product_code: productCode,
             reuse_limits: reuseLimits,
+            safety_margins: safetyMargins,
             message: productCode ? 'Orbitcard 后续开卡产品与复用上限已保存' : '已恢复自动按优先级开卡，复用上限已保存'
         });
     } catch (error) {
@@ -2680,6 +2706,7 @@ app.post('/api/admin/gpt-api/test', async (req, res) => {
             base_url: String(body.base_url || '').trim() || saved.base_url,
             api_key: String(body.api_key || '').trim() || saved.api_key,
             plan_key: String(body.plan_key || '').trim() || saved.plan_key,
+            plan_mappings: { ...saved.plan_mappings, ...(body.plan_mappings || {}) },
             card_source: String(body.card_source || '').trim() || saved.card_source,
             orbitcard_base_url: String(body.orbitcard_base_url || '').trim() || saved.orbitcard_base_url,
             orbitcard_api_key: String(body.orbitcard_api_key || '').trim() || saved.orbitcard_api_key,
@@ -2813,14 +2840,21 @@ app.get('/api/admin/checkout/plans', async (req, res) => {
         await ensureStoreReady();
         const regionCode = await store.getPaymentRegion();
         const config = REGION_CONFIG[regionCode] || REGION_CONFIG.PH;
+        const resolved = Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => {
+            try {
+                return [planType, store.resolvePlanName(planType)];
+            } catch (_) {
+                return [planType, null];
+            }
+        }));
         res.json({
             success: true,
-            plans: store.PLAN_NAME_MAP,
-            resolved: {
-                plus: store.resolvePlanName('plus'),
-                pro_5x: store.resolvePlanName('pro_5x'),
-                pro_20x: store.resolvePlanName('pro_20x')
-            },
+            plans: Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [planType, resolved[planType]])),
+            plan_options: CANONICAL_PLAN_TYPES.map((planType) => ({
+                type: planType,
+                label: getPlanLabel(planType),
+                plan_name: resolved[planType]
+            })),
             region: regionCode,
             currency: config.currency,
             label: config.label
@@ -2849,7 +2883,12 @@ app.post('/api/admin/checkout/generate', async (req, res) => {
             return res.status(400).json({ success: false, error: tokenCheck.message });
         }
 
-        const planType = String(body.plan_type || 'plus').trim();
+        let planType;
+        try {
+            planType = requireCanonicalPlanType(body.plan_type || 'plus');
+        } catch (error) {
+            return res.status(400).json({ success: false, error: error.message });
+        }
         const planNameOverride = body.plan_name ? String(body.plan_name).trim() : '';
         const resolvedPlanName = planNameOverride || store.resolvePlanName(planType);
         const regionCode = String(body.country || body.region || await store.getPaymentRegion()).toUpperCase();
@@ -3178,7 +3217,7 @@ app.post('/api/admin/orbitcard/cards/:cardId/plan', requireSecondaryAuth, async 
         if (!Number.isInteger(cardId) || cardId <= 0) {
             return res.status(400).json({ success: false, message: '卡片编号无效' });
         }
-        if (!['plus', 'pro_5x', 'pro_20x'].includes(planType)) {
+        if (!CANONICAL_PLAN_TYPES.includes(planType)) {
             return res.status(400).json({ success: false, message: '套餐类型无效' });
         }
         const cfg = await store.getGptApiConfig();
@@ -3201,11 +3240,12 @@ app.post('/api/admin/orbitcard/cards/:cardId/plan', requireSecondaryAuth, async 
                 success: true,
                 planType,
                 maxUsageCount,
-                message: `卡片已绑定 ${planType === 'plus' ? 'Plus' : planType === 'pro_5x' ? 'Pro 5x' : 'Pro 20x'} 套餐，单卡上限 ${maxUsageCount} 次`
+                message: `卡片已绑定 ${getPlanLabel(planType)} 套餐，单卡上限 ${maxUsageCount} 次`
             });
         }
         const errorMessages = {
             invalid: '卡片参数无效',
+            invalid_plan: '套餐类型无效',
             not_found: '本地没有这张 Orbitcard 记录',
             in_use: '卡片当前正在使用，暂时不能修改套餐',
             usage_exceeded: `卡片当前已使用 ${maxUsageCount} 次，单卡上限不能低于已用次数`
@@ -3460,7 +3500,12 @@ app.post('/api/admin/cdks/generate', requireSecondaryAuth, async (req, res) => {
     try {
         await ensureStoreReady();
         const count = req.body?.count;
-        const planType = req.body?.plan_type || 'plus';
+        let planType;
+        try {
+            planType = requireCanonicalPlanType(req.body?.plan_type || 'plus');
+        } catch (error) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         const newCdks = createCdks(count);
         const result = await store.insertCdks(newCdks, { type: '自助', plan_type: planType });
         res.json({
@@ -3483,7 +3528,12 @@ app.post('/api/admin/cdks/import', requireSecondaryAuth, async (req, res) => {
 
     try {
         await ensureStoreReady();
-        const planType = req.body?.plan_type || 'plus';
+        let planType;
+        try {
+            planType = requireCanonicalPlanType(req.body?.plan_type || 'plus');
+        } catch (error) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         const summary = await store.insertCdks(cdks, { plan_type: planType });
         res.json({
             success: true,
@@ -3702,23 +3752,23 @@ function spawnCheckoutDebugWorker({ task, token, sessionRaw, planType, region, p
  * 4. 轮询订单状态，直到终态（success / failed）
  * 5. 将结果写回 task_logs（含 gpt_api_order_id / gpt_api_task_id / gpt_api_raw）
  */
-const GPT_API_PLAN_MAP = Object.freeze({ plus: 'plus', pro_5x: 'pro5x', pro_20x: 'pro20x' });
-const DESOLATE_PLAN_MAP = Object.freeze({ plus: 'chatgptplusplan', pro_5x: 'chatgptprolite', pro_20x: 'chatgptpro' });
+const LEGACY_GPT_API_PLAN_MAP = Object.freeze({ pro_5x: 'pro5x', pro_20x: 'pro20x' });
 
 function mapGptApiPlanKey(planType, cfg = {}) {
-    const type = String(planType || '').trim();
+    const type = requireReadablePlanType(planType);
     if (gptApi.isDesolateOpenProtocol(cfg)) {
-        const configured = String(cfg.plan_key || '').trim();
-        // Standard Open plan codes follow the CDK type. A custom value can still
-        // override all types, but the stored Plus default must not swallow Pro.
-        const standardCodes = new Set(Object.values(DESOLATE_PLAN_MAP));
-        const legacyAliases = new Set([...Object.values(GPT_API_PLAN_MAP), 'plus']);
-        if (configured && !standardCodes.has(configured) && !legacyAliases.has(configured)) return configured;
-        return DESOLATE_PLAN_MAP[type] || DESOLATE_PLAN_MAP.plus;
+        if (!CANONICAL_PLAN_TYPES.includes(type)) {
+            throw new Error(`${getPlanLabel(type)} 不支持 Desolate Open 协议，请改用四档新套餐`);
+        }
+        return gptApi.resolveOpenPlanCode(type, cfg);
     }
     const configured = String(cfg.plan_key || '').trim();
-    if (configured && configured !== 'plus') return configured;
-    return GPT_API_PLAN_MAP[type] || 'plus';
+    if (configured && !['plus', 'chatgptplusplan'].includes(configured.toLowerCase())) {
+        return configured;
+    }
+    if (CANONICAL_PLAN_TYPES.includes(type)) return type;
+    if (LEGACY_GPT_API_PLAN_MAP[type]) return LEGACY_GPT_API_PLAN_MAP[type];
+    throw new Error(`第三方 API 不支持套餐: ${type}`);
 }
 
 function sanitizeGptApiRaw(data, openProtocol) {
@@ -3831,6 +3881,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             };
             const requestedProductCode = String(cfg.orbitcard_product_code || '').trim();
             const reuseLimits = cfg.orbitcard_reuse_limits || null;
+            const safetyMargins = cfg.orbitcard_safety_margins || null;
             const reuseLimit = orbitcard.getPlanReuseLimit(planType, reuseLimits);
             // 已在后台绑定套餐的同步卡也要参与首次使用，即使该套餐复用上限为 1。
             await setProgress('running', 12, '正在准备支付方式...');
@@ -3851,15 +3902,16 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 if (requestedProductCode) {
                     const requestedSelection = orbitcard.getProductSelectionsForPlan(productResult.data, planType, {
                         preferredProductCode: requestedProductCode,
-                        reuseLimits
+                        reuseLimits,
+                        safetyMargins
                     });
                     if (!requestedSelection.length) {
                         throw new Error(`指定的 Orbitcard 产品 ${requestedProductCode} 当前不可用或缺少 ${getPlanTypeLabel(planType)} 套餐价格，请重新选择`);
                     }
                 }
                 const selections = orbitcard.getProductSelectionsForPlan(productResult.data, planType, requestedProductCode
-                    ? { preferredProductCode: requestedProductCode, reuseLimits }
-                    : { reuseLimits });
+                    ? { preferredProductCode: requestedProductCode, reuseLimits, safetyMargins }
+                    : { reuseLimits, safetyMargins });
                 if (!selections.length) throw new Error('Orbitcard 当前没有可开卡产品库存');
 
                 let createdCardId = null;
@@ -4293,7 +4345,7 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
         let lastProgress = 0;
         const accountEmail = extractEmailFromSession(sessionRaw) || '';
         const accountKey = getActivationAccountKey(sessionRaw, token);
-        const planType = cdkDetails.plan_type || 'plus';
+        const planType = requireReadablePlanType(cdkDetails.plan_type || 'plus', 'plan_type');
 
         try {
             for (let attempt = 1; attempt <= MAX_PROCESS_ATTEMPTS; attempt += 1) {
@@ -4319,7 +4371,7 @@ function spawnActivationWorker({ task, token, sessionRaw, cdk, cdkDetails, clien
                     CHATGPT_TOKEN: token,
                     CHATGPT_SESSION_JSON: String(sessionRaw || '').startsWith('{') ? sessionRaw : '',
                     CDK_CODE: cdk,
-                    CDK_PLAN_TYPE: cdkDetails.plan_type || 'plus',
+                    CDK_PLAN_TYPE: planType,
                     PROXY: proxy
                 };
 
@@ -4622,7 +4674,13 @@ async function handleActivationRequest(req, res) {
             return res.status(403).json({ success: false, message: 'CDK 无效、已使用或非自助激活码' });
         }
 
-        const planType = cdkDetails.plan_type || 'plus';
+        const rawPlanType = String(cdkDetails.plan_type || 'plus').trim();
+        let planType;
+        try {
+            planType = requireReadablePlanType(rawPlanType, 'plan_type');
+        } catch (error) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
 
         const cdkCooldownMinutes = getRemainingCooldownMinutes(cdkDetails.cooldown_until);
         if (cdkCooldownMinutes > 0) {
@@ -4653,7 +4711,7 @@ async function handleActivationRequest(req, res) {
                 const poolEmail = extractEmailFromSession(rawSession);
                 fireTelegramNotification('card_pool_empty', {
                     email: poolEmail,
-                    planType: cdkDetails.plan_type || 'plus',
+                    planType,
                     cdk,
                     message: '银行卡池暂无可用卡片，任务未启动'
                 });
@@ -4684,7 +4742,7 @@ async function handleActivationRequest(req, res) {
         reserveForegroundSlot(task.jobKey);
 
         if (useGptApi) {
-            runGptApiWorker({ task, token, session: JSON.parse(storedSession), cdk, planType: cdkDetails.plan_type || 'plus' }).catch((error) => {
+            runGptApiWorker({ task, token, session: JSON.parse(storedSession), cdk, planType }).catch((error) => {
                 console.error(`[GPT API Worker] ${task.jobKey}:`, error);
             });
         } else {

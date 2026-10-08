@@ -15,6 +15,32 @@
             manual: { class: 'status-warning', label: '需人工' },
             card_invalid: { class: 'status-warning', label: 'CARD_INVALID' }
         };
+        const CANONICAL_PLAN_TYPES = Object.freeze(['plus', 'pro100', 'pro200', 'pro500']);
+        const PLAN_LABELS = Object.freeze({
+            plus: 'Plus',
+            pro100: 'Pro 100',
+            pro200: 'Pro 200',
+            pro500: 'Pro 500',
+            pro_5x: 'Pro 5x（历史）',
+            pro_20x: 'Pro 20x（历史）'
+        });
+        const PLAN_COLORS = Object.freeze({
+            plus: ['#2563eb', 'rgba(37, 99, 235, 0.12)'],
+            pro100: ['#7c3aed', 'rgba(124, 58, 237, 0.12)'],
+            pro200: ['#c026d3', 'rgba(192, 38, 211, 0.12)'],
+            pro500: ['#db2777', 'rgba(219, 39, 119, 0.12)'],
+            pro_5x: ['#8b5cf6', 'rgba(139, 92, 246, 0.12)'],
+            pro_20x: ['#ec4899', 'rgba(236, 72, 153, 0.12)']
+        });
+
+        function formatPlanLabel(planType) {
+            const key = String(planType || '').trim().toLowerCase();
+            return PLAN_LABELS[key] || (key ? `未知套餐 (${key})` : '未识别');
+        }
+
+        function getPlanColors(planType) {
+            return PLAN_COLORS[String(planType || '').trim().toLowerCase()] || ['#64748b', 'rgba(100, 116, 139, 0.12)'];
+        }
 
         let phonePool = [];
         let cardPool = [];
@@ -1415,7 +1441,7 @@
 
                 if (cdkPlanTypeFilter && cdkPlanTypeFilter !== 'all') {
                     result = result.filter((item) => {
-                        const planType = typeof item === 'string' ? 'plus' : (item.plan_type || 'plus');
+                        const planType = typeof item === 'string' ? 'plus' : String(item.plan_type || 'unknown').trim().toLowerCase();
                         return planType === cdkPlanTypeFilter;
                     });
                 }
@@ -2819,13 +2845,12 @@
                 const code = typeof cdk === 'string' ? cdk : (cdk.code || '');
                 const status = typeof cdk === 'string' ? 'unused' : (cdk.status || 'unused');
                 const shipped = typeof cdk === 'string' ? false : Boolean(cdk.shipped);
-                const planType = typeof cdk === 'string' ? 'plus' : (cdk.plan_type || 'plus');
+                const planType = typeof cdk === 'string' ? 'plus' : String(cdk.plan_type || 'unknown').trim().toLowerCase();
                 const usedAt = typeof cdk === 'string' ? null : cdk.used_at;
                 const sessionPreview = typeof cdk === 'string' ? null : (cdk.session_preview || null);
 
-                const planTypeLabel = { plus: 'Plus', pro_5x: 'Pro 5x', pro_20x: 'Pro 20x' }[planType] || 'Plus';
-                const planTypeColor = { plus: '#2563eb', pro_5x: '#8b5cf6', pro_20x: '#ec4899' }[planType] || '#2563eb';
-                const planTypeBg = { plus: 'rgba(37, 99, 235, 0.12)', pro_5x: 'rgba(139, 92, 246, 0.12)', pro_20x: 'rgba(236, 72, 153, 0.12)' }[planType] || 'rgba(37, 99, 235, 0.12)';
+                const [planTypeColor, planTypeBg] = getPlanColors(planType);
+                const planTypeLabel = formatPlanLabel(planType);
 
                 return `
                 <tr>
@@ -2974,7 +2999,8 @@
         let orbitcardUsageRequestId = 0;
         let orbitcardStrategyProducts = [];
         let orbitcardStrategyAutomatic = {};
-        let orbitcardStrategyReuseLimits = { plus: 4, pro_5x: 1, pro_20x: 1 };
+        let orbitcardStrategyReuseLimits = { plus: 4, pro100: 1, pro200: 1, pro500: 1 };
+        let orbitcardStrategySafetyMargins = { plus: 1, pro100: 1, pro200: 1, pro500: 1 };
 
         function orbitcardProductGroupLabel(product) {
             const channel = Number(product?.channel);
@@ -3029,7 +3055,10 @@
                     <div style="font-size:13px; color:var(--text-dim); margin-top:5px;">实际开卡时按当前渠道优先级和实时可用产品选择；下表展示本次目录对应的选择结果。</div>
                 </div>`;
             }
-            const planLabels = { plus: 'ChatGPT Plus', pro_5x: 'Pro 5x', pro_20x: 'Pro 20x' };
+            const planLabels = Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [
+                planType,
+                planType === 'plus' ? 'ChatGPT Plus' : `ChatGPT ${PLAN_LABELS[planType]}`
+            ]));
             tbody.innerHTML = Object.entries(planLabels).map(([planType, label]) => {
                 const detail = getOrbitcardStrategyPlan(planType);
                 if (!detail) {
@@ -3060,14 +3089,19 @@
                 if (!res.ok || !data.success) throw new Error(data.message || '产品目录查询失败');
                 orbitcardStrategyProducts = Array.isArray(data.products) ? data.products : [];
                 orbitcardStrategyAutomatic = data.automatic || {};
-                orbitcardStrategyReuseLimits = {
-                    plus: Number(data.reuse_limits?.plus) || 4,
-                    pro_5x: Number(data.reuse_limits?.pro_5x) || 1,
-                    pro_20x: Number(data.reuse_limits?.pro_20x) || 1
-                };
-                for (const planType of ['plus', 'pro_5x', 'pro_20x']) {
+                orbitcardStrategyReuseLimits = Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [
+                    planType,
+                    Number(data.reuse_limits?.[planType]) || (planType === 'plus' ? 4 : 1)
+                ]));
+                orbitcardStrategySafetyMargins = Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [
+                    planType,
+                    Number.isFinite(Number(data.safety_margins?.[planType])) ? Number(data.safety_margins[planType]) : 1
+                ]));
+                for (const planType of CANONICAL_PLAN_TYPES) {
                     const input = document.getElementById(`orbitcard_reuse_limit_${planType}`);
                     if (input) input.value = orbitcardStrategyReuseLimits[planType];
+                    const marginInput = document.getElementById(`orbitcard_safety_margin_${planType}`);
+                    if (marginInput) marginInput.value = orbitcardStrategySafetyMargins[planType];
                 }
                 const configured = String(data.selected_product_code || previous || '');
                 select.innerHTML = '<option value="">自动按优先级选择</option>';
@@ -3095,19 +3129,26 @@
         async function saveOrbitcardProductStrategy() {
             const productCode = document.getElementById('orbitcard_strategy_product_code')?.value || '';
             const reuseLimits = {};
-            for (const planType of ['plus', 'pro_5x', 'pro_20x']) {
+            const safetyMargins = {};
+            for (const planType of CANONICAL_PLAN_TYPES) {
                 const value = Number(document.getElementById(`orbitcard_reuse_limit_${planType}`)?.value);
                 if (!Number.isInteger(value) || value < 1 || value > 20) {
-                    showMessage(`${planType} 的一卡几冲必须是 1-20 的整数`, 'warning');
+                    showMessage(`${formatPlanLabel(planType)} 的一卡几冲必须是 1-20 的整数`, 'warning');
                     return;
                 }
                 reuseLimits[planType] = value;
+                const margin = Number(document.getElementById(`orbitcard_safety_margin_${planType}`)?.value);
+                if (!Number.isFinite(margin) || margin < 0 || margin > 100) {
+                    showMessage(`${formatPlanLabel(planType)} 的安全余量必须是 0-100 的数字`, 'warning');
+                    return;
+                }
+                safetyMargins[planType] = margin;
             }
             try {
                 const res = await authFetch('/api/admin/orbitcard/product-strategy', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ product_code: productCode, reuse_limits: reuseLimits })
+                    body: JSON.stringify({ product_code: productCode, reuse_limits: reuseLimits, safety_margins: safetyMargins })
                 });
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.message || '保存开卡策略失败');
@@ -3220,7 +3261,7 @@
         }
 
         function formatOrbitcardPlan(planType) {
-            return { plus: 'Plus', pro_5x: 'Pro 5x', pro_20x: 'Pro 20x' }[planType] || planType || '-';
+            return formatPlanLabel(planType);
         }
 
         function renderOrbitcardPlanActions(card) {
@@ -3229,11 +3270,9 @@
                 return '';
             }
             const cardId = Number(card.cardId);
-            const options = [
-                ['plus', 'Plus'],
-                ['pro_5x', 'Pro 5x'],
-                ['pro_20x', 'Pro 20x']
-            ].map(([value, label]) => `<option value="${value}" ${card.planType === value ? 'selected' : ''}>${label}</option>`).join('');
+            const options = CANONICAL_PLAN_TYPES
+                .map((value) => `<option value="${value}" ${card.planType === value ? 'selected' : ''}>${PLAN_LABELS[value]}</option>`)
+                .join('');
             const usageLimit = card.planType ? Number(card.maxUsageCount || 1) : '';
             return `<div class="orbitcard-plan-actions">
                 <select id="orbitcard_plan_${cardId}" class="orbitcard-plan-select" aria-label="选择卡片套餐">
@@ -3532,7 +3571,7 @@
         let activationManualHolds = [];
 
         function formatManualHoldPlan(planType) {
-            return { plus: 'Plus', pro_5x: 'Pro 5x', pro_20x: 'Pro 20x' }[String(planType || '')] || String(planType || '-');
+            return formatPlanLabel(planType);
         }
 
         function renderActivationManualHolds() {
@@ -4707,7 +4746,7 @@
                 tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:var(--text-dim); padding:32px;">暂无账单记录</td></tr>`;
                 return;
             }
-            const planLabels = { plus: 'Plus', pro_5x: 'Pro 5x', pro_20x: 'Pro 20x' };
+            const planLabels = PLAN_LABELS;
             tbody.innerHTML = records.map(r => {
                 const time = r.payment_time ? new Date(r.payment_time).toLocaleString('zh-CN') : '-';
                 const statusClass = r.status === 'success' ? 'status-success' : 'status-failed';
@@ -4955,7 +4994,7 @@
         // ─── Region & Address Management ───────────────────────────────────────────
         let regionAddressList = [];
         let currentRegion = 'PH';
-        let checkoutPlanMap = { plus: 'chatgptplusplan', pro_5x: 'chatgptprolite', pro_20x: 'chatgptpro' };
+        let checkoutPlanMap = { plus: 'chatgptplusplan', pro100: null, pro200: null, pro500: null };
         let checkoutDebugJobKey = '';
         let checkoutDebugLogAfter = 0;
         let checkoutDebugLogText = '';
@@ -5140,7 +5179,6 @@
         async function startCheckoutDebug() {
             const sessionRaw = document.getElementById('checkout_session_input')?.value?.trim();
             const planType = document.getElementById('checkout_plan_type')?.value || 'plus';
-            syncCheckoutPlanName();
             const planName = getCheckoutPlanNameForSubmit();
             const regionSel = document.getElementById('checkout_region_selector');
             const region = regionSel?.value || currentRegion;
@@ -5212,22 +5250,23 @@
         function renderCheckoutPlanTypeOptions() {
             const sel = document.getElementById('checkout_plan_type');
             if (!sel) return;
-            const labels = { plus: 'Plus', pro_5x: 'Pro 5x', pro_20x: 'Pro 20x' };
             const current = sel.value || 'plus';
-            sel.innerHTML = Object.keys(checkoutPlanMap).map((key) => {
-                const name = checkoutPlanMap[key] || checkoutPlanMap.plus;
-                return `<option value="${escapeHtml(key)}">${escapeHtml(labels[key] || key)} — ${escapeHtml(name)}</option>`;
+            sel.innerHTML = CANONICAL_PLAN_TYPES.map((key) => {
+                const name = checkoutPlanMap[key];
+                const suffix = name || '需手动配置 plan_name';
+                return `<option value="${key}">${escapeHtml(PLAN_LABELS[key])} — ${escapeHtml(suffix)}</option>`;
             }).join('');
-            sel.value = checkoutPlanMap[current] ? current : 'plus';
+            sel.value = CANONICAL_PLAN_TYPES.includes(current) ? current : 'plus';
             syncCheckoutPlanName();
         }
 
         function syncCheckoutPlanName() {
             const planType = document.getElementById('checkout_plan_type')?.value || 'plus';
             const input = document.getElementById('checkout_plan_name');
-            const mapped = checkoutPlanMap[planType] || checkoutPlanMap.plus || 'chatgptplusplan';
+            const mapped = String(checkoutPlanMap[planType] || '');
             if (input) {
                 input.value = mapped;
+                input.placeholder = mapped || `${PLAN_LABELS[planType] || planType} 的 plan_name 未配置`;
                 input.dataset.autoValue = mapped;
             }
         }
@@ -5235,13 +5274,12 @@
         function getCheckoutPlanNameForSubmit() {
             const planType = document.getElementById('checkout_plan_type')?.value || 'plus';
             const input = document.getElementById('checkout_plan_name');
-            const mapped = checkoutPlanMap[planType] || checkoutPlanMap.plus || 'chatgptplusplan';
+            const mapped = String(checkoutPlanMap[planType] || '');
             const typed = String(input?.value || '').trim();
-            // 仅当用户手动改过 plan_name 时才作为 override 提交
             if (typed && typed !== mapped && typed !== input?.dataset?.autoValue) {
                 return typed;
             }
-            return undefined;
+            return mapped || undefined;
         }
 
         function updateCheckoutRegionHint(label, currency) {
@@ -5256,7 +5294,11 @@
                 const res = await authFetch('/api/admin/checkout/plans');
                 const data = await res.json();
                 if (data.success && data.plans) {
-                    checkoutPlanMap = data.plans;
+                    if (Array.isArray(data.plans)) {
+                        checkoutPlanMap = Object.fromEntries(data.plans.map((plan) => [plan.type, plan.plan_name || null]));
+                    } else {
+                        checkoutPlanMap = { ...checkoutPlanMap, ...data.plans };
+                    }
                     renderCheckoutPlanTypeOptions();
                     updateCheckoutRegionHint(data.label, data.currency);
                 }
@@ -5324,7 +5366,6 @@
                 const baseUrlEl = document.getElementById('gpt_api_base_url');
                 if (baseUrlEl) baseUrlEl.value = cfg.base_url || '';
                 const keyEl = document.getElementById('gpt_api_key');
-                const planKeyEl = document.getElementById('gpt_api_plan_key');
                 const keyHint = document.getElementById('gpt_api_key_hint');
                 const cardSourceEl = document.getElementById('gpt_api_card_source');
                 const orbitBaseEl = document.getElementById('orbitcard_base_url');
@@ -5336,7 +5377,12 @@
                 if (keyEl) keyEl.placeholder = cfg.api_key_saved
                     ? `已保存（${cfg.api_key_preview || 'ap_live_…'}）留空不修改`
                     : 'ap_live_...';
-                if (planKeyEl) planKeyEl.value = cfg.plan_key || '';
+                const mappings = cfg.plan_mappings || {};
+                for (const planType of CANONICAL_PLAN_TYPES) {
+                    const id = planType === 'plus' ? 'gpt_api_plan_key' : `gpt_api_plan_key_${planType}`;
+                    const input = document.getElementById(id);
+                    if (input) input.value = mappings[planType] || (planType === 'plus' ? cfg.plan_key || 'chatgptplusplan' : '');
+                }
                 if (cardSourceEl) cardSourceEl.value = cfg.card_source || 'local';
                 if (orbitBaseEl) orbitBaseEl.value = cfg.orbitcard_base_url || 'https://orbitcard.cc';
                 if (orbitKeyEl) orbitKeyEl.value = '';
@@ -5364,6 +5410,10 @@
                 base_url: document.getElementById('gpt_api_base_url')?.value.trim() || '',
                 api_key: document.getElementById('gpt_api_key')?.value.trim() || '',
                 plan_key: document.getElementById('gpt_api_plan_key')?.value.trim() || '',
+                plan_mappings: Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [
+                    planType,
+                    document.getElementById(planType === 'plus' ? 'gpt_api_plan_key' : `gpt_api_plan_key_${planType}`)?.value.trim() || ''
+                ])),
                 card_source: document.getElementById('gpt_api_card_source')?.value || 'local',
                 orbitcard_base_url: document.getElementById('orbitcard_base_url')?.value.trim() || '',
                 orbitcard_api_key: document.getElementById('orbitcard_api_key')?.value.trim() || '',
@@ -5404,7 +5454,7 @@
             const gptPlans = (data.gpt_plans || []).filter((p) => p.enabled !== 0 && p.enabled !== false);
             const mappings = data.plan_mappings || {};
             document.getElementById('gpt_api_plans').textContent = Object.keys(mappings).length
-                ? `Plus=${mappings.plus || '—'}、Pro 5x=${mappings.pro_5x || '—'}、Pro 20x=${mappings.pro_20x || '—'}`
+                ? CANONICAL_PLAN_TYPES.map((planType) => `${PLAN_LABELS[planType]}=${mappings[planType] || '未配置'}`).join('、')
                 : (gptPlans.length
                     ? gptPlans.map((p) => `${p.name || p.key} (${p.key || '—'})`).join('、')
                     : (data.configured_plan ? `已配置代码：${data.configured_plan}` : '供应商未提供套餐列表'));

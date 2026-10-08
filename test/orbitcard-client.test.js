@@ -478,8 +478,9 @@ describe('orbitcard client', () => {
             min_retained_balance: '0.10',
             gpt_plan_prices: [
                 { id: 'plus', price: '15.70', currency: 'USD' },
-                { id: 'pro', price: '92.61', currency: 'USD' },
-                { id: 'pro_20x', price: '142.55', currency: 'USD' }
+                { id: 'pro100', price: '92.61', currency: 'USD' },
+                { id: 'pro200', price: '142.55', currency: 'USD' },
+                { id: 'pro500', price: '499.00', currency: 'USD' }
             ]
         }] });
         expect(catalog.products).toHaveLength(1);
@@ -488,8 +489,9 @@ describe('orbitcard client', () => {
             remaining_open_card_num: 2035,
             plans: {
                 plus: { amount: '65.00', plan_price: 15.7, max_usage_count: 4 },
-                pro_5x: { amount: '95.00', plan_price: 92.61, max_usage_count: 1 },
-                pro_20x: { amount: '145.00', plan_price: 142.55, max_usage_count: 1 }
+                pro100: { amount: '95.00', plan_price: 92.61, max_usage_count: 1 },
+                pro200: { amount: '145.00', plan_price: 142.55, max_usage_count: 1 },
+                pro500: { amount: '505.00', plan_price: 499, max_usage_count: 1 }
             }
         });
         expect(catalog.automatic.plus).toMatchObject({

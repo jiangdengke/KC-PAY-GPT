@@ -1,6 +1,7 @@
 'use strict';
 
 const axios = require('axios');
+const { getPlanLabel } = require('./plan-registry');
 
 const EVENT_LABELS = {
     success: '✅ 开通成功',
@@ -11,12 +12,6 @@ const EVENT_LABELS = {
     admin_2fa_failed: '⛔ 后台二次验证失败',
     admin_secondary_success: '🔒 敏感模块已解锁'
 };
-
-const PLAN_LABELS = Object.freeze({
-    plus: 'ChatGPT Plus',
-    pro_5x: 'ChatGPT Pro 5x',
-    pro_20x: 'ChatGPT Pro 20x'
-});
 
 function escapeHtml(text) {
     return String(text || '')
@@ -34,7 +29,7 @@ function formatTelegramMessage(event, { email, planType, planLabel, cdk, jobKey,
         lines.push(`账号: ${escapeHtml(email || '未识别')}`);
     }
     if (isTaskEvent || planType || planLabel) {
-        const label = String(planLabel || PLAN_LABELS[String(planType || '').trim()] || planType || '未识别').trim();
+        const label = String(planLabel || (planType ? getPlanLabel(planType, { full: true }) : '未识别')).trim();
         lines.push(`套餐: ${escapeHtml(label)}`);
     }
     if (ip) {

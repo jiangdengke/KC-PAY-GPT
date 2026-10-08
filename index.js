@@ -1,4 +1,5 @@
 const { executePaymentWithRetry } = require('./payment-retry');
+const { requireReadablePlanType } = require('./plan-registry');
 const { openPricingCheckout } = require('./pricing-checkout');
 const { openApiCheckout } = require('./chatgpt');
 const store = require('./mysql-store');
@@ -504,6 +505,7 @@ async function run() {
         if (!planType) {
             planType = 'plus';
         }
+        planType = requireReadablePlanType(planType, 'plan_type');
 
         // Resolve region and currency (与浏览器 profile 一致)
         const billingCountry = paymentRegion;
