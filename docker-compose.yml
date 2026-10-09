@@ -100,6 +100,7 @@ services:
       - ./telegram-notify.js:/app/telegram-notify.js
       - ./gpt-api-client.js:/app/gpt-api-client.js
       - ./orbitcard-client.js:/app/orbitcard-client.js
+      - ./plan-registry.js:/app/plan-registry.js
       - ./hcaptcha/solver.py:/app/hcaptcha/solver.py
     # 浏览器自动化 + hCaptcha ML 推理需要较大共享内存
     shm_size: '2gb'
