@@ -5,7 +5,8 @@ const axios = require('axios');
 const {
     CANONICAL_PLAN_TYPES,
     READABLE_PLAN_TYPES,
-    getOrbitcardPriceAliases,
+    getOrbitcardPlanType,
+    getOrbitcardPriceMatch,
     getDefaultReuseLimit,
     getDefaultSafetyMargin,
     getPlanLabel
@@ -255,7 +256,7 @@ function normalizeProduct(row = {}, channelHint = null) {
             name: String(price?.name || '').trim(),
             price: Number(price?.price),
             currency: String(price?.currency || 'USD').trim().toUpperCase()
-        })).filter((price) => price.id && Number.isFinite(price.price) && price.price > 0)
+        })).filter((price) => (price.id || price.name) && Number.isFinite(price.price) && price.price > 0)
         : [];
     const remaining = Number(row.remaining_open_card_num);
     return {
@@ -350,14 +351,16 @@ function normalizeProductList(data) {
 }
 
 function resolveProductPlanPrice(product, planType) {
-    const aliases = getOrbitcardPriceAliases(planType, { includeLegacy: true });
-    if (!aliases.length) return null;
-    for (const alias of aliases) {
-        const aliasKey = String(alias || '').trim().toLowerCase();
-        const match = product.prices.find((price) => String(price.id || '').trim().toLowerCase() === aliasKey);
-        if (match) return match;
-    }
-    return null;
+    const targetPlanType = getOrbitcardPlanType(planType);
+    if (!targetPlanType) return null;
+    const matches = (product?.prices || []).map((price) => ({
+        price,
+        match: getOrbitcardPriceMatch(price)
+    }));
+    const namedMatch = matches.find(({ match }) => match?.source === 'name' && match.planType === targetPlanType);
+    if (namedMatch) return namedMatch.price;
+    const idMatch = matches.find(({ match }) => match?.source === 'id' && match.planType === targetPlanType);
+    return idMatch ? idMatch.price : null;
 }
 
 function getSelectableProductItems(data, planType = 'plus', options = {}) {

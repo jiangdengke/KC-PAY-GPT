@@ -12,6 +12,7 @@ const PLAN_REGISTRY = Object.freeze({
         desolatePlanCode: 'chatgptplusplan',
         credentialAliases: Object.freeze(['plus', 'plus plan', 'chatgptplus', 'chatgpt plus', 'chatgptplusplan', 'chatgpt plus plan']),
         orbitcardPriceAliases: Object.freeze(['plus', 'chatgptplusplan']),
+        orbitcardPriceNameAliases: Object.freeze(['Plus', 'ChatGPT Plus', 'plus', 'chatgpt plus', 'chatgptplus', 'chatgptplusplan']),
         defaultReuseLimit: 4,
         defaultSafetyMargin: 1
     }),
@@ -22,7 +23,8 @@ const PLAN_REGISTRY = Object.freeze({
         checkoutPlanName: '',
         desolatePlanCode: '',
         credentialAliases: Object.freeze(['pro100', 'pro_100', 'pro-100', 'pro 100', 'chatgptpro100', 'chatgpt_pro100', 'chatgpt-pro100', 'chatgpt pro 100']),
-        orbitcardPriceAliases: Object.freeze(['pro100', 'pro_100', 'pro-100', 'pro 100']),
+        orbitcardPriceAliases: Object.freeze(['pro100', 'pro_100', 'pro-100', 'pro 100', 'pro']),
+        orbitcardPriceNameAliases: Object.freeze(['Pro 100', 'ChatGPT Pro 100', 'pro100', 'pro 100', 'chatgpt pro 100']),
         defaultReuseLimit: 1,
         defaultSafetyMargin: 1
     }),
@@ -33,7 +35,8 @@ const PLAN_REGISTRY = Object.freeze({
         checkoutPlanName: '',
         desolatePlanCode: '',
         credentialAliases: Object.freeze(['pro200', 'pro_200', 'pro-200', 'pro 200', 'chatgptpro200', 'chatgpt_pro200', 'chatgpt-pro200', 'chatgpt pro 200']),
-        orbitcardPriceAliases: Object.freeze(['pro200', 'pro_200', 'pro-200', 'pro 200']),
+        orbitcardPriceAliases: Object.freeze(['pro200', 'pro_200', 'pro-200', 'pro 200', 'pro_20x', 'pro20x', 'pro-20x']),
+        orbitcardPriceNameAliases: Object.freeze(['Pro 200', 'ChatGPT Pro 200', 'pro200', 'pro 200', 'chatgpt pro 200']),
         defaultReuseLimit: 1,
         defaultSafetyMargin: 1
     }),
@@ -44,7 +47,8 @@ const PLAN_REGISTRY = Object.freeze({
         checkoutPlanName: '',
         desolatePlanCode: '',
         credentialAliases: Object.freeze(['pro500', 'pro_500', 'pro-500', 'pro 500', 'chatgptpro500', 'chatgpt_pro500', 'chatgpt-pro500', 'chatgpt pro 500']),
-        orbitcardPriceAliases: Object.freeze(['pro500', 'pro_500', 'pro-500', 'pro 500']),
+        orbitcardPriceAliases: Object.freeze(['pro500', 'pro_500', 'pro-500']),
+        orbitcardPriceNameAliases: Object.freeze(['Pro 500', 'ChatGPT Pro 500', 'pro500', 'pro 500', 'chatgpt pro 500']),
         defaultReuseLimit: 1,
         defaultSafetyMargin: 1
     })
@@ -60,7 +64,8 @@ const LEGACY_PLAN_REGISTRY = Object.freeze({
         label: 'Pro 5x（历史）',
         displayLabel: 'ChatGPT Pro 5x',
         checkoutPlanName: 'chatgptprolite',
-        orbitcardPriceAliases: Object.freeze(['pro_5x', 'pro5x', 'prolite', 'pro']),
+        orbitcardPlanType: 'pro100',
+        orbitcardPriceAliases: Object.freeze(['pro_5x', 'pro5x', 'prolite']),
         defaultReuseLimit: 1,
         defaultSafetyMargin: 1
     }),
@@ -69,6 +74,7 @@ const LEGACY_PLAN_REGISTRY = Object.freeze({
         label: 'Pro 20x（历史）',
         displayLabel: 'ChatGPT Pro 20x',
         checkoutPlanName: 'chatgptpro',
+        orbitcardPlanType: 'pro200',
         orbitcardPriceAliases: Object.freeze(['pro_20x', 'pro20x', 'pro-20x']),
         defaultReuseLimit: 1,
         defaultSafetyMargin: 1
@@ -155,9 +161,61 @@ function resolveDesolatePlanCode(value, mappings = {}) {
     throw new Error(`${getPlanLabel(type)} 的 Desolate planCode 未配置，供应商公开文档未提供该套餐代码`);
 }
 
+function getOrbitcardPlanType(value) {
+    const definition = getPlanDefinition(value, { includeLegacy: true });
+    if (!definition) return null;
+    return definition.orbitcardPlanType || definition.type;
+}
+
 function getOrbitcardPriceAliases(value, options = {}) {
     const definition = getPlanDefinition(value, { includeLegacy: options.includeLegacy === true });
-    return definition ? [...definition.orbitcardPriceAliases] : [];
+    if (!definition) return [];
+    const targetType = definition.orbitcardPlanType || definition.type;
+    const targetDefinition = PLAN_REGISTRY[targetType];
+    return [...new Set([
+        ...(targetDefinition?.orbitcardPriceAliases || []),
+        ...(definition.orbitcardPriceAliases || [])
+    ])];
+}
+
+function getOrbitcardPriceNameAliases(value, options = {}) {
+    const definition = getPlanDefinition(value, { includeLegacy: options.includeLegacy === true });
+    if (!definition) return [];
+    const targetType = definition.orbitcardPlanType || definition.type;
+    const targetDefinition = PLAN_REGISTRY[targetType];
+    return [...new Set([
+        ...(targetDefinition?.orbitcardPriceNameAliases || []),
+        ...(definition.orbitcardPriceNameAliases || [])
+    ])];
+}
+
+function normalizeOrbitcardPriceToken(value) {
+    return normalizePlanValue(value).replace(/[\s_-]+/g, '');
+}
+
+function resolveOrbitcardPriceNameType(value) {
+    const key = normalizeOrbitcardPriceToken(value);
+    if (!key) return null;
+    return CANONICAL_PLAN_TYPES.find((planType) => (
+        (PLAN_REGISTRY[planType].orbitcardPriceNameAliases || [])
+            .some((alias) => normalizeOrbitcardPriceToken(alias) === key)
+    )) || null;
+}
+
+function resolveOrbitcardPriceIdType(value) {
+    const key = normalizeOrbitcardPriceToken(value);
+    if (!key) return null;
+    return CANONICAL_PLAN_TYPES.find((planType) => (
+        (PLAN_REGISTRY[planType].orbitcardPriceAliases || [])
+            .some((alias) => normalizeOrbitcardPriceToken(alias) === key)
+    )) || null;
+}
+
+function getOrbitcardPriceMatch(price = {}) {
+    const nameType = resolveOrbitcardPriceNameType(price.name);
+    if (nameType) return { planType: nameType, source: 'name' };
+    const idType = resolveOrbitcardPriceIdType(price.id);
+    return idType ? { planType: idType, source: 'id' } : null;
 }
 
 function getDefaultReuseLimit(value, options = {}) {
@@ -187,7 +245,12 @@ module.exports = {
     normalizeCredentialPlan,
     resolveCheckoutPlanName,
     resolveDesolatePlanCode,
+    getOrbitcardPlanType,
     getOrbitcardPriceAliases,
+    getOrbitcardPriceNameAliases,
+    resolveOrbitcardPriceNameType,
+    resolveOrbitcardPriceIdType,
+    getOrbitcardPriceMatch,
     getDefaultReuseLimit,
     getDefaultSafetyMargin
 };

@@ -83,6 +83,53 @@ describe('orbitcard client', () => {
         ] }, 'pro_20x').amount).toBe('145.00');
     });
 
+    it('resolves canonical tiers from historical Orbitcard IDs and explicit price names', () => {
+        const data = { list: [{
+            product_code: 'visa-four-tier',
+            remaining_open_card_num: 20,
+            min_initial_amount: '20',
+            min_retained_balance: '0.10',
+            gpt_plan_prices: [
+                { id: 'plus', name: 'Plus', price: '15.69', currency: 'USD' },
+                { id: 'pro', name: 'Pro 100', price: '92.49', currency: 'USD' },
+                { id: 'pro_20x', name: 'Pro 200', price: '142.38', currency: 'USD' },
+                { id: 'pro500', name: 'Pro 500', price: '500.00', currency: 'USD' }
+            ]
+        }] };
+        const expected = {
+            plus: { id: 'plus', price: 15.69, amount: '65.00' },
+            pro100: { id: 'pro', price: 92.49, amount: '95.00' },
+            pro200: { id: 'pro_20x', price: 142.38, amount: '145.00' },
+            pro500: { id: 'pro500', price: 500, amount: '505.00' }
+        };
+
+        for (const [planType, result] of Object.entries(expected)) {
+            const selection = orbitcard.chooseProductForPlan(data, planType);
+            expect(selection).toMatchObject({
+                success: true,
+                amount: result.amount,
+                planPrice: { id: result.id, price: result.price }
+            });
+        }
+    });
+
+    it('lets an explicit price name override a conflicting generic legacy ID', () => {
+        const data = { list: [{
+            product_code: 'named-pro500',
+            remaining_open_card_num: 20,
+            min_initial_amount: '20',
+            gpt_plan_prices: [{ id: 'pro', name: 'ChatGPT Pro 500', price: '500.00' }]
+        }] };
+
+        expect(orbitcard.chooseProductForPlan(data, 'pro500')).toMatchObject({
+            success: true,
+            planPrice: { id: 'pro', name: 'ChatGPT Pro 500', price: 500 }
+        });
+        expect(orbitcard.chooseProductForPlan(data, 'pro100')).toMatchObject({
+            success: false
+        });
+    });
+
     it('flattens grouped channel responses, normalizes aliases, and deduplicates products', () => {
         const products = orbitcard.normalizeProductList({
             channels: {
