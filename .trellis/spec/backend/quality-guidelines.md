@@ -104,7 +104,7 @@ const manual = getProductSelectionsForPlan(data, planType, {
 - `plan-registry.js` is the canonical source for tier enums, labels, credential aliases, Checkout mappings, Desolate mappings, Orbitcard aliases, reuse limits, and safety margins.
 - Subscription Credential parsing preserves exact `plus`, `pro100`, `pro200`, and `pro500` states; unknown active values remain visible as unknown/raw values rather than becoming Plus.
 - Desolate Open has a documented default only for Plus (`chatgptplusplan`). Pro codes must be supplied explicitly by operator configuration until documented; missing mappings and provider unsupported-plan errors are surfaced clearly.
-- Desolate order creation uses the body field `clientRequestId` for the local idempotency key. Do not substitute undocumented `X-Request-ID` or silently resubmit a provider duplicate (`40005`) as a new order.
+- Desolate order creation follows the closed current `CreateOrderRequest` body schema. When a stable idempotency seed is available, send it through the optional UUID-formatted `Idempotency-Key` header: preserve a supplied UUID and deterministically convert a non-UUID seed. Do not send `clientRequestId` or `clientRef` in the Desolate body; opaque `session` fields remain preserved.
 - New CDK creation/import and new card-plan assignment accept only canonical tiers. Historical task execution, display, notification, billing filter, and CDK lookup remain readable for `pro_5x` and `pro_20x`.
 
 ## Testing Requirements

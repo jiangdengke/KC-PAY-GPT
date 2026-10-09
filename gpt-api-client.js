@@ -6,12 +6,13 @@
  * 基础 URL:   旧协议可直接填写供应商地址；Desolate Open 平台可填写
  *             https://recharge.desolate.run 或完整 /api/v1/open 地址
  * 认证:       旧协议使用 Authorization: Bearer；Desolate Open 使用 X-API-Key
- * 幂等键:     Idempotency-Key（提交代充必须带上）
+ * 幂等键:     旧协议提交必须带 Idempotency-Key；Desolate Open 可选，提供时必须是 UUID
  *
  * 本模块仅做轻量封装：提交代充、查询订单/任务状态、查询套餐/余额、测试连通。
  */
 
 const axios = require('axios');
+const { validate: isUuid, v5: uuidv5 } = require('uuid');
 const orbitcard = require('./orbitcard-client');
 const {
     CANONICAL_PLAN_TYPES,
@@ -22,6 +23,12 @@ const {
 const DEFAULT_BASE_URL = 'https://kc.vpss.eu.cc/';
 const DEFAULT_OPEN_BASE_URL = 'https://recharge.desolate.run/api/v1/open';
 const OPEN_PROVIDER_HOST = 'recharge.desolate.run';
+
+function normalizeDesolateIdempotencyKey(seed) {
+    const value = String(seed ?? '').trim();
+    if (!value || isUuid(value)) return value;
+    return uuidv5(value, uuidv5.URL);
+}
 
 function normalizeBaseUrl(raw) {
     const url = String(raw || '').trim().replace(/\/+$/, '');
@@ -311,9 +318,10 @@ async function submitPay(cfg, { planKey, session, sessionToken, country, currenc
             securityCode,
             session: checked.session
         };
-        const clientRequestId = String(idempotencyKey || clientRef || '').trim();
-        if (clientRequestId) body.clientRequestId = clientRequestId;
-        const res = await request('POST', '/orders', cfg, { body, timeoutMs: 60000 });
+        const seed = String(idempotencyKey ?? '').trim() || String(clientRef ?? '').trim();
+        const idempotencyHeader = normalizeDesolateIdempotencyKey(seed);
+        const headers = idempotencyHeader ? { 'Idempotency-Key': idempotencyHeader } : {};
+        const res = await request('POST', '/orders', cfg, { body, headers, timeoutMs: 60000 });
         if (!res.success) return res;
         const payload = unwrapOpenResponse(res.data) || {};
         const orderId = payload.orderId || null;

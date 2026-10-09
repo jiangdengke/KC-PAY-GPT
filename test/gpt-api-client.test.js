@@ -123,10 +123,17 @@ describe('gpt api client', () => {
             { base_url: 'https://example.test/api/v1', api_key: 'gptk_test' },
             { planKey: 'plus', sessionToken: 'token', cardId: 8, cvc: '123', acceptWarnings: true, country: 'US', currency: 'USD', clientRef: 'kc-cdk-1', idempotencyKey: 'pay-1' }
         );
-        expect(spy.mock.calls[0][0].data).toMatchObject({
-            plan_key: 'plus', card_id: 8, cvc: '123', accept_warnings: true,
-            country: 'US', currency: 'USD', client_ref: 'kc-cdk-1', session: { access_token: 'token' }
+        expect(spy.mock.calls[0][0].data).toEqual({
+            plan_key: 'plus',
+            country: 'US',
+            currency: 'USD',
+            card_id: 8,
+            cvc: '123',
+            accept_warnings: true,
+            client_ref: 'kc-cdk-1',
+            session: { access_token: 'token' }
         });
+        expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toBe('pay-1');
         expect(out).toMatchObject({ orderId: 12, taskId: 34, alreadySubmitted: true, topupCode: 'code-prefix...' });
     });
 
@@ -215,14 +222,137 @@ describe('gpt api client', () => {
             expiryMonth: 12,
             expiryYear: 2032,
             securityCode: '123',
-            session,
-            clientRequestId: 'job-abc'
+            session
         });
+        expect(spy.mock.calls[0][0].data.clientRequestId).toBeUndefined();
+        expect(spy.mock.calls[0][0].data.clientRef).toBeUndefined();
+        expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toMatch(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        );
         expect(spy.mock.calls[0][0].headers['X-Request-ID']).toBeUndefined();
+    });
+
+    it('derives stable UUID idempotency headers from Desolate seeds', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 201,
+            data: { code: 0, data: { orderId: 'ord_abc' } }
+        });
+        const cfg = { base_url: 'https://recharge.desolate.run', api_key: 'ap_live_test' };
+        const input = {
+            planKey: 'chatgptplusplan',
+            session: {
+                user: { id: 'user_1', email: 'demo@example.com' },
+                account: { id: 'acct_1' },
+                accessToken: 'aaa.bbb.ccc',
+                sessionToken: 'opaque-cookie-token',
+                expires: '2099-12-31T00:00:00Z'
+            },
+            newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' }
+        };
+
+        await client.submitPay(cfg, { ...input, idempotencyKey: 'stable-seed' });
+        await client.submitPay(cfg, { ...input, idempotencyKey: 'stable-seed' });
+        await client.submitPay(cfg, { ...input, idempotencyKey: 'different-seed' });
+
+        const keys = spy.mock.calls.map(([request]) => request.headers['Idempotency-Key']);
+        expect(keys[0]).toBe(keys[1]);
+        expect(keys[0]).not.toBe(keys[2]);
+        expect(keys.every((key) => /^[0-9a-f]{8}-[0-9a-f]{4}-[5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(key))).toBe(true);
+    });
+
+    it('preserves a valid Desolate UUID idempotency key unchanged', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 201,
+            data: { code: 0, data: { orderId: 'ord_uuid' } }
+        });
+        const validUuid = '123e4567-e89b-12d3-a456-426614174000';
+        await client.submitPay(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_live_test' },
+            {
+                planKey: 'chatgptplusplan',
+                session: {
+                    user: { id: 'user_1', email: 'demo@example.com' },
+                    account: { id: 'acct_1' },
+                    accessToken: 'aaa.bbb.ccc',
+                    sessionToken: 'opaque-cookie-token',
+                    expires: '2099-12-31T00:00:00Z'
+                },
+                idempotencyKey: validUuid,
+                newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' }
+            }
+        );
+        expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toBe(validUuid);
+    });
+
+    it('keeps the legacy protocol Idempotency-Key behavior', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: { order_id: 'legacy-order', task_id: 'legacy-task' }
+        });
+        await client.submitPay(
+            { base_url: 'https://example.test/api/v1', api_key: 'gptk_test' },
+            {
+                planKey: 'plus',
+                sessionToken: 'token',
+                cardId: 8,
+                cvc: '123',
+                idempotencyKey: 'legacy-seed'
+            }
+        );
+        expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toBe('legacy-seed');
+    });
+
+    it('omits the optional Desolate idempotency header when no stable seed is supplied', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 201,
+            data: { code: 0, data: { orderId: 'ord_without_key' } }
+        });
+        await client.submitPay(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_live_test' },
+            {
+                planKey: 'chatgptplusplan',
+                session: {
+                    user: { id: 'user_1', email: 'demo@example.com' },
+                    account: { id: 'acct_1' },
+                    accessToken: 'aaa.bbb.ccc',
+                    sessionToken: 'opaque-cookie-token',
+                    expires: '2099-12-31T00:00:00Z'
+                },
+                newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' }
+            }
+        );
         expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toBeUndefined();
     });
 
-    it('preserves Desolate duplicate clientRequestId as business code 40005', async () => {
+    it('uses clientRef as a deterministic Desolate seed when the explicit key is blank', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 201,
+            data: { code: 0, data: { orderId: 'ord_client_ref' } }
+        });
+        const input = {
+            planKey: 'chatgptplusplan',
+            session: {
+                user: { id: 'user_1', email: 'demo@example.com' },
+                account: { id: 'acct_1' },
+                accessToken: 'aaa.bbb.ccc',
+                sessionToken: 'opaque-cookie-token',
+                expires: '2099-12-31T00:00:00Z'
+            },
+            idempotencyKey: '   ',
+            clientRef: 'stable-client-ref',
+            newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' }
+        };
+        const cfg = { base_url: 'https://recharge.desolate.run', api_key: 'ap_live_test' };
+
+        await client.submitPay(cfg, input);
+        await client.submitPay(cfg, input);
+
+        const keys = spy.mock.calls.map(([request]) => request.headers['Idempotency-Key']);
+        expect(keys[0]).toBe(keys[1]);
+        expect(keys[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    });
+
+    it('preserves Desolate duplicate request business code 40005', async () => {
         vi.spyOn(axios, 'request').mockResolvedValue({
             status: 200,
             data: { code: 40005, message: '重复请求', data: null }
@@ -243,6 +373,36 @@ describe('gpt api client', () => {
             }
         );
         expect(out).toMatchObject({ success: false, businessCode: 40005, error: '重复请求' });
+    });
+
+    it('preserves HTTP 422 validation details for Desolate order failures', async () => {
+        vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 422,
+            data: {
+                detail: [{
+                    type: 'extra_forbidden',
+                    loc: ['body', 'clientRequestId'],
+                    msg: 'Extra inputs are not permitted'
+                }]
+            }
+        });
+        const out = await client.submitPay(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_live_test' },
+            {
+                planKey: 'chatgptplusplan',
+                session: {
+                    user: { id: 'user_1', email: 'demo@example.com' },
+                    account: { id: 'acct_1' },
+                    accessToken: 'aaa.bbb.ccc',
+                    sessionToken: 'opaque-cookie-token',
+                    expires: '2099-12-31T00:00:00Z'
+                },
+                idempotencyKey: 'same-job',
+                newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' }
+            }
+        );
+        expect(out).toMatchObject({ success: false, status: 422 });
+        expect(out.error).toContain('Extra inputs are not permitted');
     });
 
     it('requires code zero for Desolate Open API success', async () => {
