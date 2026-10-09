@@ -1,0 +1,5 @@
+- [x] Inspect registry, all changed contracts, specs and tests
+- [x] Fix registry/provider/store/UI/Orbitcard gaps
+- [x] Add focused regression tests and update cross-layer spec
+- [x] Run focused/full tests, all changed JS syntax checks, diff check
+- [x] Report findings, files and exact verification results (no commit)

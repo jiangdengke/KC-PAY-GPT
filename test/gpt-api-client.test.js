@@ -147,6 +147,144 @@ describe('gpt api client', () => {
         expect(balance).toMatchObject({ credits: 980, balance: 1250, balanceUsd: '12.50' });
     });
 
+    it('queries Desolate payment regions using the documented response shape and metadata', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            headers: {
+                'X-Request-ID': 'req_regions_1',
+                'Cache-Control': 'no-store, private'
+            },
+            data: {
+                code: 0,
+                message: '成功',
+                data: {
+                    planCode: 'chatgptplusplan',
+                    paymentRegions: [
+                        { code: 'PH', pointsCost: 1, default: true },
+                        { code: 'US', pointsCost: 1, default: false }
+                    ]
+                }
+            }
+        });
+        const out = await client.queryPaymentRegions(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_test_placeholder' },
+            'chatgptplusplan'
+        );
+        expect(out).toMatchObject({
+            success: true,
+            planCode: 'chatgptplusplan',
+            paymentRegions: [{ code: 'PH', default: true }, { code: 'US', default: false }],
+            responseMeta: { requestId: 'req_regions_1', cacheControl: 'no-store, private' }
+        });
+        expect(spy.mock.calls[0][0].url).toBe('https://recharge.desolate.run/api/v1/open/plans/chatgptplusplan/payment-regions');
+        expect(spy.mock.calls[0][0].headers['X-API-Key']).toBe('ap_test_placeholder');
+    });
+
+    it('rejects missing payment-region plan codes without a Plus fallback', async () => {
+        const spy = vi.spyOn(axios, 'request');
+        const out = await client.queryPaymentRegions(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_test_placeholder' },
+            ''
+        );
+        expect(out).toMatchObject({ success: false, status: 400 });
+        expect(out.error).toContain('禁止默认回退 Plus');
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('sends optional paymentRegion only when supplied', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 201,
+            data: { code: 0, data: { orderId: 'ord_region' } }
+        });
+        const session = {
+            user: { id: 'user_1', email: 'demo@example.com' },
+            account: { id: 'acct_1' },
+            accessToken: 'aaa.bbb.ccc',
+            sessionToken: 'opaque-cookie-token',
+            expires: '2099-12-31T00:00:00Z'
+        };
+        const cfg = { base_url: 'https://recharge.desolate.run', api_key: 'ap_test_placeholder' };
+        const input = { planKey: 'chatgptplusplan', session, newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' }, retryOptions: { maxRetries: 0 } };
+        await client.submitPay(cfg, input);
+        await client.submitPay(cfg, { ...input, paymentRegion: 'us' });
+        expect(spy.mock.calls[0][0].data.paymentRegion).toBeUndefined();
+        expect(spy.mock.calls[1][0].data.paymentRegion).toBe('US');
+    });
+
+    it('retries ambiguous Open order failures with the same UUID key and preserves metadata', async () => {
+        const spy = vi.spyOn(axios, 'request')
+            .mockResolvedValueOnce({ status: 503, headers: { 'X-Request-ID': 'req_retry_1', 'Retry-After': '0' }, data: { code: 50001, message: '暂时失败', data: null } })
+            .mockResolvedValueOnce({ status: 201, headers: { 'X-Request-ID': 'req_retry_2', 'Idempotency-Replayed': 'true' }, data: { code: 0, message: '成功', data: { orderId: 'ord_retry' } } });
+        const session = {
+            user: { id: 'user_1', email: 'demo@example.com' },
+            account: { id: 'acct_1' },
+            accessToken: 'aaa.bbb.ccc',
+            sessionToken: 'opaque-cookie-token',
+            expires: '2099-12-31T00:00:00Z'
+        };
+        const out = await client.submitPay(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_test_placeholder' },
+            {
+                planKey: 'chatgptplusplan',
+                session,
+                idempotencyKey: 'stable-order-seed',
+                newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' },
+                retryOptions: { maxRetries: 1, baseDelayMs: 0 }
+            }
+        );
+        const keys = spy.mock.calls.map(([request]) => request.headers['Idempotency-Key']);
+        expect(out).toMatchObject({ success: true, orderId: 'ord_retry', retryCount: 1, idempotencyReplayed: true, requestId: 'req_retry_2' });
+        expect(keys).toHaveLength(2);
+        expect(keys[0]).toBe(keys[1]);
+    });
+
+    it('does not retry ordinary Open HTTP 4xx business errors', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 422,
+            headers: { 'X-Request-ID': 'req_4xx' },
+            data: { code: 40020, message: '请求参数错误', data: null }
+        });
+        const session = {
+            user: { id: 'user_1', email: 'demo@example.com' },
+            account: { id: 'acct_1' },
+            accessToken: 'aaa.bbb.ccc',
+            sessionToken: 'opaque-cookie-token',
+            expires: '2099-12-31T00:00:00Z'
+        };
+        const out = await client.submitPay(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_test_placeholder' },
+            {
+                planKey: 'chatgptplusplan',
+                session,
+                newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' },
+                retryOptions: { maxRetries: 3, baseDelayMs: 0 }
+            }
+        );
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(out).toMatchObject({ success: false, status: 422, businessCode: 40020, requestId: 'req_4xx' });
+    });
+
+    it('creates a storage-safe allowlisted order summary without session or captcha URL', () => {
+        const summary = client.normalizeOpenOrderSummary({
+            orderId: 'ord_safe',
+            status: 'processing',
+            planCode: 'chatgptplusplan',
+            regionCode: 'PH',
+            amount: 19.99,
+            currency: 'USD',
+            createdAt: '2026-09-03T00:00:00Z',
+            session: { accessToken: 'opaque_access_placeholder', sessionToken: 'opaque_session_placeholder' },
+            captcha: { id: 'cap_1', status: 'pending', url: 'https://verify.example/#opaque-ticket' },
+            cardNumber: '4242424242424242',
+            internalSecret: 'must-not-persist'
+        }, { requestId: 'req_safe', idempotencyReplayed: false });
+        expect(summary).toMatchObject({ orderId: 'ord_safe', regionCode: 'PH', sessionUpdated: true, responseMeta: { requestId: 'req_safe' } });
+        expect(summary.session).toBeUndefined();
+        expect(summary.captcha.url).toBeUndefined();
+        expect(summary.cardNumber).toBeUndefined();
+        expect(summary.internalSecret).toBeUndefined();
+    });
+
     it('uses the Desolate Open account endpoint and X-API-Key auth', async () => {
         const spy = vi.spyOn(axios, 'request').mockResolvedValue({
             status: 200,
@@ -229,6 +367,29 @@ describe('gpt api client', () => {
         expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toMatch(
             /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
         );
+        expect(spy.mock.calls[0][0].headers['X-Request-ID']).toMatch(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        );
+    });
+
+    it('preserves legacy request behavior when a request ID is supplied', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            data: { gpt: [], credit: [] }
+        });
+
+        const out = await client.request(
+            'GET',
+            '/plans',
+            { base_url: 'https://example.test/api/v1', api_key: 'gptk_test' },
+            { requestId: 'not-a-uuid', headers: { 'X-Request-ID': 'also-not-a-uuid', 'X-Trace-Mode': 'legacy' } }
+        );
+
+        expect(out.success).toBe(true);
+        expect(spy.mock.calls[0][0].headers).toMatchObject({
+            Authorization: 'Bearer gptk_test',
+            'X-Trace-Mode': 'legacy'
+        });
         expect(spy.mock.calls[0][0].headers['X-Request-ID']).toBeUndefined();
     });
 
@@ -302,7 +463,7 @@ describe('gpt api client', () => {
         expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toBe('legacy-seed');
     });
 
-    it('omits the optional Desolate idempotency header when no stable seed is supplied', async () => {
+    it('always sends a UUID idempotency header for Desolate Open orders', async () => {
         const spy = vi.spyOn(axios, 'request').mockResolvedValue({
             status: 201,
             data: { code: 0, data: { orderId: 'ord_without_key' } }
@@ -321,7 +482,9 @@ describe('gpt api client', () => {
                 newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' }
             }
         );
-        expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toBeUndefined();
+        expect(spy.mock.calls[0][0].headers['Idempotency-Key']).toMatch(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        );
     });
 
     it('uses clientRef as a deterministic Desolate seed when the explicit key is blank', async () => {

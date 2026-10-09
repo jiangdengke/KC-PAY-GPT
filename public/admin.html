@@ -329,6 +329,13 @@
                     </div>
                 </div>
                 <div class="form-group" style="margin-top: 16px;">
+                    <label for="gpt_api_payment_region">Desolate 支付地区（可选）</label>
+                    <input type="text" id="gpt_api_payment_region" class="asset-input" placeholder="留空由供应商选择默认地区" maxlength="2" pattern="[A-Za-z]{2}" autocomplete="off">
+                    <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
+                        仅在明确配置时发送两位大写地区代码；留空会省略 paymentRegion，由 Desolate 按文档默认地区选择。不会从国家设置自动推导。
+                    </p>
+                </div>
+                <div class="form-group" style="margin-top: 16px;">
                     <label for="gpt_api_card_source">代充卡源</label>
                     <select id="gpt_api_card_source" class="asset-input">
                         <option value="local">本地卡池</option>

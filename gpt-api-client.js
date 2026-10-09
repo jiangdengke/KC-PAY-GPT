@@ -6,13 +6,15 @@
  * 基础 URL:   旧协议可直接填写供应商地址；Desolate Open 平台可填写
  *             https://recharge.desolate.run 或完整 /api/v1/open 地址
  * 认证:       旧协议使用 Authorization: Bearer；Desolate Open 使用 X-API-Key
- * 幂等键:     旧协议提交必须带 Idempotency-Key；Desolate Open 可选，提供时必须是 UUID
+ * 幂等键: 旧协议提交必须带 Idempotency-Key；Desolate Open 提交使用 UUID 并在重试时复用
+ * 请求追踪: Desolate Open 请求携带 UUID X-Request-ID；显式 requestId 必须是 UUID，
+ *           同一提交操作的传输重试复用同一个追踪 ID；响应 requestId 与 Retry-After 会原样暴露
  *
  * 本模块仅做轻量封装：提交代充、查询订单/任务状态、查询套餐/余额、测试连通。
  */
 
 const axios = require('axios');
-const { validate: isUuid, v5: uuidv5 } = require('uuid');
+const { validate: isUuid, v4: uuidv4, v5: uuidv5 } = require('uuid');
 const orbitcard = require('./orbitcard-client');
 const {
     CANONICAL_PLAN_TYPES,
@@ -92,10 +94,78 @@ function maskApiKey(key) {
     return `${k.slice(0, 6)}\u2026${k.slice(-4)}`;
 }
 
+function normalizeRequestId(value) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return uuidv4();
+    return isUuid(raw) ? raw : null;
+}
+
+function getResponseHeader(headers, name) {
+    if (!headers || typeof headers !== 'object') return undefined;
+    const wanted = String(name).toLowerCase();
+    const key = Object.keys(headers).find((candidate) => String(candidate).toLowerCase() === wanted);
+    return key ? headers[key] : undefined;
+}
+
+function withoutRequestIdHeader(headers) {
+    return Object.fromEntries(Object.entries(headers || {}).filter(([name]) => String(name).toLowerCase() !== 'x-request-id'));
+}
+
+function parseRetryAfter(value, now = Date.now()) {
+    if (value == null || String(value).trim() === '') return { value: null, seconds: null, ms: null };
+    const raw = String(value).trim();
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+        return { value: raw, seconds, ms: Math.round(seconds * 1000) };
+    }
+    const timestamp = Date.parse(raw);
+    if (Number.isFinite(timestamp)) {
+        return { value: raw, seconds: Math.max(0, (timestamp - now) / 1000), ms: Math.max(0, timestamp - now) };
+    }
+    return { value: raw, seconds: null, ms: null };
+}
+
+function buildResponseMeta(headers, status = null) {
+    const requestId = getResponseHeader(headers, 'x-request-id');
+    const replayed = getResponseHeader(headers, 'idempotency-replayed');
+    const retryAfter = parseRetryAfter(getResponseHeader(headers, 'retry-after'));
+    const cacheControl = getResponseHeader(headers, 'cache-control');
+    const location = getResponseHeader(headers, 'location');
+    return {
+        status: Number.isFinite(Number(status)) ? Number(status) : null,
+        requestId: requestId == null ? null : String(requestId),
+        idempotencyReplayed: replayed != null && String(replayed).trim().toLowerCase() === 'true',
+        retryAfter: retryAfter.value,
+        retryAfterSeconds: retryAfter.seconds,
+        retryAfterMs: retryAfter.ms,
+        cacheControl: cacheControl == null ? null : String(cacheControl),
+        location: location == null ? null : String(location)
+    };
+}
+
+function isRetryableOpenOrderResponse(result) {
+    return Boolean(result?.networkError)
+        || Number(result?.status) === 429
+        || Number(result?.status) >= 500;
+}
+
+function getRetryOptions(cfg = {}, options = {}) {
+    const configuredMax = options.maxRetries ?? cfg.open_order_max_retries ?? process.env.DESOLATE_OPEN_ORDER_MAX_RETRIES ?? 2;
+    const configuredBase = options.baseDelayMs ?? cfg.open_order_retry_base_ms ?? process.env.DESOLATE_OPEN_RETRY_BASE_MS ?? 1000;
+    return {
+        maxRetries: Math.max(0, Number.isInteger(Number(configuredMax)) ? Number(configuredMax) : 2),
+        baseDelayMs: Math.max(0, Number.isFinite(Number(configuredBase)) ? Number(configuredBase) : 1000)
+    };
+}
+
+function sleepForRetry(ms) {
+    return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
 /**
  * 统一请求封装，始终返回 { success, status?, data?, error? }
  */
-async function request(method, path, cfg, { body, headers: extraHeaders, timeoutMs } = {}) {
+async function request(method, path, cfg, { body, headers: extraHeaders, timeoutMs, requestId } = {}) {
     const openProtocol = isDesolateOpenProtocol(cfg);
     const base = resolveBaseUrl(cfg);
     const apiKey = String(cfg?.api_key || '').trim();
@@ -103,11 +173,22 @@ async function request(method, path, cfg, { body, headers: extraHeaders, timeout
         return { success: false, error: '缺少 API Key' };
     }
 
+    const suppliedRequestId = requestId ?? getResponseHeader(extraHeaders, 'x-request-id');
+    const outboundRequestId = openProtocol ? normalizeRequestId(suppliedRequestId) : undefined;
+    if (openProtocol && !outboundRequestId) {
+        return {
+            success: false,
+            status: 400,
+            requestId: null,
+            error: 'X-Request-ID 必须是 UUID'
+        };
+    }
     const headers = {
         ...(openProtocol ? { 'X-API-Key': apiKey } : { Authorization: `Bearer ${apiKey}` }),
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        ...(extraHeaders || {})
+        ...withoutRequestIdHeader(extraHeaders),
+        ...(openProtocol ? { 'X-Request-ID': outboundRequestId } : {})
     };
 
     try {
@@ -127,16 +208,19 @@ async function request(method, path, cfg, { body, headers: extraHeaders, timeout
         const ok = response.status >= 200 && response.status < 300
             && (!openProtocol || data?.code === 0);
         const responseHeaders = response.headers || {};
-        const retryAfterRaw = responseHeaders['retry-after'] ?? responseHeaders['Retry-After'];
-        const retryAfterSeconds = Number(retryAfterRaw);
+        const responseMeta = buildResponseMeta(responseHeaders, response.status);
         return {
             success: ok,
             status: response.status,
             data,
             headers: responseHeaders,
-            retryAfterMs: Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
-                ? retryAfterSeconds * 1000
-                : null,
+            responseMeta,
+            requestId: responseMeta.requestId,
+            outboundRequestId,
+            idempotencyReplayed: responseMeta.idempotencyReplayed,
+            retryAfter: responseMeta.retryAfter,
+            retryAfterSeconds: responseMeta.retryAfterSeconds,
+            retryAfterMs: responseMeta.retryAfterMs,
             businessCode: openProtocol && Number.isInteger(Number(data?.code)) && Number(data.code) !== 0
                 ? Number(data.code)
                 : null,
@@ -151,7 +235,25 @@ async function request(method, path, cfg, { body, headers: extraHeaders, timeout
         } else if (error?.message) {
             detail = error.message;
         }
-        return { success: false, error: detail };
+        const responseMeta = buildResponseMeta(error?.response?.headers, error?.response?.status);
+        return {
+            success: false,
+            status: error?.response?.status,
+            data: error?.response?.data,
+            error: detail,
+            networkError: !error?.response,
+            responseMeta,
+            requestId: responseMeta.requestId,
+            outboundRequestId,
+            idempotencyReplayed: responseMeta.idempotencyReplayed,
+            retryAfter: responseMeta.retryAfter,
+            retryAfterSeconds: responseMeta.retryAfterSeconds,
+            retryAfterMs: responseMeta.retryAfterMs,
+            businessCode: openProtocol && Number.isInteger(Number(error?.response?.data?.code))
+                && Number(error.response.data.code) !== 0
+                ? Number(error.response.data.code)
+                : null
+        };
     }
 }
 
@@ -160,6 +262,52 @@ function unwrapOpenResponse(data) {
         && Object.prototype.hasOwnProperty.call(data, 'data')
         ? data.data
         : data;
+}
+
+const OPEN_ORDER_SUMMARY_KEYS = Object.freeze([
+    'orderId', 'status', 'targetEmail', 'planCode', 'regionCode', 'paymentRegion', 'amount', 'currency',
+    'createdAt', 'updatedAt', 'completedAt', 'message', 'failureCode', 'failureMessage',
+    'subscriptionCancelled', 'stage', 'captcha', 'payment'
+]);
+
+function normalizeOpenOrderSummary(data, responseMeta = null) {
+    const envelope = data && typeof data === 'object' ? data : {};
+    const source = envelope.code === 0 && envelope.data && typeof envelope.data === 'object'
+        ? envelope.data
+        : envelope;
+    const summary = {};
+    for (const key of OPEN_ORDER_SUMMARY_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+        if (key === 'payment' && source.payment && typeof source.payment === 'object') {
+            summary.payment = {};
+            for (const paymentKey of ['amount', 'currency']) {
+                if (Object.prototype.hasOwnProperty.call(source.payment, paymentKey)) summary.payment[paymentKey] = source.payment[paymentKey];
+            }
+            continue;
+        }
+        if (key === 'captcha' && source.captcha && typeof source.captcha === 'object') {
+            summary.captcha = {};
+            for (const captchaKey of ['id', 'status', 'expires_at', 'expiresAt']) {
+                if (Object.prototype.hasOwnProperty.call(source.captcha, captchaKey)) summary.captcha[captchaKey] = source.captcha[captchaKey];
+            }
+            continue;
+        }
+        summary[key] = source[key];
+    }
+    const providerMessage = source._providerMessage || envelope._providerMessage || envelope.message;
+    if (!summary.message && providerMessage) summary.message = String(providerMessage);
+    if (Number.isInteger(Number(envelope.code)) && Number(envelope.code) !== 0) {
+        summary.businessCode = Number(envelope.code);
+    }
+    if (source.session && typeof source.session === 'object') summary.sessionUpdated = true;
+    if (responseMeta && typeof responseMeta === 'object') {
+        const safeMeta = {};
+        for (const key of ['status', 'requestId', 'idempotencyReplayed', 'retryAfter', 'retryAfterSeconds', 'retryAfterMs', 'cacheControl', 'location']) {
+            if (Object.prototype.hasOwnProperty.call(responseMeta, key)) safeMeta[key] = responseMeta[key];
+        }
+        if (Object.keys(safeMeta).length) summary.responseMeta = safeMeta;
+    }
+    return summary;
 }
 
 function normalizeOpenSession(session, sessionToken) {
@@ -298,7 +446,7 @@ async function inspectPay(cfg, { planKey, session, sessionToken }) {
  * 提交 GPT 代充 (POST /pay)
  * @returns { success, orderId?, taskId?, data, error? }
  */
-async function submitPay(cfg, { planKey, session, sessionToken, country, currency, newCard, cardId, cvc, acceptWarnings, billingAddress, proxy, clientRef, idempotencyKey }) {
+async function submitPay(cfg, { planKey, session, sessionToken, country, currency, paymentRegion, newCard, cardId, cvc, acceptWarnings, billingAddress, proxy, clientRef, idempotencyKey, requestId, retryOptions }) {
     if (isDesolateOpenProtocol(cfg)) {
         const checked = validateOpenSession(session, sessionToken);
         if (!checked.valid) return { success: false, status: 400, error: checked.error };
@@ -310,8 +458,15 @@ async function submitPay(cfg, { planKey, session, sessionToken, country, currenc
         if (!/^\d{13,19}$/.test(cardNumber) || !Number.isInteger(expiryMonth) || !Number.isInteger(expiryYear) || !/^\d{3,4}$/.test(securityCode)) {
             return { success: false, status: 400, error: '银行卡字段不完整或格式无效' };
         }
+        const normalizedPlanCode = String(planKey || '').trim();
+        if (!normalizedPlanCode) return { success: false, status: 400, error: '缺少 planCode，禁止默认回退 Plus' };
+        const selectedPaymentRegion = String(paymentRegion || '').trim().toUpperCase();
+        if (selectedPaymentRegion && (!/^[A-Z]{2}$/.test(selectedPaymentRegion) || selectedPaymentRegion === 'ZZ')) {
+            return { success: false, status: 400, error: 'paymentRegion 必须是有效的两位大写地区代码' };
+        }
         const body = {
-            planCode: String(planKey || '').trim(),
+            planCode: normalizedPlanCode,
+            ...(selectedPaymentRegion ? { paymentRegion: selectedPaymentRegion } : {}),
             cardNumber,
             expiryMonth,
             expiryYear,
@@ -319,10 +474,33 @@ async function submitPay(cfg, { planKey, session, sessionToken, country, currenc
             session: checked.session
         };
         const seed = String(idempotencyKey ?? '').trim() || String(clientRef ?? '').trim();
-        const idempotencyHeader = normalizeDesolateIdempotencyKey(seed);
-        const headers = idempotencyHeader ? { 'Idempotency-Key': idempotencyHeader } : {};
-        const res = await request('POST', '/orders', cfg, { body, headers, timeoutMs: 60000 });
-        if (!res.success) return res;
+        const idempotencyHeader = normalizeDesolateIdempotencyKey(seed) || uuidv4();
+        const outboundRequestId = normalizeRequestId(requestId);
+        if (!outboundRequestId) return { success: false, status: 400, error: 'X-Request-ID 必须是 UUID' };
+        const headers = { 'Idempotency-Key': idempotencyHeader };
+        const retry = getRetryOptions(cfg, retryOptions);
+        const retryHistory = [];
+        let res = null;
+        let retryCount = 0;
+        while (true) {
+            res = await request('POST', '/orders', cfg, { body, headers, requestId: outboundRequestId, timeoutMs: 60000 });
+            retryHistory.push({
+                status: res.status ?? null,
+                requestId: res.requestId || null,
+                businessCode: res.businessCode ?? null,
+                retryAfter: res.retryAfter ?? null,
+                retryAfterSeconds: res.retryAfterSeconds ?? null,
+                retryAfterMs: res.retryAfterMs ?? null
+            });
+            if (!isRetryableOpenOrderResponse(res) || retryCount >= retry.maxRetries) break;
+            const retryAfterMs = Number(res.retryAfterMs);
+            const backoffMs = Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+                ? retryAfterMs
+                : Math.min(60000, retry.baseDelayMs * (2 ** retryCount));
+            retryCount += 1;
+            await sleepForRetry(backoffMs);
+        }
+        if (!res.success) return { ...res, idempotencyKey: idempotencyHeader, requestId: res.requestId || null, outboundRequestId, retryCount, retryHistory };
         const payload = unwrapOpenResponse(res.data) || {};
         const orderId = payload.orderId || null;
         return {
@@ -334,7 +512,17 @@ async function submitPay(cfg, { planKey, session, sessionToken, country, currenc
             id: orderId,
             data: payload,
             message: extractProviderMessage(payload, res.data?.message),
-            raw: res.data
+            raw: res.data,
+            responseMeta: res.responseMeta,
+            requestId: res.requestId,
+            outboundRequestId,
+            idempotencyReplayed: res.idempotencyReplayed,
+            retryAfter: res.retryAfter,
+            retryAfterSeconds: res.retryAfterSeconds,
+            retryAfterMs: res.retryAfterMs,
+            idempotencyKey: idempotencyHeader,
+            retryCount,
+            retryHistory
         };
     }
     const body = {
@@ -478,6 +666,11 @@ async function queryOrder(cfg, orderId) {
         rawStatus: extractStatus(data),
         stage: extractStage(data),
         captcha: extractCaptcha(data),
+        responseMeta: res.responseMeta,
+        requestId: res.requestId,
+        idempotencyReplayed: res.idempotencyReplayed,
+        retryAfter: res.retryAfter,
+        retryAfterSeconds: res.retryAfterSeconds,
         retryAfterMs: res.retryAfterMs
     };
 }
@@ -539,9 +732,53 @@ async function queryAccount(cfg) {
     const res = await request('GET', '/account', cfg);
     if (!res.success) return res;
     const data = unwrapOpenResponse(res.data);
-    if (!data || typeof data !== 'object') return { success: false, status: res.status, error: '账户接口返回格式无效' };
-    return { success: true, status: res.status, data, raw: res.data, availablePoints: data.availablePoints ?? null };
+    if (!data || typeof data !== 'object') return { success: false, status: res.status, error: '账户接口返回格式无效', responseMeta: res.responseMeta };
+    return {
+        success: true,
+        status: res.status,
+        data,
+        raw: res.data,
+        availablePoints: data.availablePoints ?? null,
+        responseMeta: res.responseMeta,
+        requestId: res.requestId,
+        retryAfter: res.retryAfter,
+        retryAfterSeconds: res.retryAfterSeconds,
+        retryAfterMs: res.retryAfterMs
+    };
 }
+
+async function queryPaymentRegions(cfg, planCode) {
+    if (!isDesolateOpenProtocol(cfg)) {
+        return { success: false, status: 400, error: '当前 API 不是 Desolate Open 协议' };
+    }
+    const normalizedPlanCode = String(planCode || '').trim();
+    if (!normalizedPlanCode) {
+        return { success: false, status: 400, error: '缺少 planCode，禁止默认回退 Plus' };
+    }
+    const res = await request('GET', `/plans/${encodeURIComponent(normalizedPlanCode)}/payment-regions`, cfg);
+    if (!res.success) return res;
+    const data = unwrapOpenResponse(res.data);
+    if (!data || typeof data !== 'object' || !Array.isArray(data.paymentRegions)) {
+        return { success: false, status: res.status, error: '支付地区接口返回格式无效', responseMeta: res.responseMeta };
+    }
+    return {
+        success: true,
+        status: res.status,
+        data,
+        planCode: data.planCode || normalizedPlanCode,
+        paymentRegions: data.paymentRegions,
+        raw: res.data,
+        responseMeta: res.responseMeta,
+        requestId: res.requestId,
+        idempotencyReplayed: res.idempotencyReplayed,
+        retryAfter: res.retryAfter,
+        retryAfterSeconds: res.retryAfterSeconds,
+        retryAfterMs: res.retryAfterMs
+    };
+}
+
+const fetchPaymentRegions = queryPaymentRegions;
+const listPaymentRegions = queryPaymentRegions;
 
 function extractStatus(data) {
     if (!data || typeof data !== 'object') return '';
@@ -602,6 +839,27 @@ function formatProgressMessage(data, pollCount = 0) {
     }
     const message = IN_PROGRESS_STATUS_MESSAGES[key] || '订单已提交，正在同步最新状态';
     return Number.isFinite(count) && count > 0 ? `${message}（已查询 ${Math.floor(count)} 次）` : message;
+}
+
+function getGptOrderPollDelayMs({
+    pollCount = 0,
+    baseDelayMs = 5000,
+    maxDelayMs = 60000,
+    status = '',
+    retryAfterMs = null,
+    captchaPending = false
+} = {}) {
+    const base = Math.max(0, Number.isFinite(Number(baseDelayMs)) ? Number(baseDelayMs) : 5000);
+    const max = Math.max(base, Number.isFinite(Number(maxDelayMs)) ? Number(maxDelayMs) : 60000);
+    const retryAfter = Number(retryAfterMs);
+    if (String(status).trim() === '429' && Number.isFinite(retryAfter) && retryAfter >= 0) {
+        return retryAfter;
+    }
+    const normalizedStatus = String(status || '').trim().toLowerCase();
+    const pending = captchaPending || normalizedStatus === 'pending' || normalizedStatus === 'processing';
+    if (!pending) return base;
+    const count = Math.max(0, Math.floor(Number(pollCount) || 0));
+    return Math.min(max, base * (2 ** Math.min(count, 10)));
 }
 
 /**
@@ -733,11 +991,16 @@ module.exports = {
     extractProviderMessage,
     extractStatus,
     formatProgressMessage,
+    getGptOrderPollDelayMs,
     isDesolateOpenProtocol,
     resolveBaseUrl,
     resolveOpenPlanCode,
     resolveOpenPlanMappings,
     normalizeOpenPlanMappingConfig,
     queryAccount,
+    queryPaymentRegions,
+    fetchPaymentRegions,
+    listPaymentRegions,
+    normalizeOpenOrderSummary,
     validateOpenSession
 };

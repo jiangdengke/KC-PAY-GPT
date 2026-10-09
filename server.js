@@ -2549,6 +2549,7 @@ app.get('/api/admin/gpt-api', async (req, res) => {
                 orbitcard_safety_margins: cfg.orbitcard_safety_margins,
                 country: cfg.country,
                 currency: cfg.currency,
+                payment_region: cfg.payment_region,
                 card_source: cfg.card_source,
                 orbitcard_base_url: cfg.orbitcard_base_url,
                 orbitcard_api_key_saved: Boolean(cfg.orbitcard_api_key),
@@ -2577,6 +2578,7 @@ app.post('/api/admin/gpt-api', async (req, res) => {
             orbitcard_safety_margins: body.orbitcard_safety_margins,
             country: body.country,
             currency: body.currency,
+            payment_region: body.payment_region,
             card_source: body.card_source,
             orbitcard_base_url: body.orbitcard_base_url,
             orbitcard_api_key: body.orbitcard_api_key,
@@ -2708,6 +2710,7 @@ app.post('/api/admin/gpt-api/test', async (req, res) => {
             plan_key: String(body.plan_key || '').trim() || saved.plan_key,
             plan_mappings: { ...saved.plan_mappings, ...(body.plan_mappings || {}) },
             card_source: String(body.card_source || '').trim() || saved.card_source,
+            payment_region: String(body.payment_region ?? '').trim().toUpperCase() || saved.payment_region,
             orbitcard_base_url: String(body.orbitcard_base_url || '').trim() || saved.orbitcard_base_url,
             orbitcard_api_key: String(body.orbitcard_api_key || '').trim() || saved.orbitcard_api_key,
             orbitcard_api_secret: String(body.orbitcard_api_secret || '').trim() || saved.orbitcard_api_secret
@@ -3771,21 +3774,9 @@ function mapGptApiPlanKey(planType, cfg = {}) {
     throw new Error(`第三方 API 不支持套餐: ${type}`);
 }
 
-function sanitizeGptApiRaw(data, openProtocol) {
-    if (!openProtocol || !data || typeof data !== 'object') return data;
-    if (Array.isArray(data)) return data.map((item) => sanitizeGptApiRaw(item, true));
-    const copy = {};
-    for (const [key, value] of Object.entries(data)) {
-        if (key === 'session') continue;
-        if (key === 'captcha' && value && typeof value === 'object' && !Array.isArray(value)) {
-            const safeCaptcha = sanitizeGptApiRaw(value, true);
-            delete safeCaptcha.url;
-            copy[key] = safeCaptcha;
-            continue;
-        }
-        copy[key] = sanitizeGptApiRaw(value, true);
-    }
-    return copy;
+function sanitizeGptApiRaw(data, openProtocol, responseMeta = null) {
+    if (!openProtocol) return data;
+    return gptApi.normalizeOpenOrderSummary(data, responseMeta);
 }
 
 function parseCardExpiry(value) {
@@ -4038,6 +4029,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             session: sessionPayload,
             country: cfg.country,
             currency: cfg.currency,
+            paymentRegion: cfg.payment_region,
             newCard,
             proxy,
             clientRef: `kc-cdk-${cdk}-${jobKey}`,
@@ -4046,9 +4038,20 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
 
         if (!submit.success) {
             const statusText = submit.status ? ` (HTTP ${submit.status})` : '';
+            const businessCodeText = submit.businessCode != null ? ` (businessCode ${submit.businessCode})` : '';
             const detail = submit.error
                 || (submit.data && typeof submit.data === 'object' ? JSON.stringify(submit.data).slice(0, 300) : '');
-            throw new Error(`代充提交失败${statusText}: ${detail || '未知错误'}`);
+            const submitError = new Error(`代充提交失败${statusText}${businessCodeText}: ${detail || '未知错误'}`);
+            if (openProtocol) {
+                submitError.gptApiRaw = JSON.stringify(sanitizeGptApiRaw({
+                    ...(submit.data && typeof submit.data === 'object' ? submit.data : {}),
+                    ...(submit.businessCode != null ? { code: submit.businessCode } : {})
+                }, true, {
+                    ...(submit.responseMeta || {}),
+                    status: submit.status ?? submit.responseMeta?.status ?? null
+                }));
+            }
+            throw submitError;
         }
 
         const orderId = submit.orderId || submit.taskId || submit.id;
@@ -4063,7 +4066,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         await setProgress('running', 35, submit.message || '订单已创建，正在等待处理...', {
             gptApiOrderId: orderId,
             gptApiTaskId: taskId,
-            gptApiRaw: JSON.stringify(sanitizeGptApiRaw(submittedPayload, openProtocol)),
+            gptApiRaw: JSON.stringify(sanitizeGptApiRaw(submittedPayload, openProtocol, submit.responseMeta)),
             gptApiTopupCode: submit.topupCode
         });
         if (orbitcardRechargeRecorded) {
@@ -4074,14 +4077,22 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         let finalStatus = 'running';
         let finalMessage = '订单正在处理中';
         let lastRaw = submit.data;
-        const maxPolls = Number(process.env.GPT_API_MAX_POLLS || 120);
-        const pollIntervalMs = Number(process.env.GPT_API_POLL_INTERVAL_MS || 5000);
+        let lastResponseMeta = submit.responseMeta || null;
+        const configuredMaxPolls = process.env.GPT_API_MAX_POLLS;
+        const openPollSafetyCap = Number(configuredMaxPolls);
+        const maxPolls = openProtocol
+            ? (String(configuredMaxPolls ?? '').trim() !== '' && Number.isFinite(openPollSafetyCap) && openPollSafetyCap >= 0
+                ? Math.floor(openPollSafetyCap)
+                : null)
+            : Number(configuredMaxPolls || 120);
+        const configuredPollIntervalMs = Number(process.env.GPT_API_POLL_INTERVAL_MS || 5000);
+        const pollIntervalMs = Number.isFinite(configuredPollIntervalMs) ? Math.max(0, configuredPollIntervalMs) : 5000;
         let nextPollDelayMs = pollIntervalMs;
         let pollCount = 0;
         let captchaRequired = false;
         let captchaId = '';
 
-        while (pollCount < maxPolls || captchaRequired) {
+        while (maxPolls == null || pollCount < maxPolls) {
             pollCount += 1;
             await sleep(nextPollDelayMs);
 
@@ -4095,12 +4106,23 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
 
             if (!queryRes || !queryRes.success) {
                 logTask(jobKey, `状态轮询第 ${pollCount} 次失败: ${queryRes?.error || '未知错误'}`, 'warn');
-                nextPollDelayMs = Math.min(60000, Math.max(pollIntervalMs, Number(queryRes?.retryAfterMs || 0)));
+                if (openProtocol) {
+                    nextPollDelayMs = gptApi.getGptOrderPollDelayMs({
+                        pollCount,
+                        baseDelayMs: pollIntervalMs,
+                        maxDelayMs: 60000,
+                        status: queryRes?.status,
+                        retryAfterMs: Number(queryRes?.status) === 429 ? queryRes?.retryAfterMs : null,
+                        captchaPending: captchaRequired
+                    });
+                } else {
+                    nextPollDelayMs = Math.min(60000, Math.max(pollIntervalMs, Number(queryRes?.retryAfterMs || 0)));
+                }
                 continue;
             }
-            nextPollDelayMs = pollIntervalMs;
 
             lastRaw = queryRes.data;
+            lastResponseMeta = queryRes.responseMeta || null;
             const providerMessage = queryRes.message || gptApi.extractProviderMessage(lastRaw);
             let sessionUpdate = null;
             if (openProtocol && lastRaw?.session && typeof lastRaw.session === 'object') {
@@ -4142,9 +4164,23 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                     : (stage === 'captcha_submitted' && captchaId
                     ? { id: captchaId, status: 'submitted', url: null, expiresAt: null, stage }
                     : null));
+            if (openProtocol) {
+                nextPollDelayMs = gptApi.getGptOrderPollDelayMs({
+                    pollCount,
+                    baseDelayMs: pollIntervalMs,
+                    maxDelayMs: 60000,
+                    status: rawStatus,
+                    captchaPending: isCaptchaPending
+                });
+            } else {
+                nextPollDelayMs = pollIntervalMs;
+            }
             const progress = Math.min(95, 40 + pollCount);
 
-            if (isTerminalGptApiStatus(rawStatus)) {
+            const isTerminal = openProtocol
+                ? rawStatus === 'succeeded' || rawStatus === 'failed'
+                : isTerminalGptApiStatus(rawStatus);
+            if (isTerminal) {
                 const businessResult = lastRaw && typeof lastRaw.result === 'object' ? lastRaw.result : {};
                 const succeeded = openProtocol
                     ? rawStatus === 'succeeded'
@@ -4177,7 +4213,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                     succeeded ? 100 : 99,
                     finalMessage,
                     {
-                        gptApiRaw: JSON.stringify(sanitizeGptApiRaw(lastRaw, openProtocol)),
+                        gptApiRaw: JSON.stringify(sanitizeGptApiRaw(lastRaw, openProtocol, lastResponseMeta)),
                         gptApiTopupCode: gptApi.extractTopupCode(lastRaw),
                         captcha: null,
                         ...(sessionUpdate ? { sessionPayload: sessionUpdate } : {})
@@ -4207,7 +4243,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 reason: finalMessage
             });
             await setProgress(finalStatus, 99, finalMessage, {
-                gptApiRaw: JSON.stringify(sanitizeGptApiRaw(lastRaw, openProtocol)),
+                gptApiRaw: JSON.stringify(sanitizeGptApiRaw(lastRaw, openProtocol, lastResponseMeta)),
                 gptApiTopupCode: gptApi.extractTopupCode(lastRaw),
                 captcha: null
             });
@@ -4258,7 +4294,10 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
     } catch (error) {
         console.error(`[GPT API Task Error] ${jobKey}:`, error);
         const manualReviewMessage = getManualReviewMessage(error.message);
-        const customerFailureMessage = '本次开通未完成，已转人工确认，请联系客服处理后再试';
+        const isSubmitFailure = String(error?.message || '').startsWith('代充提交失败');
+        const customerFailureMessage = isSubmitFailure
+            ? manualReviewMessage
+            : '本次开通未完成，已转人工确认，请联系客服处理后再试';
         await store.createActivationManualHold({
             accountKey,
             accountEmail,
@@ -4283,6 +4322,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             message: customerFailureMessage,
             progress: 0,
             cdkCode: cdk,
+            gptApiRaw: error.gptApiRaw || null,
             gptApiCaptcha: 'null'
         });
         broadcastToTask(jobKey, {

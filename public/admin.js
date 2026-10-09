@@ -5368,6 +5368,7 @@
                 const keyEl = document.getElementById('gpt_api_key');
                 const keyHint = document.getElementById('gpt_api_key_hint');
                 const cardSourceEl = document.getElementById('gpt_api_card_source');
+                const paymentRegionEl = document.getElementById('gpt_api_payment_region');
                 const orbitBaseEl = document.getElementById('orbitcard_base_url');
                 const orbitKeyEl = document.getElementById('orbitcard_api_key');
                 const orbitKeyHint = document.getElementById('orbitcard_api_key_hint');
@@ -5384,6 +5385,7 @@
                     if (input) input.value = mappings[planType] || (planType === 'plus' ? cfg.plan_key || 'chatgptplusplan' : '');
                 }
                 if (cardSourceEl) cardSourceEl.value = cfg.card_source || 'local';
+                if (paymentRegionEl) paymentRegionEl.value = cfg.payment_region || '';
                 if (orbitBaseEl) orbitBaseEl.value = cfg.orbitcard_base_url || 'https://orbitcard.cc';
                 if (orbitKeyEl) orbitKeyEl.value = '';
                 if (orbitKeyHint) orbitKeyHint.textContent = cfg.orbitcard_api_key_saved ? `✓ API Key 已保存（${cfg.orbitcard_api_key_preview || '已隐藏'}）` : '尚未配置 Orbitcard API Key';
@@ -5415,6 +5417,7 @@
                     document.getElementById(planType === 'plus' ? 'gpt_api_plan_key' : `gpt_api_plan_key_${planType}`)?.value.trim() || ''
                 ])),
                 card_source: document.getElementById('gpt_api_card_source')?.value || 'local',
+                payment_region: document.getElementById('gpt_api_payment_region')?.value.trim().toUpperCase() || '',
                 orbitcard_base_url: document.getElementById('orbitcard_base_url')?.value.trim() || '',
                 orbitcard_api_key: document.getElementById('orbitcard_api_key')?.value.trim() || '',
                 orbitcard_api_secret: document.getElementById('orbitcard_api_secret')?.value.trim() || ''

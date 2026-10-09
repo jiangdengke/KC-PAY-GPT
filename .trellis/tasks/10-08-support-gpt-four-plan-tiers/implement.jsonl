@@ -1,0 +1,10 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend specification entry point for server and store changes."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Plan filters, startup compatibility, and parameterized MySQL query contracts."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Strict unknown-plan and unsupported-provider error paths."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Sensitive-data and operational logging boundaries for provider calls."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Orbitcard automatic/manual product strategy, pricing, reuse, and verification contracts."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend specification entry point for vanilla admin and user UI updates."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Admin state, filter, escaping, and cross-layer parameter consistency requirements."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Shared plan registry must replace duplicated constants and validation maps."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Plan values flow through credentials, APIs, database, providers, and browser UI."}
+{"file":".trellis/tasks/10-08-support-gpt-four-plan-tiers/research/desolate-four-plan-api.md","reason":"Authoritative Desolate OpenAPI findings and supported plan mapping constraints."}

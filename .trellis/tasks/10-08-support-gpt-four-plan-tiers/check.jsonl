@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify filter/query compatibility and startup database behavior."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify Orbitcard ranking, manual selection, blocking, reuse, and pricing invariants."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify UI options, labels, filters, escaping, and backend parameter alignment."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check that plan constants and validation are centralized rather than duplicated."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check canonical and legacy values survive every layer consistently."}
+{"file":".trellis/tasks/10-08-support-gpt-four-plan-tiers/research/desolate-four-plan-api.md","reason":"Verify only documented Plus mapping is enabled and other tiers fail clearly."}

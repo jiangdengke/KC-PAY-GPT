@@ -107,6 +107,79 @@ const manual = getProductSelectionsForPlan(data, planType, {
 - Desolate order creation follows the closed current `CreateOrderRequest` body schema. When a stable idempotency seed is available, send it through the optional UUID-formatted `Idempotency-Key` header: preserve a supplied UUID and deterministically convert a non-UUID seed. Do not send `clientRequestId` or `clientRef` in the Desolate body; opaque `session` fields remain preserved.
 - New CDK creation/import and new card-plan assignment accept only canonical tiers. Historical task execution, display, notification, billing filter, and CDK lookup remain readable for `pro_5x` and `pro_20x`.
 
+## Desolate Open Integration Contract
+
+### 1. Scope / Trigger
+
+Apply this contract when changing the Desolate Open client, GPT API admin configuration, order worker, captcha task display, or `gpt_api_raw` persistence. The current public contract is `https://recharge.desolate.run/api/v1/openapi.yaml`.
+
+### 2. Signatures
+
+- `request(method, path, cfg, { body, headers, timeoutMs, requestId }) -> Promise<RequestResult>`
+- `submitPay(cfg, { planKey, session, paymentRegion, newCard, clientRef, idempotencyKey, requestId, retryOptions }) -> Promise<SubmitResult>`
+- `queryAccount(cfg) -> Promise<AccountResult>`
+- `queryPaymentRegions(cfg, planCode) -> Promise<PaymentRegionsResult>`
+- `queryOrder(cfg, orderId) -> Promise<OrderResult>`
+- `normalizeOpenOrderSummary(data, responseMeta) -> SafeOrderSummary`
+- `getGptOrderPollDelayMs({ pollCount, baseDelayMs, maxDelayMs, status, retryAfterMs, captchaPending }) -> number`
+
+### 3. Contracts
+
+- Desolate requests use `X-API-Key` and JSON `Accept`/`Content-Type` headers. Desolate requests send a UUID `X-Request-ID`; a caller-provided UUID is preserved, otherwise the client generates one. Legacy provider requests must not receive or validate this header.
+- `GET /account` returns the standard `{ code, message, data }` envelope. `GET /plans/{planCode}/payment-regions` returns `data.planCode` and `data.paymentRegions[]`; an empty plan code is rejected rather than mapped to Plus.
+- `POST /orders` sends exactly `planCode`, optional configured `paymentRegion`, `cardNumber`, `expiryMonth`, `expiryYear`, `securityCode`, and `session`. `CreateOrderRequest` is closed: never send `clientRequestId` or `clientRef` in the body. Opaque session fields are preserved and never logged.
+- New orders always send a UUID `Idempotency-Key`. A supplied UUID is preserved; a stable non-UUID seed is converted deterministically; transport retries reuse the same key and request body. Retry only network failures, HTTP 429, and HTTP 5xx, honoring `Retry-After` before bounded exponential backoff.
+- Capture response `X-Request-ID`, `Idempotency-Replayed`, `Retry-After`, `Cache-Control`, and `Location` in transient metadata. The Open order response must not be persisted wholesale: `gpt_api_raw` contains only the allowlisted order summary and metadata, with session credentials and captcha URLs removed.
+- `GET /orders/{orderId}` is polled until `status=succeeded` or `status=failed`; `pending` and `processing` use bounded backoff. A default Open poll has no implicit maximum because the provider documents multiple captcha rounds; `GPT_API_MAX_POLLS` is an explicit operator safety override. For `awaiting_captcha`/`pending`, expose the current captcha ID and URL only to the task UI, deduplicate repeated IDs, and continue querying the same order after `submitted` or a new captcha ID.
+- When a response contains `session`, merge it with the local session while preserving omitted and unknown fields, then atomically write the refreshed object. Only `succeeded` is a successful Open order; `payment` is an amount snapshot, and `subscriptionCancelled`, `failureCode`, and `failureMessage` remain visible in the safe summary.
+- `gpt_api_payment_region` is optional, persisted through `mysql-store.js`, exposed in the admin GPT API form, and passed as `paymentRegion` only when explicitly configured. It must not be inferred from `gpt_api_country`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+|---|---|
+| Missing/unknown Open plan mapping | Reject clearly; never silently use Plus. |
+| Invalid explicit `X-Request-ID` or `Idempotency-Key` | Return a local validation error before the request. |
+| Missing `paymentRegion` | Omit the field and let the provider select its documented default. |
+| Invalid `paymentRegion` | Reject locally unless it is exactly two uppercase letters after normalization. |
+| HTTP 422 or ordinary Open business error | Do not retry; preserve HTTP status, numeric `businessCode`, and provider message. |
+| Network failure, HTTP 429, or HTTP 5xx on create | Retry with the original idempotency key/body; stop after configured retries and retain request metadata. |
+| `Retry-After` on 429 | Wait the documented delay before the next request/poll. |
+| Order `failed` | Mark the task failed/manual review and preserve `failureCode`/`failureMessage`; never treat `payment` as success. |
+| Captcha URL missing | Keep the task pending without inventing or persisting a URL; do not create a second order. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: query payment regions for the exact mapped plan, explicitly configure `US`, send it in the closed order body, and retry an HTTP 503 with the same UUID idempotency key.
+- Base: leave `gpt_api_payment_region` empty, omit `paymentRegion`, follow the provider default, poll the returned order with backoff, and persist only the safe summary.
+- Bad: map a missing Pro code to `chatgptplusplan`, put `clientRef` or session credentials in the order body/log, retry with a new idempotency key, or stop a multi-round captcha order merely because one verification was submitted.
+
+### 6. Tests Required
+
+- Assert every Desolate request includes `X-API-Key`, a UUID `X-Request-ID`, and the documented base path; assert legacy requests omit `X-Request-ID`.
+- Assert payment-region parsing, empty-plan rejection, optional body omission/inclusion, and admin/store/worker `gpt_api_payment_region` round-trip.
+- Assert order retries preserve the idempotency key/body, honor `Retry-After`, expose `businessCode`, `requestId`, and `idempotencyReplayed`, and do not retry ordinary 4xx responses.
+- Assert `normalizeOpenOrderSummary` drops session credentials, card fields, and captcha URLs while preserving status, payment snapshot, failure fields, captcha ID/status, and response metadata.
+- Assert Open polling terminates only at `succeeded`/`failed` by default, supports repeated captcha IDs/new rounds, writes refreshed sessions atomically, and honors an explicit `GPT_API_MAX_POLLS` override.
+- Run `npx vitest run test/gpt-api-client.test.js`, `npm test`, `node --check` for every changed JavaScript file, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+**Wrong:**
+```js
+const planCode = mappings[planType] || 'chatgptplusplan';
+body.clientRef = clientRef;
+await postOrder(body, { 'Idempotency-Key': uuidv4() });
+```
+
+**Correct:**
+```js
+const planCode = resolveOpenPlanCode(planType, cfg); // throws when unmapped
+const body = { planCode, cardNumber, expiryMonth, expiryYear, securityCode, session };
+const idempotencyKey = normalizeDesolateIdempotencyKey(stableSeed) || uuidv4();
+await submitWithRetry(body, { idempotencyKey, requestId, retryAfterMs });
+```
+
 ## Testing Requirements
 
 - Run `npm test` after changing product selection behavior.
