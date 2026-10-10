@@ -99,6 +99,19 @@ const manual = getProductSelectionsForPlan(data, planType, {
 });
 ```
 
+## GPT Customer Task Message Boundary
+
+- `sendTaskSnapshot(ws, jobKey)` and `GET /api/task-status/:jobKey` are public customer channels. They must pass persisted task messages through `sanitizeCustomerTaskMessage(message)` before returning them.
+- Customer-facing activation recovery endpoints (`POST /api/run-process`, `POST /api/verify-cdk`) must sanitize a running task's persisted message as well; provider submission details must never be returned in a resume response.
+- `GET /api/admin/checkout/status/:jobKey` and admin task-log views intentionally retain the raw `message` for operator diagnostics.
+- Provider submission errors matching `代充提交失败`, `businessCode`, or `Idempotency-Key` become `本次开通未完成，已转人工确认，请联系客服处理后再试`; messages containing `订单处理超时` use `订单处理超时，已转人工确认，请联系客服处理后再试`. Other ordinary progress text is preserved.
+- `runGptApiWorker` uses a job-specific idempotency seed (`gpt-api-${jobKey}`), not the reusable CDK code. Reusing a CDK as the provider idempotency key causes a later independent activation to receive a duplicate/409 response.
+
+### Customer Message Boundary Tests
+
+- Regression tests must cover provider HTTP 409/business code details in task updates, broadcasts, public task status, and activation recovery; admin diagnostics must still contain the provider reason/code.
+- Run `npm test`, `node --check` for changed JavaScript files, and `git diff --check` after changing this boundary.
+
 ## Four-Tier Provider Contract
 
 - `plan-registry.js` is the canonical source for tier enums, labels, credential aliases, Checkout mappings, Desolate mappings, Orbitcard aliases, reuse limits, and safety margins.

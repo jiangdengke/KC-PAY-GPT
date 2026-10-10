@@ -43,7 +43,8 @@ function createHarness({
     openProtocol = true,
     queryResults = [],
     submitResult,
-    maxPolls = 3
+    maxPolls = 3,
+    jobKey = 'job-synthetic'
 } = {}) {
     const taskUpdates = [];
     const broadcasts = [];
@@ -54,6 +55,7 @@ function createHarness({
     const releasedCards = [];
     const markedUnusedCdks = [];
     const resetCdks = [];
+    const submitCalls = [];
     let queryIndex = 0;
 
     const store = {
@@ -103,14 +105,17 @@ function createHarness({
         isDesolateOpenProtocol: () => openProtocol,
         resolveOpenPlanCode: () => 'chatgptplusplan',
         inspectPay: async () => ({ success: true }),
-        submitPay: async () => submitResult || ({
-            success: true,
-            orderId: 'ord-synthetic',
-            data: { orderId: 'ord-synthetic', status: 'pending', message: '订单处理中' },
-            message: '订单处理中',
-            responseMeta: { requestId: 'req-submit' },
-            requestId: 'req-submit'
-        }),
+        submitPay: async (cfg, input) => {
+            submitCalls.push({ cfg, ...input });
+            return submitResult || {
+                success: true,
+                orderId: 'ord-synthetic',
+                data: { orderId: 'ord-synthetic', status: 'pending', message: '订单处理中' },
+                message: '订单处理中',
+                responseMeta: { requestId: 'req-submit' },
+                requestId: 'req-submit'
+            };
+        },
         queryTask: async () => ({ success: false, error: 'unused task endpoint' }),
         queryOrder: async () => {
             const result = queryResults[Math.min(queryIndex, Math.max(0, queryResults.length - 1))];
@@ -167,7 +172,7 @@ function createHarness({
 
     const runGptApiWorker = loadWorker(context);
     const run = () => runGptApiWorker({
-        task: { jobKey: 'job-synthetic' },
+        task: { jobKey },
         token: 'synthetic-token',
         session: { user: { email: 'user@example.com' }, accessToken: 'synthetic-access-token' },
         cdk: 'KC-SYNTHETIC',
@@ -183,7 +188,8 @@ function createHarness({
         holdRows,
         releasedCards,
         markedUnusedCdks,
-        resetCdks
+        resetCdks,
+        submitCalls
     };
 }
 
@@ -196,6 +202,69 @@ function getFinalBroadcast(harness, status) {
 }
 
 describe('runGptApiWorker failure notification wiring', () => {
+    it('keeps submit HTTP 409/business 40901 details out of customer task state', async () => {
+        const providerReason = 'Duplicate request belongs to an existing provider order.';
+        const harness = createHarness({
+            openProtocol: true,
+            jobKey: 'job-submit-conflict',
+            submitResult: {
+                success: false,
+                status: 409,
+                businessCode: 40901,
+                error: providerReason,
+                data: { code: 40901, message: providerReason },
+                requestId: 'req-submit-conflict',
+                responseMeta: { requestId: 'req-submit-conflict', status: 409 }
+            }
+        });
+
+        await harness.run();
+
+        expect(getFinalUpdate(harness, 'failed').message).toBe(GENERIC_FAILURE_MESSAGE);
+        expect(getFinalBroadcast(harness, 'failed').message).toBe(GENERIC_FAILURE_MESSAGE);
+        expect(getFinalUpdate(harness, 'failed').message).not.toContain('409');
+        expect(getFinalBroadcast(harness, 'failed').message).not.toContain(providerReason);
+        expect(harness.notifications).toHaveLength(1);
+        expect(harness.notifications[0]).toMatchObject({
+            event: 'failure',
+            message: GENERIC_FAILURE_MESSAGE,
+            diagnostic: {
+                reason: providerReason,
+                code: '40901',
+                requestId: 'req-submit-conflict'
+            }
+        });
+        expect(harness.holdRows).toHaveLength(1);
+        expect(harness.holdRows[0].reason).toContain('HTTP 409');
+        expect(harness.holdRows[0].reason).toContain('businessCode 40901');
+        expect(harness.holdRows[0].reason).toContain(providerReason);
+        expect(harness.submitCalls[0].idempotencyKey).toBe('gpt-api-job-submit-conflict');
+    });
+
+    it('derives a stable idempotency seed from the unique job key', async () => {
+        const createSuccessfulHarness = (jobKey) => createHarness({
+            openProtocol: true,
+            jobKey,
+            queryResults: [{
+                success: true,
+                data: { status: 'succeeded', subscriptionCancelled: true },
+                rawStatus: 'succeeded'
+            }]
+        });
+        const first = createSuccessfulHarness('job-stable');
+        const retry = createSuccessfulHarness('job-stable');
+        const other = createSuccessfulHarness('job-other');
+
+        await first.run();
+        await retry.run();
+        await other.run();
+
+        expect(first.submitCalls[0].idempotencyKey).toBe('gpt-api-job-stable');
+        expect(retry.submitCalls[0].idempotencyKey).toBe(first.submitCalls[0].idempotencyKey);
+        expect(other.submitCalls[0].idempotencyKey).toBe('gpt-api-job-other');
+        expect(other.submitCalls[0].idempotencyKey).not.toBe(first.submitCalls[0].idempotencyKey);
+    });
+
     it('keeps customer text generic and sends an Open terminal reason/code to Telegram admins', async () => {
         const harness = createHarness({
             openProtocol: true,
@@ -291,6 +360,7 @@ describe('runGptApiWorker failure notification wiring', () => {
             status: 'processing',
             pollCount: 1
         });
+        expect(harness.holdRows[0].reason).toBe('轮询超时：已查询 1 次，订单未进入终态');
     });
 
     it('prefers a caught provider exception and never replaces processing with HTTP 503', async () => {

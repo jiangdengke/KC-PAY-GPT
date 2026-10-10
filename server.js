@@ -283,7 +283,7 @@ async function sendTaskSnapshot(ws, jobKey) {
         type: 'snapshot',
         jobKey,
         status: task.status,
-        message: task.message,
+        message: sanitizeCustomerTaskMessage(task.message),
         progress: Number(task.progress || 0),
         cdkCode: task.cdk_code || null,
         phone: task.phone || null,
@@ -3757,6 +3757,21 @@ function spawnCheckoutDebugWorker({ task, token, sessionRaw, planType, region, p
  * 5. 将结果写回 task_logs（含 gpt_api_order_id / gpt_api_task_id / gpt_api_raw）
  */
 const LEGACY_GPT_API_PLAN_MAP = Object.freeze({ pro_5x: 'pro5x', pro_20x: 'pro20x' });
+const GPT_API_CUSTOMER_FAILURE_MESSAGE = '本次开通未完成，已转人工确认，请联系客服处理后再试';
+const GPT_API_CUSTOMER_TIMEOUT_MESSAGE = '订单处理超时，已转人工确认，请联系客服处理后再试';
+
+function sanitizeCustomerTaskMessage(message) {
+    if (typeof message !== 'string') {
+        return message;
+    }
+    if (message.includes('订单处理超时')) {
+        return GPT_API_CUSTOMER_TIMEOUT_MESSAGE;
+    }
+    if (/代充提交失败|businessCode|Idempotency-Key/i.test(message)) {
+        return GPT_API_CUSTOMER_FAILURE_MESSAGE;
+    }
+    return message;
+}
 
 function mapGptApiPlanKey(planType, cfg = {}) {
     const type = requireReadablePlanType(planType);
@@ -4032,7 +4047,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
 
         // 套餐从 CDK 的 plan_type 同步；国家币种使用协议默认值（PH / PHP）
         await setProgress('running', 20, '正在提交开通订单...');
-        const idempotencyKey = `cdk-${cdk}`;
+        const idempotencyKey = `gpt-api-${jobKey}`;
         const submit = await gptApi.submitPay(cfg, {
             planKey: apiPlanKey,
             session: sessionPayload,
@@ -4238,7 +4253,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                     ? (openProtocol && lastRaw?.subscriptionCancelled === false
                         ? '开通成功，但自动续订取消状态未确认，请到目标账户账单页核对'
                         : '开通成功')
-                    : '本次开通未完成，已转人工确认，请联系客服处理后再试';
+                    : GPT_API_CUSTOMER_FAILURE_MESSAGE;
                 if (!succeeded) {
                     await store.createActivationManualHold({
                         accountKey,
@@ -4274,7 +4289,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
 
         if (finalStatus === 'running') {
             finalStatus = 'failed';
-            finalMessage = '订单处理超时，已转人工确认，请联系客服处理后再试';
+            finalMessage = GPT_API_CUSTOMER_TIMEOUT_MESSAGE;
             failureDiagnostic = buildGptApiFailureDiagnostic({
                 openProtocol,
                 raw: lastRaw || activeRaw,
@@ -4291,7 +4306,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 planType,
                 failedJobKey: jobKey,
                 cdkCode: cdk,
-                reason: finalMessage
+                reason: failureDiagnostic.reason
             });
             await setProgress(finalStatus, 99, finalMessage, {
                 gptApiRaw: JSON.stringify(sanitizeGptApiRaw(lastRaw, openProtocol, lastResponseMeta)),
@@ -4367,10 +4382,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             providerCode: error?.businessCode,
             error
         });
-        const isSubmitFailure = String(error?.message || '').startsWith('代充提交失败');
-        const customerFailureMessage = isSubmitFailure
-            ? manualReviewMessage
-            : '本次开通未完成，已转人工确认，请联系客服处理后再试';
+        const customerFailureMessage = GPT_API_CUSTOMER_FAILURE_MESSAGE;
         await store.createActivationManualHold({
             accountKey,
             accountEmail,
@@ -4779,7 +4791,8 @@ async function handleActivationRequest(req, res) {
             return res.json({
                 success: true,
                 jobKey: runningTask.job_key,
-                message: runningTask.message || '该 CDK 正在开通中，已为您恢复等待进度'
+                message: sanitizeCustomerTaskMessage(runningTask.message)
+                    || '该 CDK 正在开通中，已为您恢复等待进度'
             });
         }
         const manualHold = cdkDetails ? await store.getActivationManualHold(cdk) : null;
@@ -4905,7 +4918,8 @@ app.post('/api/verify-cdk', async (req, res) => {
                     plan_label: getPlanTypeLabel(cdkData.plan_type || 'plus'),
                     status: 'processing',
                     jobKey: runningTask.job_key,
-                    message: runningTask.message || '当前 CDK 正在开通中'
+                    message: sanitizeCustomerTaskMessage(runningTask.message)
+                        || '当前 CDK 正在开通中'
                 }
             });
         }
@@ -5066,7 +5080,7 @@ app.get('/api/task-status/:jobKey', async (req, res) => {
             data: {
                 jobKey,
                 status: task.status,
-                message: task.message || '',
+                message: sanitizeCustomerTaskMessage(task.message || ''),
                 progress: Number(task.progress || 0),
                 cdkCode: task.cdk_code || null,
                 phone: task.phone || null,
