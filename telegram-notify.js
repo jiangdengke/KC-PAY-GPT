@@ -2,7 +2,9 @@
 
 const axios = require('axios');
 const { getPlanLabel } = require('./plan-registry');
-const { redactSensitiveText } = require('./gpt-api-failure');
+const { MAX_REASON_LENGTH, redactSensitiveText } = require('./gpt-api-failure');
+
+const METADATA_REDACTION_OPTIONS = Object.freeze({ skipPanHeuristic: true });
 
 const EVENT_LABELS = {
     success: '✅ 开通成功',
@@ -53,19 +55,21 @@ function formatTelegramMessage(event, { email, planType, planLabel, cdk, jobKey,
     }
     const hasFailureDiagnostic = event === 'failure' && diagnostic && typeof diagnostic === 'object';
     const diagnosticReason = hasFailureDiagnostic
-        ? redactSensitiveText(diagnostic.reason, 240)
+        ? redactSensitiveText(diagnostic.reason, MAX_REASON_LENGTH)
         : '';
     const detail = diagnosticReason || redactSensitiveText(message, 240);
     if (detail) {
         lines.push(`详情: ${escapeHtml(detail)}`);
     }
     if (hasFailureDiagnostic) {
-        const safe = (value, maxLength = 240) => escapeHtml(redactSensitiveText(value, maxLength));
-        lines.push(`失败代码: ${safe(diagnostic.code, 120) || '未提供'}`);
-        lines.push(`订单: ${safe(diagnostic.orderId, 120) || '未提供'}`);
-        lines.push(`状态: ${safe(diagnostic.status, 120) || '未知'}`);
+        const safe = (value, maxLength = 120) => escapeHtml(
+            redactSensitiveText(value, maxLength, METADATA_REDACTION_OPTIONS)
+        );
+        lines.push(`失败代码: ${safe(diagnostic.code) || '未提供'}`);
+        lines.push(`订单: ${safe(diagnostic.orderId) || '未提供'}`);
+        lines.push(`状态: ${safe(diagnostic.status) || '未知'}`);
         if (diagnostic.requestId) {
-            lines.push(`请求 ID: ${safe(diagnostic.requestId, 120)}`);
+            lines.push(`请求 ID: ${safe(diagnostic.requestId)}`);
         }
         if (diagnostic.pollCount != null) {
             lines.push(`查询次数: ${safe(diagnostic.pollCount, 30)}`);

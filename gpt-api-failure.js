@@ -3,8 +3,12 @@
 const UNKNOWN_FAILURE_REASON = '原因缺失（第三方未提供失败原因）';
 const UNKNOWN_FAILURE_CODE = '未提供';
 const UNKNOWN_FAILURE_STATUS = '未知';
-const MAX_REASON_LENGTH = 240;
+const MAX_REASON_LENGTH = 1600;
 const MAX_FIELD_LENGTH = 120;
+const URL_PATTERN = /https?:\/\/[^\s<>"']+/gi;
+const JWT_PATTERN = /\beyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+\b/i;
+const IDENTIFIER_REDACTION_OPTIONS = Object.freeze({ skipPanHeuristic: true });
+const SENSITIVE_CREDENTIAL_KEY_PATTERN = /^(?:token|(?:access|refresh|id|session|auth|authorization|bearer|api|client|captcha|security)token|session(?:id|token|key)?|(?:password|passwd|pwd)(?:hash|digest|salt)?|passcode|api(?:key|secret)|client(?:key|secret)|auth|authorization|(?:auth|oauth|authorization)(?:code|token|key|secret)|cookie|setcookie|captcha(?:url|token|ticket)|ticket|signature|secret(?:key)?|card|card(?:number|no|pan|cvc|cvv|securitycode)|paymentcard(?:number|cvc|cvv)|primaryaccountnumber|cc(?:number|num)|pan|cvc2?|cvv2?|securitycode|otp|otpcode|totp|mfacode|onetimepassword|verificationcode)$/;
 
 function isScalar(value) {
     return value !== null
@@ -18,8 +22,110 @@ function truncateText(text, maxLength) {
         : text;
 }
 
-function redactSensitiveText(value, maxLength = MAX_FIELD_LENGTH) {
+function getDecodedUrlForms(value) {
+    const forms = [];
+    let decoded = String(value || '');
+    for (let attempt = 0; attempt <= 2; attempt += 1) {
+        if (!forms.includes(decoded)) forms.push(decoded);
+        if (attempt === 2) break;
+        try {
+            const next = decodeURIComponent(decoded);
+            if (next === decoded) break;
+            decoded = next;
+        } catch (_) {
+            break;
+        }
+    }
+    return forms;
+}
+
+function decodeUrlPart(value) {
+    const forms = getDecodedUrlForms(value);
+    return forms[forms.length - 1] || '';
+}
+
+function isSensitiveCredentialKey(value) {
+    const compact = decodeUrlPart(value)
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean)
+        .join('');
+    return SENSITIVE_CREDENTIAL_KEY_PATTERN.test(compact);
+}
+
+function hasSensitiveUrlParams(params) {
+    for (const [key, value] of params) {
+        if (isSensitiveCredentialKey(key) || JWT_PATTERN.test(decodeUrlPart(value))) return true;
+    }
+    return false;
+}
+
+function urlPartContainsCredentials(value) {
+    const candidates = new Set();
+    for (const form of getDecodedUrlForms(value)) {
+        const normalized = form.replace(/^[?#]+/, '');
+        if (normalized.includes('=')) candidates.add(normalized);
+        for (const match of form.matchAll(/[?#]/g)) {
+            const nested = form.slice(match.index + 1).replace(/^[?#]+/, '');
+            if (nested.includes('=')) candidates.add(nested);
+        }
+    }
+    for (const candidate of candidates) {
+        if (hasSensitiveUrlParams(new URLSearchParams(candidate))) return true;
+    }
+    return false;
+}
+
+function urlContainsCredentials(rawUrl) {
+    let parsed;
+    try {
+        parsed = new URL(rawUrl);
+    } catch (_) {
+        return true;
+    }
+
+    if (parsed.username || parsed.password) return true;
+    if (/captcha/i.test(decodeUrlPart(parsed.pathname))) return true;
+    if (JWT_PATTERN.test(decodeUrlPart(parsed.href))) return true;
+    if (urlPartContainsCredentials(parsed.search.slice(1))) return true;
+    return urlPartContainsCredentials(parsed.hash.slice(1));
+}
+
+function splitTrailingUrlPunctuation(value) {
+    const match = String(value).match(/^(.*?)([),.;!?\]}，。；！？]*)$/);
+    return {
+        url: match?.[1] || String(value),
+        suffix: match?.[2] || ''
+    };
+}
+
+function protectOrdinaryUrls(value) {
+    const urls = [];
+    const text = String(value).replace(URL_PATTERN, (candidate) => {
+        const { url, suffix } = splitTrailingUrlPunctuation(candidate);
+        if (urlContainsCredentials(url)) return `[已隐藏链接]${suffix}`;
+        const marker = `\uE000URL${urls.length.toString(36).toUpperCase()}\uE001`;
+        urls.push(url);
+        return `${marker}${suffix}`;
+    });
+    return {
+        text,
+        restore(redacted) {
+            return redacted.replace(/\uE000URL([0-9A-Z]+)\uE001/g, (_match, index) => {
+                const original = urls[Number.parseInt(index, 36)];
+                return original === undefined ? '[已隐藏链接]' : original;
+            });
+        }
+    };
+}
+
+function redactSensitiveText(value, maxLength = MAX_FIELD_LENGTH, options = {}) {
     if (!isScalar(value)) return '';
+    if (maxLength && typeof maxLength === 'object') {
+        options = maxLength;
+        maxLength = MAX_FIELD_LENGTH;
+    }
 
     let text = String(value);
     if (!text.trim()) return '';
@@ -29,14 +135,19 @@ function redactSensitiveText(value, maxLength = MAX_FIELD_LENGTH) {
     text = text
         .replace(/\b(?:set-cookie|cookie)\b\s*[:=]\s*(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\r\n}]*)/gi, 'Cookie=[已隐藏]')
         .replace(/\bauthorization\b\s*[:=]\s*(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|(?:bearer|basic)\s+[^\s,;，；}\]}]+|[^\s,;，；}\]}]+)/gi, 'Authorization=[已隐藏]')
-        .replace(/\b(?:bearer|basic)\s+(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[a-z0-9._~+/=-]+)/gi, '[已隐藏凭据]')
-        .replace(/https?:\/\/[^\s<>"']+/gi, '[已隐藏链接]')
+        .replace(/\b(?:bearer|basic)\s+(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[a-z0-9._~+/=-]+)/gi, '[已隐藏凭据]');
+
+    const protectedUrls = protectOrdinaryUrls(text);
+    text = protectedUrls.text
         .replace(/\beyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+\b/gi, '[已隐藏令牌]')
         .replace(
-            /["']?\b(access[_-]?token|session[_-]?token|refresh[_-]?token|id[_-]?token|token|api[_-]?key|password|passwd|secret|client[_-]?secret|security[_-]?code|cvc|cvv|card[_-]?(?:number|cvc|cvv)|captcha[_-]?url|authorization|cookie|set[_-]?cookie)\b["']?\s*[:=]\s*(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;，；}\]}]+)/gi,
-            (_match, key) => `${key}=[已隐藏]`
-        )
-        .replace(/(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g, '[已隐藏卡号]')
+            /["']?\b([a-z][a-z0-9_.-]*)\b["']?\s*[:=]\s*(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|\[[^\]]*已隐藏[^\]]*\]|[^\s,;，；}\]}]+)/gi,
+            (match, key) => isSensitiveCredentialKey(key) ? `${key}=[已隐藏]` : match
+        );
+    if (!options || options.skipPanHeuristic !== true) {
+        text = text.replace(/(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g, '[已隐藏卡号]');
+    }
+    text = protectedUrls.restore(text)
         .replace(/[\u0000-\u001f\u007f]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
@@ -48,9 +159,9 @@ function redactSensitiveText(value, maxLength = MAX_FIELD_LENGTH) {
     return truncateText(text, boundedLength);
 }
 
-function firstScalar(values, maxLength = MAX_FIELD_LENGTH) {
+function firstScalar(values, maxLength = MAX_FIELD_LENGTH, options = {}) {
     for (const value of values) {
-        const safe = redactSensitiveText(value, maxLength);
+        const safe = redactSensitiveText(value, maxLength, options);
         if (safe) return safe;
     }
     return '';
@@ -198,17 +309,17 @@ function buildGptApiFailureDiagnostic({
         ? Math.floor(Number(pollCount))
         : null;
 
-    const safeOrderId = firstScalar([orderId], MAX_FIELD_LENGTH);
+    const safeOrderId = firstScalar([orderId], MAX_FIELD_LENGTH, IDENTIFIER_REDACTION_OPTIONS);
     const safeStatus = firstScalar([
         status,
         rawStatus,
         getField(source, ['status', 'state']),
         getField(result, ['status', 'state'])
-    ], MAX_FIELD_LENGTH) || UNKNOWN_FAILURE_STATUS;
+    ], MAX_FIELD_LENGTH, IDENTIFIER_REDACTION_OPTIONS) || UNKNOWN_FAILURE_STATUS;
     const safeRequestId = firstScalar([
         requestId,
         responseMeta?.requestId
-    ], MAX_FIELD_LENGTH);
+    ], MAX_FIELD_LENGTH, IDENTIFIER_REDACTION_OPTIONS);
 
     let reason;
     let code;
@@ -232,7 +343,7 @@ function buildGptApiFailureDiagnostic({
             error?.businessCode,
             error?.code,
             ...getFailureCodeCandidates({ openProtocol, raw: source, result, providerCode })
-        ], MAX_FIELD_LENGTH) || UNKNOWN_FAILURE_CODE;
+        ], MAX_FIELD_LENGTH, IDENTIFIER_REDACTION_OPTIONS) || UNKNOWN_FAILURE_CODE;
     }
 
     return {
@@ -248,6 +359,7 @@ function buildGptApiFailureDiagnostic({
 module.exports = {
     UNKNOWN_FAILURE_REASON,
     UNKNOWN_FAILURE_CODE,
+    MAX_REASON_LENGTH,
     redactSensitiveText,
     buildGptApiFailureDiagnostic
 };
