@@ -2,6 +2,7 @@
 
 const axios = require('axios');
 const { getPlanLabel } = require('./plan-registry');
+const { redactSensitiveText } = require('./gpt-api-failure');
 
 const EVENT_LABELS = {
     success: '✅ 开通成功',
@@ -20,7 +21,7 @@ function escapeHtml(text) {
         .replace(/>/g, '&gt;');
 }
 
-function formatTelegramMessage(event, { email, planType, planLabel, cdk, jobKey, message, ip, fingerprint, userAgent, method }) {
+function formatTelegramMessage(event, { email, planType, planLabel, cdk, jobKey, message, diagnostic, ip, fingerprint, userAgent, method }) {
     const title = EVENT_LABELS[event] || '📢 系统通知';
     const lines = [title, ''];
     const isTaskEvent = ['success', 'failure', 'card_pool_empty'].includes(event);
@@ -50,8 +51,25 @@ function formatTelegramMessage(event, { email, planType, planLabel, cdk, jobKey,
     if (jobKey) {
         lines.push(`任务: ${escapeHtml(jobKey)}`);
     }
-    if (message) {
-        lines.push(`详情: ${escapeHtml(message)}`);
+    const hasFailureDiagnostic = event === 'failure' && diagnostic && typeof diagnostic === 'object';
+    const diagnosticReason = hasFailureDiagnostic
+        ? redactSensitiveText(diagnostic.reason, 240)
+        : '';
+    const detail = diagnosticReason || redactSensitiveText(message, 240);
+    if (detail) {
+        lines.push(`详情: ${escapeHtml(detail)}`);
+    }
+    if (hasFailureDiagnostic) {
+        const safe = (value, maxLength = 240) => escapeHtml(redactSensitiveText(value, maxLength));
+        lines.push(`失败代码: ${safe(diagnostic.code, 120) || '未提供'}`);
+        lines.push(`订单: ${safe(diagnostic.orderId, 120) || '未提供'}`);
+        lines.push(`状态: ${safe(diagnostic.status, 120) || '未知'}`);
+        if (diagnostic.requestId) {
+            lines.push(`请求 ID: ${safe(diagnostic.requestId, 120)}`);
+        }
+        if (diagnostic.pollCount != null) {
+            lines.push(`查询次数: ${safe(diagnostic.pollCount, 30)}`);
+        }
     }
 
     return lines.join('\n');

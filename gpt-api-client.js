@@ -693,6 +693,10 @@ async function queryTask(cfg, taskId) {
         rawStatus: extractStatus(res.data),
         stage: extractStage(res.data),
         captcha: extractCaptcha(res.data),
+        responseMeta: res.responseMeta,
+        requestId: res.requestId,
+        retryAfter: res.retryAfter,
+        retryAfterSeconds: res.retryAfterSeconds,
         retryAfterMs: res.retryAfterMs
     };
 }

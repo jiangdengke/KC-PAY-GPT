@@ -29,6 +29,7 @@ const {
     requireReadablePlanType,
     getPlanLabel
 } = require('./plan-registry');
+const { buildGptApiFailureDiagnostic } = require('./gpt-api-failure');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -2358,8 +2359,8 @@ function fireTelegramNotification(event, payload) {
     });
 }
 
-function notifyTaskOutcome({ event, email, planType, cdk, jobKey, message }) {
-    fireTelegramNotification(event, { email, planType, cdk, jobKey, message });
+function notifyTaskOutcome({ event, email, planType, cdk, jobKey, message, diagnostic }) {
+    fireTelegramNotification(event, { email, planType, cdk, jobKey, message, diagnostic });
 }
 
 app.post('/api/admin/telegram', async (req, res) => {
@@ -3800,6 +3801,13 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
     let reservedCard = null;
     let reservedOrbitcard = null;
     let orbitcardRechargeRecorded = false;
+    let activeOrderId = '';
+    let activeOrderStatus = '';
+    let activeRaw = null;
+    let activeResponseMeta = null;
+    let activePollCount = 0;
+    let activeOpenProtocol = false;
+    let failureDiagnostic = null;
 
     const setProgress = async (status, progress, message, extra = {}) => {
         const hasCaptcha = Object.prototype.hasOwnProperty.call(extra, 'captcha');
@@ -3841,6 +3849,7 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         }
 
         const openProtocol = gptApi.isDesolateOpenProtocol(cfg);
+        activeOpenProtocol = openProtocol;
         const apiPlanKey = mapGptApiPlanKey(planType, cfg);
         await setProgress('running', 10, '正在检查 Session 格式...');
         const inspect = await gptApi.inspectPay(cfg, {
@@ -4039,9 +4048,13 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         if (!submit.success) {
             const statusText = submit.status ? ` (HTTP ${submit.status})` : '';
             const businessCodeText = submit.businessCode != null ? ` (businessCode ${submit.businessCode})` : '';
-            const detail = submit.error
-                || (submit.data && typeof submit.data === 'object' ? JSON.stringify(submit.data).slice(0, 300) : '');
+            const detail = submit.error || gptApi.extractProviderMessage(submit.data);
             const submitError = new Error(`代充提交失败${statusText}${businessCodeText}: ${detail || '未知错误'}`);
+            submitError.status = submit.status;
+            submitError.businessCode = submit.businessCode;
+            submitError.providerMessage = detail;
+            submitError.gptApiRequestId = submit.requestId;
+            submitError.gptApiResponseMeta = submit.responseMeta;
             if (openProtocol) {
                 submitError.gptApiRaw = JSON.stringify(sanitizeGptApiRaw({
                     ...(submit.data && typeof submit.data === 'object' ? submit.data : {}),
@@ -4055,9 +4068,12 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         }
 
         const orderId = submit.orderId || submit.taskId || submit.id;
+        activeOrderId = String(orderId || '');
+        activeResponseMeta = submit.responseMeta || null;
         const taskId = submit.taskId || null;
         if (!orderId) {
-            throw new Error(`代充提交成功但未返回订单号: ${JSON.stringify(submit.data).slice(0, 300)}`);
+            const providerMessage = submit.message || gptApi.extractProviderMessage(submit.data);
+            throw new Error(`代充提交成功但未返回订单号${providerMessage ? `: ${providerMessage}` : ''}`);
         }
 
         const submittedPayload = submit.data && typeof submit.data === 'object'
@@ -4104,7 +4120,10 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 queryRes = await gptApi.queryOrder(cfg, orderId);
             }
 
+            activePollCount = pollCount;
             if (!queryRes || !queryRes.success) {
+                activeResponseMeta = queryRes?.responseMeta || activeResponseMeta;
+                activeOrderStatus = String(queryRes?.rawStatus || activeOrderStatus || '');
                 logTask(jobKey, `状态轮询第 ${pollCount} 次失败: ${queryRes?.error || '未知错误'}`, 'warn');
                 if (openProtocol) {
                     nextPollDelayMs = gptApi.getGptOrderPollDelayMs({
@@ -4122,7 +4141,10 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             }
 
             lastRaw = queryRes.data;
+            activeRaw = lastRaw;
             lastResponseMeta = queryRes.responseMeta || null;
+            activeResponseMeta = lastResponseMeta || activeResponseMeta;
+            activeOrderStatus = String(queryRes.rawStatus || activeOrderStatus || '');
             const providerMessage = queryRes.message || gptApi.extractProviderMessage(lastRaw);
             let sessionUpdate = null;
             if (openProtocol && lastRaw?.session && typeof lastRaw.session === 'object') {
@@ -4192,6 +4214,25 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
                 if (!succeeded) {
                     logTask(jobKey, `订单终态失败 status=${rawStatus} detail=${failureDetail}`, 'warn');
                 }
+                failureDiagnostic = succeeded
+                    ? null
+                    : buildGptApiFailureDiagnostic({
+                        openProtocol,
+                        raw: lastRaw,
+                        businessResult,
+                        rawStatus,
+                        providerReason: openProtocol
+                            ? (lastRaw?.failureMessage || lastRaw?.message)
+                            : (businessResult?.error || lastRaw?.error || businessResult?.errorMessage || lastRaw?.message),
+                        providerCode: openProtocol
+                            ? lastRaw?.failureCode
+                            : (businessResult?.errorCode || businessResult?.error_code || lastRaw?.errorCode),
+                        orderId,
+                        status: rawStatus,
+                        requestId: queryRes.requestId,
+                        responseMeta: lastResponseMeta,
+                        pollCount
+                    });
                 finalStatus = succeeded ? 'success' : 'failed';
                 finalMessage = succeeded
                     ? (openProtocol && lastRaw?.subscriptionCancelled === false
@@ -4234,6 +4275,16 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
         if (finalStatus === 'running') {
             finalStatus = 'failed';
             finalMessage = '订单处理超时，已转人工确认，请联系客服处理后再试';
+            failureDiagnostic = buildGptApiFailureDiagnostic({
+                openProtocol,
+                raw: lastRaw || activeRaw,
+                rawStatus: activeOrderStatus,
+                orderId: activeOrderId,
+                status: activeOrderStatus,
+                responseMeta: lastResponseMeta || activeResponseMeta,
+                pollCount,
+                timeout: true
+            });
             await store.createActivationManualHold({
                 accountKey,
                 accountEmail,
@@ -4289,11 +4340,33 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             if (orbitcardRechargeRecorded) {
                 await store.updateOrbitcardRecharge(jobKey, { status: finalStatus, orderId, message: finalMessage });
             }
-            notifyTaskOutcome({ event: 'failure', email: accountEmail, planType, cdk, jobKey, message: finalMessage });
+            notifyTaskOutcome({
+                event: 'failure',
+                email: accountEmail,
+                planType,
+                cdk,
+                jobKey,
+                message: finalMessage,
+                diagnostic: failureDiagnostic
+            });
         }
     } catch (error) {
         console.error(`[GPT API Task Error] ${jobKey}:`, error);
         const manualReviewMessage = getManualReviewMessage(error.message);
+        const catchFailureDiagnostic = buildGptApiFailureDiagnostic({
+            openProtocol: activeOpenProtocol,
+            raw: (() => {
+                try { return error?.gptApiRaw ? JSON.parse(error.gptApiRaw) : activeRaw; } catch (_) { return activeRaw; }
+            })(),
+            rawStatus: activeOrderStatus,
+            orderId: activeOrderId,
+            status: activeOrderStatus,
+            requestId: error?.gptApiRequestId,
+            responseMeta: error?.gptApiResponseMeta || activeResponseMeta,
+            pollCount: activePollCount,
+            providerCode: error?.businessCode,
+            error
+        });
         const isSubmitFailure = String(error?.message || '').startsWith('代充提交失败');
         const customerFailureMessage = isSubmitFailure
             ? manualReviewMessage
@@ -4334,7 +4407,15 @@ async function runGptApiWorker({ task, token, session, cdk, planType }) {
             progress: 0,
             captcha: null
         });
-        notifyTaskOutcome({ event: 'failure', email: accountEmail, planType, cdk, jobKey, message: manualReviewMessage });
+        notifyTaskOutcome({
+            event: 'failure',
+            email: accountEmail,
+            planType,
+            cdk,
+            jobKey,
+            message: customerFailureMessage,
+            diagnostic: catchFailureDiagnostic
+        });
     } finally {
         activeTaskCaptchas.delete(jobKey);
         releaseForegroundSlot(jobKey);
