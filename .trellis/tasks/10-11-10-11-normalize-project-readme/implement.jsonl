@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "README 需要反映后台入口已精简、保留后端接口与历史数据的边界。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "README 内容必须与源码、路由、配置和部署边界一致。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "参考现有文档和脚本，避免 README 重复或复制过时内容。"}

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "校验 README 对后台展示边界和入口状态的描述。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "校验 README 与实际层间接口、配置和部署契约。"}

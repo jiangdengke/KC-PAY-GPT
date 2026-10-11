@@ -1,0 +1,28 @@
+{
+  "id": "10-11-normalize-project-readme",
+  "name": "10-11-normalize-project-readme",
+  "title": "规范项目 README",
+  "description": "重构 README，简化过时与重复内容，基于当前源码校准功能、Docker/本地启动、配置、安全、测试和文档导航。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "docs",
+  "package": null,
+  "priority": "P2",
+  "creator": "jiangdk",
+  "assignee": "jiangdk",
+  "createdAt": "2026-10-11",
+  "completedAt": "2026-10-11",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "2333c85",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "README.md"
+  ],
+  "notes": "",
+  "meta": {}
+}
