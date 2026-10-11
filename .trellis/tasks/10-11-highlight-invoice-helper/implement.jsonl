@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Follow frontend validation and accessibility-style UI conventions for the homepage link."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Search existing badge/link styles before adding a focused CTA variant."}

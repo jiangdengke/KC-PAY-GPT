@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify frontend-only change, node syntax check, and cross-layer scope."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Review whether existing link/button patterns can be reused."}
