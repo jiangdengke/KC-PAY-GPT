@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Follow the admin frontend conventions and required syntax/test checks while removing template navigation and page-specific JavaScript."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Keep the backend APIs, database contracts, and dashboard data flow unchanged while removing only frontend presentation and its page-only consumers."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Search all template/script references before deleting the unused navigation and page-specific state or loaders."}

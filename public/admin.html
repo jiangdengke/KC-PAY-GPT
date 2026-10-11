@@ -77,10 +77,6 @@
                 <i data-lucide="globe"></i>
                 <span>代理池</span>
             </div>
-            <div class="nav-item" onclick="switchPage('browser_pool', this)">
-                <i data-lucide="monitor-dot"></i>
-                <span>浏览器池</span>
-            </div>
             <div class="nav-item" onclick="switchPage('tax_addresses', this)" data-page="tax_addresses">
                 <i data-lucide="map-pin"></i>
                 <span>免税地址</span>
@@ -104,9 +100,6 @@
                     </div>
                     <div class="nav-item nav-subitem" onclick="switchPage('sessions', this)" data-page="sessions">
                         <span>Session 管理</span>
-                    </div>
-                    <div class="nav-item nav-subitem" onclick="switchPage('billing', this)" data-page="billing">
-                        <span>账单记录</span>
                     </div>
                 </div>
             </div>
@@ -375,8 +368,6 @@
                         <div><div style="font-size:12px;color:var(--text-dim)">可用 GPT 套餐</div><div id="gpt_api_plans" style="font-size:13px;margin-top:5px">—</div></div>
                         <div><div style="font-size:12px;color:var(--text-dim)">積分套餐</div><div id="gpt_api_credit_plans" style="font-size:13px;margin-top:5px">—</div></div>
                     </div>
-                    <div style="margin-top:14px; font-size:12px; color:var(--text-dim)">最近失敗代充（僅顯示供應商回傳的卡密前綴）</div>
-                    <div id="gpt_api_recent_orders" style="font-size:13px; margin-top:7px; overflow-x:auto">尚未查詢</div>
                     <div id="gpt_api_status_hint" style="font-size:12px;color:var(--text-dim); margin-top:10px"></div>
                 </div>
                 <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
@@ -756,126 +747,6 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     </table>
                 </div>
                 <p id="proxy_pool_summary" style="font-size: 13px; color: var(--text-dim); margin-top: 12px;"></p>
-            </div>
-        </div>
-
-        <!-- 浏览器池 -->
-        <div id="browser_pool" class="page-view">
-            <div class="page-header">
-                <h1>浏览器池</h1>
-                <p>常驻 Chromium 进程与本地 Profile 缓存；任务通过 CDP 接入，每单独立 Context。页面每 2 秒自动刷新。</p>
-            </div>
-
-            <div class="panel" style="margin-bottom: 24px; border-color: rgba(59,130,246,0.25);">
-                <div class="panel-header">
-                    <h2 class="panel-title">日常槽位配置说明（备忘）</h2>
-                </div>
-                <div style="font-size:14px; line-height:1.85; color:var(--text-dim);">
-                    <p style="margin:0 0 12px;">浏览器池 = 常驻 Chromium + 本地 Profile 缓存。任务通过 CDP 接入，<strong>每单仍独立 Context</strong>（不串 Session）。每槽约 <strong>400–550 MB</strong> 内存。</p>
-                    <p style="margin:0 0 12px; padding:10px 12px; background:rgba(251,191,36,0.08); border-radius:8px; border:1px solid rgba(251,191,36,0.2);">
-                        <strong>代理：</strong>池内槽位<strong>不绑定</strong>代理。每单任务启动时，从「代理池」随机抽一条启用代理，写入该单的 <code>Context</code>（见运行日志 <code>proxy=yes</code>）。
-                        这样不同任务可用不同 IP，避免多账号共用一个住宅 IP。代理在左侧「代理池」管理，与浏览器池分开配置。
-                    </p>
-                    <table style="width:100%; border-collapse:collapse; font-size:13px;">
-                        <thead>
-                            <tr style="text-align:left; border-bottom:1px solid rgba(255,255,255,0.08);">
-                                <th style="padding:8px 10px;">场景</th>
-                                <th style="padding:8px 10px;">建议槽位</th>
-                                <th style="padding:8px 10px;">说明</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                                <td style="padding:8px 10px;">日常单量</td>
-                                <td style="padding:8px 10px;"><code>4–8</code></td>
-                                <td style="padding:8px 10px;">稳妥，与系统配置里「前台并发」对齐即可</td>
-                            </tr>
-                            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                                <td style="padding:8px 10px;">高峰 / 128G 独服</td>
-                                <td style="padding:8px 10px;"><code>8–16</code></td>
-                                <td style="padding:8px 10px;">内存充裕时可加；注意 CPU 与其它项目占用的 ~28G</td>
-                            </tr>
-                            <tr>
-                                <td style="padding:8px 10px;">上限</td>
-                                <td style="padding:8px 10px;"><code>≤24</code></td>
-                                <td style="padding:8px 10px;">由 <code>BROWSER_POOL_MAX_SIZE</code> 控制，不建议无脑拉满</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                    <p style="margin:14px 0 0; font-size:13px;">
-                        <strong>持久化：</strong>在服务器 <code>.env</code> 设置 <code>BROWSER_POOL_SIZE=8</code>、<code>MAX_CONCURRENT_ACTIVATIONS=8</code> 后 <code>docker compose up -d --force-recreate app</code>。
-                        本页「应用并重载」仅改运行时，重启容器仍以 .env 为准。
-                    </p>
-                </div>
-            </div>
-
-            <div class="stat-grid" id="browser_pool_summary_stats">
-                <div class="stat-card"><div class="stat-label">池状态</div><div id="bp_stat_status" class="stat-value" style="font-size:22px;">—</div></div>
-                <div class="stat-card"><div class="stat-label">槽位</div><div id="bp_stat_slots" class="stat-value">0/0</div></div>
-                <div class="stat-card"><div class="stat-label">空闲 / 忙碌</div><div id="bp_stat_usage" class="stat-value" style="color:#86efac;">0 / 0</div></div>
-                <div class="stat-card"><div class="stat-label">排队任务</div><div id="bp_stat_waiting" class="stat-value" style="color:#fbbf24;">0</div></div>
-                <div class="stat-card"><div class="stat-label">累计借用</div><div id="bp_stat_uses" class="stat-value">0</div></div>
-                <div class="stat-card"><div class="stat-label">预估池内存</div><div id="bp_stat_mem" class="stat-value" style="font-size:22px;">—</div></div>
-            </div>
-
-            <div class="panel" style="margin-bottom: 24px;">
-                <div class="panel-header">
-                    <h2 class="panel-title">主机内存与容量建议</h2>
-                    <button type="button" class="btn btn-secondary" onclick="loadBrowserPoolPage(true)">
-                        <i data-lucide="refresh-cw"></i> 立即刷新
-                    </button>
-                </div>
-                <div id="browser_pool_memory_hint" style="font-size:14px; color:var(--text-dim); line-height:1.7;"></div>
-            </div>
-
-            <div class="panel" style="margin-bottom: 24px;">
-                <div class="panel-header">
-                    <h2 class="panel-title">运行模式</h2>
-                </div>
-                <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
-                    <label style="display:flex; align-items:center; gap:10px; font-size:14px; cursor:pointer;">
-                        <input id="bp_mode_enabled" type="checkbox" onchange="setBrowserPoolMode(this.checked)" />
-                        启用浏览器池（预热 Chromium，任务 CDP 接入）
-                    </label>
-                    <span id="bp_mode_hint" style="font-size:13px; color:var(--text-dim);"></span>
-                </div>
-                <p style="font-size:12px; color:var(--text-dim); margin-top:12px; line-height:1.65;">
-                    <strong>关闭</strong>：每任务独立冷启动 Chromium（与 Session 登录路径分离，调试更稳）。<br>
-                    <strong>开启</strong>：复用预热槽位，省去约 5–10s 启动时间。切换立即生效，写入 MySQL 持久化。
-                </p>
-            </div>
-
-            <div class="panel" style="margin-bottom: 24px;">
-                <div class="panel-header">
-                    <h2 class="panel-title">池配置</h2>
-                </div>
-                <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
-                    <label style="display:flex; flex-direction:column; gap:6px; font-size:13px;">
-                        槽位数量（1–<span id="bp_max_size">24</span>）
-                        <input id="bp_pool_size_input" type="number" min="1" max="48" class="asset-input" style="width:120px;" />
-                    </label>
-                    <button type="button" class="btn btn-primary" onclick="reloadBrowserPool()">
-                        <i data-lucide="rotate-cw"></i> 应用并重载池
-                    </button>
-                    <span id="bp_reload_hint" style="font-size:13px; color:var(--text-dim);"></span>
-                </div>
-                <p style="font-size:12px; color:var(--text-dim); margin-top:12px;">
-                    重载会关闭所有空闲槽位并重新预热；有任务占用时需等待结束。修改后写入运行时配置（重启容器仍以 <code>BROWSER_POOL_SIZE</code> 环境变量为准，可在 .env 持久化）。
-                </p>
-            </div>
-
-            <div class="panel" style="margin-bottom: 24px;">
-                <div class="panel-header">
-                    <h2 class="panel-title">槽位可视化</h2>
-                </div>
-                <div id="browser_pool_slots_grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:16px;"></div>
-            </div>
-
-            <div class="panel">
-                <div class="panel-header">
-                    <h2 class="panel-title">等待队列</h2>
-                </div>
-                <div id="browser_pool_queue" style="font-size:14px; color:var(--text-dim);">无排队任务</div>
             </div>
         </div>
 
@@ -1521,108 +1392,6 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     </table>
                 </div>
             </div>
-            </div>
-        </div>
-
-        <!-- 账单记录 -->
-        <div id="billing" class="page-view">
-            <div class="page-header">
-                <h1>账单记录</h1>
-                <p>查看支付账单明细、筛选与导出，追踪每张卡的消费记录</p>
-            </div>
-
-            <!-- 筛选面板 -->
-            <div class="panel">
-                <div class="panel-header">
-                    <h2 class="panel-title">筛选条件</h2>
-                    <div style="display:flex; gap:12px; flex-wrap:wrap;">
-                        <button class="btn btn-primary" onclick="loadBillingRecords(1)">
-                            <i data-lucide="search"></i>
-                            查询
-                        </button>
-                        <button class="btn btn-success" onclick="exportBillingCSV()">
-                            <i data-lucide="download"></i>
-                            导出 CSV
-                        </button>
-                        <button class="btn btn-delete" onclick="clearFailedBillingRecords()">
-                            <i data-lucide="trash-2"></i>
-                            清除失败记录
-                        </button>
-                    </div>
-                </div>
-                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:16px;">
-                    <div class="form-group" style="margin-bottom:0;">
-                        <label>开始日期</label>
-                        <input type="date" id="billing_start_date" class="asset-input">
-                    </div>
-                    <div class="form-group" style="margin-bottom:0;">
-                        <label>结束日期</label>
-                        <input type="date" id="billing_end_date" class="asset-input">
-                    </div>
-                    <div class="form-group" style="margin-bottom:0;">
-                        <label>卡片后四位</label>
-                        <input type="text" id="billing_card_last4" class="asset-input" maxlength="4" placeholder="例如 1234">
-                    </div>
-                    <div class="form-group" style="margin-bottom:0;">
-                        <label>套餐类型</label>
-                        <select id="billing_plan_type" class="asset-input">
-                            <option value="">全部</option>
-                            <option value="plus">Plus</option>
-                            <option value="pro100">Pro 100</option>
-                            <option value="pro200">Pro 200</option>
-                            <option value="pro500">Pro 500</option>
-                            <option value="pro_5x">Pro 5x（历史）</option>
-                            <option value="pro_20x">Pro 20x（历史）</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="margin-bottom:0;">
-                        <label>支付状态</label>
-                        <select id="billing_status" class="asset-input">
-                            <option value="">全部</option>
-                            <option value="success">成功</option>
-                            <option value="failed">失败</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 账单列表 -->
-            <div class="panel">
-                <div class="panel-header">
-                    <h2 class="panel-title">账单列表</h2>
-                    <span id="billing_total_hint" style="font-size:13px; color:var(--text-dim);"></span>
-                </div>
-                <div class="table-container">
-                    <table class="admin-action-table data-table billing-table">
-                        <thead>
-                            <tr>
-                                <th>支付时间</th>
-                                <th>卡号</th>
-                                <th>金额</th>
-                                <th>币种</th>
-                                <th>套餐类型</th>
-                                <th>CDK</th>
-                                <th>邮箱</th>
-                                <th style="text-align:center">状态</th>
-                                <th width="88px" style="text-align:center">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="billing_body"></tbody>
-                    </table>
-                </div>
-                <div id="billing_pagination" class="table-footer"></div>
-            </div>
-
-            <!-- 卡片消费汇总（点击卡片后四位展开） -->
-            <div id="billing_summary_panel" class="panel" style="display:none;">
-                <div class="panel-header">
-                    <h2 class="panel-title" id="billing_summary_title">卡片消费汇总</h2>
-                    <button class="btn btn-success" onclick="closeBillingSummary()">
-                        <i data-lucide="x"></i>
-                        关闭
-                    </button>
-                </div>
-                <div class="stat-grid" id="billing_summary_stats"></div>
             </div>
         </div>
 

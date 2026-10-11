@@ -33,6 +33,12 @@ return loadOrbitcardUsage(false, false, 1);
 - Do not show a generic “同步卡台卡片” empty message when an active filter has zero matches.
 - Do not rely on client-side bounds as the only validation for query parameters.
 
+## Admin Presentation Boundaries
+
+- Removing an admin navigation entry or page must be a presentation-only change unless the requirement explicitly requests backend cleanup.
+- Keep the corresponding Express routes, database tables, historical records, runtime controls, and dashboard aggregates intact so existing operations and data contracts remain available.
+- Remove page-only loaders, timers, event handlers, and DOM renderers together with the page to avoid calls against missing elements; retain shared runtime/status data used by other pages.
+
 ## Testing Requirements
 
 - Run `node --check public/admin.js` after changing the admin script.

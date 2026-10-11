@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify the admin script syntax, project test suite, diff whitespace, and preservation of remaining frontend behavior."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Review that retained backend routes, billing statistics, and runtime configuration remain intact after removing page-only frontend references."}
