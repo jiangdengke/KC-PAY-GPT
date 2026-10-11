@@ -693,15 +693,6 @@
                 );
                 return;
             }
-            const enableRenewBtn = event.target.closest('[data-enable-renew]');
-            if (enableRenewBtn) {
-                event.preventDefault();
-                enableAutoRenewByJobKey(
-                    enableRenewBtn.getAttribute('data-enable-renew') || '',
-                    enableRenewBtn
-                );
-                return;
-            }
         });
 
         let sessionModalPayload = '';
@@ -1030,40 +1021,6 @@
                 if (triggerBtn) {
                     triggerBtn.disabled = false;
                     triggerBtn.textContent = originalLabel || '取消续费';
-                }
-            }
-        }
-
-        async function enableAutoRenewByJobKey(jobKey, triggerBtn) {
-            if (!jobKey) {
-                return;
-            }
-            if (!confirm('确认要开启该 Session 对应账号的自动续费吗？')) {
-                return;
-            }
-            const originalLabel = triggerBtn ? triggerBtn.textContent : '';
-            if (triggerBtn) {
-                triggerBtn.disabled = true;
-                triggerBtn.textContent = '处理中…';
-            }
-            showMessage('正在开启自动续费，请稍候…', 'warning');
-            try {
-                const { payload } = await fetchSessionPayload(jobKey);
-                const sessionRaw = formatSessionPayload(payload);
-                if (!sessionRaw) {
-                    showMessage('该记录没有完整 Session，无法开启续费', 'warning');
-                    return;
-                }
-                const result = await requestEnableAutoRenew(sessionRaw);
-                const msg = result.message || '操作完成';
-                applyRenewalStatusFromResult(jobKey, result);
-                showMessage(`${msg}${result.email ? `（${result.email}）` : ''}`, 'success');
-            } catch (error) {
-                showMessage(error.message || '开启自动续费失败', 'error');
-            } finally {
-                if (triggerBtn) {
-                    triggerBtn.disabled = false;
-                    triggerBtn.textContent = originalLabel || '开启续费';
                 }
             }
         }
@@ -2264,9 +2221,6 @@
                 const cancelRenewBtn = canManageRenew && renewInfo.autoRenewRaw === true
                     ? `<button type="button" class="btn btn-danger session-renewal-action" data-cancel-renew="${jobKey}" title="取消自动续费">取消续费</button>`
                     : '';
-                const enableRenewBtn = canManageRenew && renewInfo.autoRenewRaw === false
-                    ? `<button type="button" class="btn btn-success session-renewal-action" data-enable-renew="${jobKey}" title="开启自动续费">开启续费</button>`
-                    : '';
                 return `
                 <tr class="session-record">
                     <td data-label="执行时间"><span class="session-text-preview">${escapeHtml(row.time || row.created_at || '-')}</span></td>
@@ -2280,7 +2234,6 @@
                         <div class="session-actions">
                             <button type="button" class="btn btn-primary" data-copy-session="${jobKey}" title="复制 Session">复制</button>
                             <button type="button" class="btn btn-success" data-export-session="${jobKey}" title="导出 Session">导出</button>
-                            ${enableRenewBtn}
                             ${cancelRenewBtn}
                             <button type="button" class="btn-delete" title="删除此任务记录" data-delete-task="${jobKey}">
                                 <i data-lucide="trash-2"></i>
