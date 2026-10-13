@@ -4,24 +4,36 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#f5f7fb" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0a0e1a" media="(prefers-color-scheme: dark)">
     <title>发票助手 | AI 自助充值中心</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="/style.css">
 </head>
 
 <body class="recharge-page subscription-page">
+    <svg class="icon-sprite" aria-hidden="true" focusable="false">
+        <!-- Lucide v1.56.0 (ISC) -->
+        <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
+        <symbol id="i-receipt" viewBox="0 0 24 24"><path d="M12 17V7"/><path d="M16 8h-6a2 2 0 0 0 0 4h4a2 2 0 0 1 0 4H8"/><path d="M4 3a1 1 0 0 1 1-1 1.3 1.3 0 0 1 .7.2l.933.6a1.3 1.3 0 0 0 1.4 0l.934-.6a1.3 1.3 0 0 1 1.4 0l.933.6a1.3 1.3 0 0 0 1.4 0l.933-.6a1.3 1.3 0 0 1 1.4 0l.934.6a1.3 1.3 0 0 0 1.4 0l.933-.6A1.3 1.3 0 0 1 19 2a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1 1.3 1.3 0 0 1-.7-.2l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.934.6a1.3 1.3 0 0 1-1.4 0l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-1.4 0l-.934-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-.7.2 1 1 0 0 1-1-1z"/></symbol>
+        <symbol id="i-arrow-up-right" viewBox="0 0 24 24"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></symbol>
+        <symbol id="i-external-link" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+    </svg>
+
     <div class="page-shell">
         <header class="site-hero compact-hero">
-            <a href="/" class="back-home-link"><i data-lucide="arrow-left"></i> 返回充值中心</a>
+            <a href="/" class="back-home-link"><svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg>返回充值中心</a>
             <h1>发票助手</h1>
             <p class="hero-subtitle">粘贴 Session 即可查询当前订阅状态，并跳转 OpenAI 官方账单页面下载发票。</p>
         </header>
 
         <main class="recharge-card subscription-card">
             <div class="notice-banner">
-                <i data-lucide="receipt"></i>
+                <svg class="icon" aria-hidden="true"><use href="#i-receipt"></use></svg>
                 <p>发票由 OpenAI 官方账单系统出具。本工具仅查询订阅信息与提供操作指引，不代开发票。</p>
             </div>
 
@@ -29,7 +41,7 @@
                 <label class="field-label" for="sessionInput">粘贴完整 Session JSON</label>
                 <div class="textarea-wrapper">
                     <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener"
-                        class="get-token-btn-floating">获取 Session</a>
+                        class="get-token-btn-floating">获取 Session<svg class="icon" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg></a>
                     <textarea id="sessionInput"
                         placeholder="打开上方链接，全选复制完整 JSON 粘贴到此处（保留 user、expires、accessToken 等全部字段）"
                         rows="5"></textarea>
@@ -54,7 +66,7 @@
                 <div class="subscription-actions subscription-billing-actions">
                     <a id="billingLink" href="https://chatgpt.com/account/manage" target="_blank" rel="noopener"
                         class="btn-primary btn-lg action-link-btn">
-                        <i data-lucide="external-link"></i>
+                        <svg class="icon" aria-hidden="true"><use href="#i-external-link"></use></svg>
                         打开 OpenAI 账单页面
                     </a>
                 </div>
@@ -249,7 +261,6 @@
             resultCard.innerHTML = rows.map(([label, value]) => renderRow(label, value)).join('');
             billingLink.href = data.billingPageUrl || 'https://chatgpt.com/account/manage';
             resultSection.style.display = 'block';
-            lucide.createIcons();
         }
 
         async function checkSubscription() {
@@ -290,7 +301,6 @@
         }
 
         checkBtn.addEventListener('click', checkSubscription);
-        lucide.createIcons();
     </script>
 </body>
 

@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify presentation-only change, no JS hook/class regressions, and required test commands."}
+{"file":".trellis/tasks/10-14-beautify-frontend/prd.md","reason":"Acceptance criteria for the three front pages (states, dark mode, mobile, no unpkg)."}

@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend presentation boundaries, escaping rules, and required checks (npm test, git diff --check)."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing tokens/classes that JS depends on instead of inventing parallel ones."}

@@ -39,10 +39,32 @@ return loadOrbitcardUsage(false, false, 1);
 - Keep the corresponding Express routes, database tables, historical records, runtime controls, and dashboard aggregates intact so existing operations and data contracts remain available.
 - Remove page-only loaders, timers, event handlers, and DOM renderers together with the page to avoid calls against missing elements; retain shared runtime/status data used by other pages.
 
+## Front Page Styling (`public/style.css`)
+
+`style.css` is shared by `index.html`, `subscription.html`, and `admin-login.html` (scoped under `body.login-page`). The admin console uses `admin.css` and is not affected.
+
+- Colors come only from the tokens in `:root`; dark mode redefines the same tokens under `@media (prefers-color-scheme: dark)`. Do not hard-code hex colors in component rules, or dark mode breaks.
+- Use `--primary` for fills (buttons, active step) and `--primary-text` for blue text/icons on light or soft backgrounds; `--*-text` / `--*-soft` / `--*-border` for status tones.
+- Link the stylesheet as `/style.css` (absolute). The login page can be served at a custom path with a trailing slash, where a relative URL resolves to a 404.
+- Icons are inline SVG sprites (`<svg class="icon"><use href="#i-name"></use></svg>`) with Lucide paths; do not reintroduce the `lucide` CDN script or `lucide.createIcons()`. Small decorative icons in CSS use the `--icon-*` mask tokens.
+- Keep JS hook classes stable: `.step-item.active/.done`, `.flow-badge.<status>`, `.status-message.status-success/error`, `.query-row`, `.batch-query-*`, `.status-unused/used/processing`, `.method-tab.active`, `.is-loading`, `.task-progress-bar.error`.
+
+Elements whose visibility the scripts toggle via `el.style.display = 'block'` cannot receive a different `display` from CSS (the inline style wins):
+
+```css
+/* Wrong: #redeemCdkInfo gets style="display:block" from JS, so flex never applies */
+.cdk-confirmed { display: flex; justify-content: space-between; }
+
+/* Correct: lay out the children, or wrap the element and style the wrapper */
+.confirmed-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cdk-confirmed > span { display: flex; }
+```
+
 ## Testing Requirements
 
 - Run `node --check public/admin.js` after changing the admin script.
 - Run `npm test` and `git diff --check` before committing.
+- For front page changes, check the inline scripts parse (extract `<script>` blocks and run `node --check`) and screenshot desktop/mobile in both light and dark color schemes.
 - For cross-layer changes, verify that the UI parameter names match the Express route and the store filter names.
 
 ## Code Review Checklist
