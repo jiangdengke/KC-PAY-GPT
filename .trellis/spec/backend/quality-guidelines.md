@@ -141,7 +141,9 @@ Apply this contract when changing the Desolate Open client, GPT API admin config
 - Desolate requests use `X-API-Key` and JSON `Accept`/`Content-Type` headers. Desolate requests send a UUID `X-Request-ID`; a caller-provided UUID is preserved, otherwise the client generates one. Legacy provider requests must not receive or validate this header.
 - `GET /account` returns the standard `{ code, message, data }` envelope. `GET /plans/{planCode}/payment-regions` returns `data.planCode` and `data.paymentRegions[]`; an empty plan code is rejected rather than mapped to Plus.
 - `POST /orders` sends exactly `planCode`, optional configured `paymentRegion`, `cardNumber`, `expiryMonth`, `expiryYear`, `securityCode`, and `session`. `CreateOrderRequest` is closed: never send `clientRequestId` or `clientRef` in the body. Opaque session fields are preserved and never logged.
-- New orders always send a UUID `Idempotency-Key`. A supplied UUID is preserved; a stable non-UUID seed is converted deterministically; transport retries reuse the same key and request body. Retry only network failures, HTTP 429, and HTTP 5xx, honoring `Retry-After` before bounded exponential backoff.
+- New orders always send a UUID `Idempotency-Key`. A supplied UUID is preserved; a stable non-UUID seed is converted deterministically. Creation retries reuse the exact key, request body, and `X-Request-ID`.
+- Retry network failures, HTTP 429, HTTP 5xx, and only the documented transient business codes `40011` (upstream service error) and `40012` (upstream timeout). Other business errors, including `40013` (unsupported plan), are terminal for submission.
+- The default create-order policy is five retries after the initial attempt, starting at 5000 ms with bounded exponential backoff. `Retry-After` takes precedence but every individual wait is capped at the fixed 60000 ms safety limit. Existing retry-count and base-delay options, provider config, and environment overrides remain supported.
 - Capture response `X-Request-ID`, `Idempotency-Replayed`, `Retry-After`, `Cache-Control`, and `Location` in transient metadata. The Open order response must not be persisted wholesale: `gpt_api_raw` contains only the allowlisted order summary and metadata, with session credentials and captcha URLs removed.
 - `GET /orders/{orderId}` is polled until `status=succeeded` or `status=failed`; `pending` and `processing` use bounded backoff. A default Open poll has no implicit maximum because the provider documents multiple captcha rounds; `GPT_API_MAX_POLLS` is an explicit operator safety override. For `awaiting_captcha`/`pending`, expose the current captcha ID and URL only to the task UI, deduplicate repeated IDs, and continue querying the same order after `submitted` or a new captcha ID.
 - When a response contains `session`, merge it with the local session while preserving omitted and unknown fields, then atomically write the refreshed object. Only `succeeded` is a successful Open order; `payment` is an amount snapshot, and `subscriptionCancelled`, `failureCode`, and `failureMessage` remain visible in the safe summary.
@@ -155,15 +157,16 @@ Apply this contract when changing the Desolate Open client, GPT API admin config
 | Invalid explicit `X-Request-ID` or `Idempotency-Key` | Return a local validation error before the request. |
 | Missing `paymentRegion` | Omit the field and let the provider select its documented default. |
 | Invalid `paymentRegion` | Reject locally unless it is exactly two uppercase letters after normalization. |
-| HTTP 422 or ordinary Open business error | Do not retry; preserve HTTP status, numeric `businessCode`, and provider message. |
-| Network failure, HTTP 429, or HTTP 5xx on create | Retry with the original idempotency key/body; stop after configured retries and retain request metadata. |
-| `Retry-After` on 429 | Wait the documented delay before the next request/poll. |
+| HTTP 422, business code `40013`, or any ordinary Open business error | Do not retry; preserve HTTP status, numeric `businessCode`, and provider message. |
+| Business code `40011` or `40012` during create | Retry the same request within the bounded policy; return the final failure only after retries are exhausted. |
+| Network failure, HTTP 429, or HTTP 5xx on create | Retry with the original idempotency key, body, and request ID; stop after configured retries and retain request metadata. |
+| `Retry-After` on a retryable create response | Prefer the documented delay but cap the individual wait at the fixed 60000 ms safety limit. |
 | Order `failed` | Mark the task failed/manual review and preserve `failureCode`/`failureMessage`; never treat `payment` as success. |
 | Captcha URL missing | Keep the task pending without inventing or persisting a URL; do not create a second order. |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: query payment regions for the exact mapped plan, explicitly configure `US`, send it in the closed order body, and retry an HTTP 503 with the same UUID idempotency key.
+- Good: query payment regions for the exact mapped plan, explicitly configure `US`, send it in the closed order body, and retry HTTP 503 or business code `40011` with the same UUID idempotency key, request body, and request ID.
 - Base: leave `gpt_api_payment_region` empty, omit `paymentRegion`, follow the provider default, poll the returned order with backoff, and persist only the safe summary.
 - Bad: map a missing Pro code to `chatgptplusplan`, put `clientRef` or session credentials in the order body/log, retry with a new idempotency key, or stop a multi-round captcha order merely because one verification was submitted.
 
@@ -171,7 +174,8 @@ Apply this contract when changing the Desolate Open client, GPT API admin config
 
 - Assert every Desolate request includes `X-API-Key`, a UUID `X-Request-ID`, and the documented base path; assert legacy requests omit `X-Request-ID`.
 - Assert payment-region parsing, empty-plan rejection, optional body omission/inclusion, and admin/store/worker `gpt_api_payment_region` round-trip.
-- Assert order retries preserve the idempotency key/body, honor `Retry-After`, expose `businessCode`, `requestId`, and `idempotencyReplayed`, and do not retry ordinary 4xx responses.
+- Assert order retries preserve the idempotency key/body/request ID, retry business codes `40011`/`40012`, honor and bound `Retry-After`, expose `businessCode`, `requestId`, and `idempotencyReplayed`, and do not retry `40013` or ordinary 4xx responses.
+- Assert the default create policy performs five retries with 5000/10000/20000/40000/60000 ms waits before returning a persistent transient failure.
 - Assert `normalizeOpenOrderSummary` drops session credentials, card fields, and captcha URLs while preserving status, payment snapshot, failure fields, captcha ID/status, and response metadata.
 - Assert Open polling terminates only at `succeeded`/`failed` by default, supports repeated captcha IDs/new rounds, writes refreshed sessions atomically, and honors an explicit `GPT_API_MAX_POLLS` override.
 - Run `npx vitest run test/gpt-api-client.test.js`, `npm test`, `node --check` for every changed JavaScript file, and `git diff --check`.

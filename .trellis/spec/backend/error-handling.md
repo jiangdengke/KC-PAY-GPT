@@ -22,6 +22,7 @@ Apply when changing `runGptApiWorker`, `notifyTaskOutcome`, GPT provider error e
 ### 3. Contracts
 
 - Keep customer task records and WebSocket messages independent of administrator diagnostics. A terminal provider failure retains `本次开通未完成，已转人工确认，请联系客服处理后再试`; poll-cap exhaustion retains `订单处理超时，已转人工确认，请联系客服处理后再试`. Existing submit-error customer handling remains unchanged.
+- Desolate order creation must exhaust its bounded client retry policy before `runGptApiWorker` creates a manual hold. Business codes `40011` and `40012` remain an in-progress submission concern while retries are available; a later success continues normal order polling without creating a hold. Only the final exhausted result enters the existing customer/admin failure split. Existing holds are not replayed automatically.
 - Administrator `diagnostic` contains only scalar fields: `reason` (up to the shared `MAX_REASON_LENGTH`, 1600 characters), `code`, `orderId`, `status`, and `requestId` (each up to 120 characters). `pollCount`, when present, is a non-negative integer. Normal error text, error codes, numeric identifiers, and ordinary diagnostic URLs remain visible to the private administrator; actual credentials remain masked. The formatter must reuse the same reason limit rather than clipping it back to 240.
 - For Telegram `event === 'failure'`, a nonempty diagnostic reason becomes `详情`. Include the failure code, order, status, and available request ID/query count as separate lines. Without a diagnostic, use the existing message fallback. Success does not render failure diagnostics.
 - Preserve both the provider's failure code and message. Legacy responses may supply `result.error`, `errorMessage`, and error-code aliases. Caught exceptions take precedence over stale prior poll messages such as `处理中`.
@@ -37,6 +38,8 @@ Apply when changing `runGptApiWorker`, `notifyTaskOutcome`, GPT provider error e
 
 | Condition | Expected behavior |
 | --- | --- |
+| Transient create error (`40011`, `40012`, network failure, 429, or 5xx) with retries remaining | Keep the task in the submission path; do not create a hold, release a card, or emit a terminal notification. |
+| Transient create error after retries are exhausted | Enter the existing final submit-failure path once; customer gets the generic message and administrators keep the final diagnostic. |
 | Provider returns failure message and code | Customer gets the generic failure; Telegram gets the concrete reason and code with known order context. |
 | Failed order lacks a cause/code | Use `原因缺失（第三方未提供失败原因）` and `未提供`; do not substitute Plus or invent an error. |
 | Configured poll cap is reached | Customer gets the timeout prompt; Telegram gets `POLL_TIMEOUT`, known order/status, and query count. |
@@ -55,6 +58,7 @@ Apply when changing `runGptApiWorker`, `notifyTaskOutcome`, GPT provider error e
 
 ### 6. Tests Required
 
+- `test/gpt-api-client.test.js` asserts transient create business codes recover within the same `submitPay` call, persistent failures exhaust the bounded default policy, every attempt reuses the same idempotency key/body/request ID, and `40013` remains non-retryable.
 - `test/gpt-api-worker-failure.test.js` executes isolated worker source with mocked provider/store/broadcast/notification dependencies: assert real notification payload wiring and customer task/WebSocket messages for Open failure, legacy failure, timeout, catch-after-processing, missing cause/code, and success. No external provider or Telegram requests.
 - `test/gpt-api-failure.test.js` asserts formatter detail precedence, code/context preservation, HTML escaping, actual credential redaction (Bearer/Basic, Cookie, quoted values, tokens, PAN/security codes), serialized-dump removal, and bracketed exception retention. Verify 1000-character reasons survive builder/formatter, reasons longer than 1600 are clipped consistently, numeric identifiers remain intact, ordinary URLs with numeric IDs/`errorCode` survive, and credential/captcha URLs—including encoded query and hash pairs—remain hidden. Assert a bounded representative notification remains under Telegram's 4096-character limit.
 - Run `npm test`, `node --check` for every changed JavaScript file, `docker compose config --quiet`, and `git diff --check` before publishing.

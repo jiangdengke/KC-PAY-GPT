@@ -1,0 +1,31 @@
+{
+  "id": "fix-failed-task-list-display",
+  "name": "fix-failed-task-list-display",
+  "title": "fix failed task list display",
+  "description": "Retry transient Desolate Open upstream failures before creating a manual-review hold.",
+  "status": "in_progress",
+  "dev_type": "bugfix",
+  "scope": "backend",
+  "package": null,
+  "priority": "P2",
+  "creator": "jiangdk",
+  "assignee": "jiangdk",
+  "createdAt": "2026-10-13",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "gpt-api-client.js",
+    "test/gpt-api-client.test.js",
+    ".trellis/spec/backend/quality-guidelines.md",
+    ".trellis/spec/backend/error-handling.md"
+  ],
+  "notes": "",
+  "meta": {}
+}

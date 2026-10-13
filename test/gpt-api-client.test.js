@@ -3,6 +3,27 @@
 const axios = require('axios');
 const client = require('../gpt-api-client');
 
+function createDesolateOrderInput(overrides = {}) {
+    return {
+        planKey: 'chatgptplusplan',
+        session: {
+            user: { id: 'user_1', email: 'demo@example.com' },
+            account: { id: 'acct_1' },
+            accessToken: 'aaa.bbb.ccc',
+            sessionToken: 'opaque-cookie-token',
+            expires: '2099-12-31T00:00:00Z'
+        },
+        idempotencyKey: 'stable-order-seed',
+        newCard: {
+            number: '4242424242424242',
+            exp_month: 12,
+            exp_year: 2032,
+            cvc: '123'
+        },
+        ...overrides
+    };
+}
+
 describe('gpt api client', () => {
     afterEach(() => vi.restoreAllMocks());
 
@@ -211,7 +232,11 @@ describe('gpt api client', () => {
         expect(spy.mock.calls[1][0].data.paymentRegion).toBe('US');
     });
 
-    it('retries ambiguous Open order failures with the same UUID key and preserves metadata', async () => {
+    it('retries ambiguous Open order failures with the same UUID key and preserves an explicit zero Retry-After', async () => {
+        const timeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation((callback) => {
+            callback();
+            return 0;
+        });
         const spy = vi.spyOn(axios, 'request')
             .mockResolvedValueOnce({ status: 503, headers: { 'X-Request-ID': 'req_retry_1', 'Retry-After': '0' }, data: { code: 50001, message: '暂时失败', data: null } })
             .mockResolvedValueOnce({ status: 201, headers: { 'X-Request-ID': 'req_retry_2', 'Idempotency-Replayed': 'true' }, data: { code: 0, message: '成功', data: { orderId: 'ord_retry' } } });
@@ -229,13 +254,115 @@ describe('gpt api client', () => {
                 session,
                 idempotencyKey: 'stable-order-seed',
                 newCard: { number: '4242424242424242', exp_month: 12, exp_year: 2032, cvc: '123' },
-                retryOptions: { maxRetries: 1, baseDelayMs: 0 }
+                retryOptions: { maxRetries: 1, baseDelayMs: 5000 }
             }
         );
         const keys = spy.mock.calls.map(([request]) => request.headers['Idempotency-Key']);
         expect(out).toMatchObject({ success: true, orderId: 'ord_retry', retryCount: 1, idempotencyReplayed: true, requestId: 'req_retry_2' });
         expect(keys).toHaveLength(2);
         expect(keys[0]).toBe(keys[1]);
+        expect(timeoutSpy).toHaveBeenCalledTimes(1);
+        expect(timeoutSpy.mock.calls[0][1]).toBe(0);
+    });
+
+    it.each([40011, 40012])('retries transient Open business code %i with identical request data', async (businessCode) => {
+        const spy = vi.spyOn(axios, 'request')
+            .mockResolvedValueOnce({
+                status: 200,
+                headers: { 'X-Request-ID': `req_transient_${businessCode}` },
+                data: { code: businessCode, message: 'upstream request failed', data: null }
+            })
+            .mockResolvedValueOnce({
+                status: 201,
+                headers: { 'X-Request-ID': `req_recovered_${businessCode}` },
+                data: { code: 0, message: '成功', data: { orderId: `ord_recovered_${businessCode}` } }
+            });
+
+        const out = await client.submitPay(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_test_placeholder' },
+            createDesolateOrderInput({ retryOptions: { maxRetries: 1, baseDelayMs: 0 } })
+        );
+
+        const [firstRequest, retryRequest] = spy.mock.calls.map(([request]) => request);
+        expect(out).toMatchObject({
+            success: true,
+            orderId: `ord_recovered_${businessCode}`,
+            retryCount: 1
+        });
+        expect(out.retryHistory[0].businessCode).toBe(businessCode);
+        expect(retryRequest.data).toEqual(firstRequest.data);
+        expect(retryRequest.headers['Idempotency-Key']).toBe(firstRequest.headers['Idempotency-Key']);
+        expect(retryRequest.headers['X-Request-ID']).toBe(firstRequest.headers['X-Request-ID']);
+    });
+
+    it('uses five bounded default retries before returning a persistent transient failure', async () => {
+        const timeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation((callback) => {
+            callback();
+            return 0;
+        });
+        const requestSpy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            headers: { 'X-Request-ID': 'req_timeout' },
+            data: { code: 40012, message: 'upstream timeout', data: null }
+        });
+
+        const out = await client.submitPay(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_test_placeholder' },
+            createDesolateOrderInput()
+        );
+
+        expect(requestSpy).toHaveBeenCalledTimes(6);
+        expect(timeoutSpy.mock.calls.map(([, delay]) => delay)).toEqual([
+            5000,
+            10000,
+            20000,
+            40000,
+            60000
+        ]);
+        expect(out).toMatchObject({ success: false, businessCode: 40012, retryCount: 5 });
+        expect(out.retryHistory).toHaveLength(6);
+    });
+
+    it('caps provider Retry-After before retrying an Open order', async () => {
+        const timeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation((callback) => {
+            callback();
+            return 0;
+        });
+        vi.spyOn(axios, 'request')
+            .mockResolvedValueOnce({
+                status: 429,
+                headers: { 'Retry-After': '120' },
+                data: { code: 40011, message: 'busy', data: null }
+            })
+            .mockResolvedValueOnce({
+                status: 201,
+                data: { code: 0, message: '成功', data: { orderId: 'ord_after_retry_after' } }
+            });
+
+        const out = await client.submitPay(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_test_placeholder' },
+            createDesolateOrderInput({ retryOptions: { maxRetries: 1 } })
+        );
+
+        expect(timeoutSpy).toHaveBeenCalledTimes(1);
+        expect(timeoutSpy.mock.calls[0][1]).toBe(60000);
+        expect(out).toMatchObject({ success: true, orderId: 'ord_after_retry_after', retryCount: 1 });
+    });
+
+    it('does not retry unsupported-plan business code 40013', async () => {
+        const spy = vi.spyOn(axios, 'request').mockResolvedValue({
+            status: 200,
+            headers: { 'X-Request-ID': 'req_unsupported_plan' },
+            data: { code: 40013, message: '套餐不支持', data: null }
+        });
+
+        const out = await client.submitPay(
+            { base_url: 'https://recharge.desolate.run', api_key: 'ap_test_placeholder' },
+            createDesolateOrderInput({ retryOptions: { maxRetries: 5, baseDelayMs: 0 } })
+        );
+
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(out).toMatchObject({ success: false, status: 200, businessCode: 40013 });
     });
 
     it('does not retry ordinary Open HTTP 4xx business errors', async () => {

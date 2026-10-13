@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Desolate Open 创建订单的幂等、重试分类、退避和验证契约"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"任务失败、客户提示、管理员诊断与人工审核边界"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"在现有 submitPay 重试器内扩展分类，避免新增平行重试链"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"确认客户端重试与 Worker 人工审核之间的数据流边界"}
+{"file":".trellis/tasks/10-08-support-gpt-four-plan-tiers/research/desolate-four-plan-api.md","reason":"Desolate Open 业务码 40011/40012/40013 的契约证据"}

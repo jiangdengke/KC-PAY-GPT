@@ -25,6 +25,10 @@ const {
 const DEFAULT_BASE_URL = 'https://kc.vpss.eu.cc/';
 const DEFAULT_OPEN_BASE_URL = 'https://recharge.desolate.run/api/v1/open';
 const OPEN_PROVIDER_HOST = 'recharge.desolate.run';
+const RETRYABLE_OPEN_ORDER_BUSINESS_CODES = new Set([40011, 40012]);
+const DEFAULT_OPEN_ORDER_MAX_RETRIES = 5;
+const DEFAULT_OPEN_ORDER_RETRY_BASE_MS = 5000;
+const DEFAULT_OPEN_ORDER_RETRY_MAX_MS = 60000;
 
 function normalizeDesolateIdempotencyKey(seed) {
     const value = String(seed ?? '').trim();
@@ -146,15 +150,27 @@ function buildResponseMeta(headers, status = null) {
 function isRetryableOpenOrderResponse(result) {
     return Boolean(result?.networkError)
         || Number(result?.status) === 429
-        || Number(result?.status) >= 500;
+        || Number(result?.status) >= 500
+        || RETRYABLE_OPEN_ORDER_BUSINESS_CODES.has(Number(result?.businessCode));
 }
 
 function getRetryOptions(cfg = {}, options = {}) {
-    const configuredMax = options.maxRetries ?? cfg.open_order_max_retries ?? process.env.DESOLATE_OPEN_ORDER_MAX_RETRIES ?? 2;
-    const configuredBase = options.baseDelayMs ?? cfg.open_order_retry_base_ms ?? process.env.DESOLATE_OPEN_RETRY_BASE_MS ?? 1000;
+    const configuredMax = options.maxRetries
+        ?? cfg.open_order_max_retries
+        ?? process.env.DESOLATE_OPEN_ORDER_MAX_RETRIES
+        ?? DEFAULT_OPEN_ORDER_MAX_RETRIES;
+    const configuredBase = options.baseDelayMs
+        ?? cfg.open_order_retry_base_ms
+        ?? process.env.DESOLATE_OPEN_RETRY_BASE_MS
+        ?? DEFAULT_OPEN_ORDER_RETRY_BASE_MS;
     return {
-        maxRetries: Math.max(0, Number.isInteger(Number(configuredMax)) ? Number(configuredMax) : 2),
-        baseDelayMs: Math.max(0, Number.isFinite(Number(configuredBase)) ? Number(configuredBase) : 1000)
+        maxRetries: Math.max(0, Number.isInteger(Number(configuredMax))
+            ? Number(configuredMax)
+            : DEFAULT_OPEN_ORDER_MAX_RETRIES),
+        baseDelayMs: Math.max(0, Number.isFinite(Number(configuredBase))
+            ? Number(configuredBase)
+            : DEFAULT_OPEN_ORDER_RETRY_BASE_MS),
+        maxDelayMs: DEFAULT_OPEN_ORDER_RETRY_MAX_MS
     };
 }
 
@@ -493,10 +509,12 @@ async function submitPay(cfg, { planKey, session, sessionToken, country, currenc
                 retryAfterMs: res.retryAfterMs ?? null
             });
             if (!isRetryableOpenOrderResponse(res) || retryCount >= retry.maxRetries) break;
-            const retryAfterMs = Number(res.retryAfterMs);
-            const backoffMs = Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+            const rawRetryAfterMs = res.retryAfterMs;
+            const retryAfterMs = rawRetryAfterMs == null ? null : Number(rawRetryAfterMs);
+            const requestedDelayMs = retryAfterMs != null && Number.isFinite(retryAfterMs) && retryAfterMs >= 0
                 ? retryAfterMs
-                : Math.min(60000, retry.baseDelayMs * (2 ** retryCount));
+                : retry.baseDelayMs * (2 ** retryCount);
+            const backoffMs = Math.min(retry.maxDelayMs, requestedDelayMs);
             retryCount += 1;
             await sleepForRetry(backoffMs);
         }

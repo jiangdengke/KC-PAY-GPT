@@ -416,9 +416,21 @@ describe('runGptApiWorker failure notification wiring', () => {
         expect(telegram).toContain('失败代码: 未提供');
     });
 
-    it('leaves the success path unchanged and sends no failure diagnostic', async () => {
+    it('continues after an internally retried submission and creates no manual hold', async () => {
         const harness = createHarness({
             openProtocol: true,
+            submitResult: {
+                success: true,
+                orderId: 'ord-recovered-after-retry',
+                data: { orderId: 'ord-recovered-after-retry', status: 'pending' },
+                retryCount: 2,
+                retryHistory: [
+                    { businessCode: 40011 },
+                    { businessCode: 40012 },
+                    { businessCode: null }
+                ],
+                requestId: 'req-submit-recovered'
+            },
             queryResults: [{
                 success: true,
                 data: { status: 'succeeded', subscriptionCancelled: true },
