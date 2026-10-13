@@ -45,7 +45,7 @@ return loadOrbitcardUsage(false, false, 1);
 
 - Colors come only from the tokens in `:root`; dark mode redefines the same tokens under `@media (prefers-color-scheme: dark)`. Do not hard-code hex colors in component rules, or dark mode breaks.
 - Use `--primary` for fills (buttons, active step) and `--primary-text` for blue text/icons on light or soft backgrounds; `--*-text` / `--*-soft` / `--*-border` for status tones.
-- Link the stylesheet as `/style.css` (absolute). The login page can be served at a custom path with a trailing slash, where a relative URL resolves to a 404.
+- Link the stylesheet as `/style.css?v=<date-tag>` (absolute). The login page can be served at a custom path with a trailing slash, where a relative URL resolves to a 404. Production serves static files with `cache-control: public, max-age=14400`, so bump the `v` tag in all three pages whenever `style.css` changes; otherwise new markup can be paired with stale CSS.
 - Icons are inline SVG sprites (`<svg class="icon"><use href="#i-name"></use></svg>`) with Lucide paths; do not reintroduce the `lucide` CDN script or `lucide.createIcons()`. Small decorative icons in CSS use the `--icon-*` mask tokens.
 - Keep JS hook classes stable: `.step-item.active/.done`, `.flow-badge.<status>`, `.status-message.status-success/error`, `.query-row`, `.batch-query-*`, `.status-unused/used/processing`, `.method-tab.active`, `.is-loading`, `.task-progress-bar.error`.
 
