@@ -58,6 +58,11 @@
 2. 代码和 `public/` 只读挂载进容器。
 3. nginx 按 Cloudflare 网段开启 real_ip，并覆盖 `X-Forwarded-For`（`deploy/nginx/`）。
 
+## 第三部分：CDK 接口限频与导入校验（用户 2026-10-24 确认）
+
+1. 公开 CDK 接口按真实 IP 限频：查询类每 10 分钟 600 个码（批量按条数计），开通每 10 分钟 30 次；超限返回 429 和 `Retry-After`。
+2. 后台导入 CDK 时，任何一个码少于 12 位就整批拒绝。
+
 ## 不在本次范围
 
 - 二级密码校验（`requireSecondaryAuth` 直接放行是之前的产品决定）。

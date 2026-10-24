@@ -169,6 +169,23 @@ function getClientIp(req) {
     return adminAuth.resolveClientIp(req);
 }
 
+// 公开 CDK 接口按真实 IP 限频。码空间 2^75 猜不中，这里防的是批量查询把数据库连接刷满、拖慢真实客户
+const PUBLIC_CDK_QUOTAS = {
+    lookup: { windowMs: 10 * 60 * 1000, max: 600 }, // verify-cdk / cdk/query / cdk/query-batch，按码计数
+    activation: { windowMs: 10 * 60 * 1000, max: 30 } // run-process，按请求计数
+};
+
+function enforcePublicCdkQuota(req, res, bucket, cost = 1) {
+    const result = adminAuth.consumeRequestQuota(bucket, getClientIp(req), { ...PUBLIC_CDK_QUOTAS[bucket], cost });
+    if (result.allowed) {
+        return true;
+    }
+    const wait = result.retryAfterSec < 60 ? `${result.retryAfterSec} 秒` : `${Math.ceil(result.retryAfterSec / 60)} 分钟`;
+    res.setHeader('Retry-After', String(result.retryAfterSec));
+    res.status(429).json({ success: false, message: `请求过于频繁，请 ${wait}后再试` });
+    return false;
+}
+
 function getRemainingCooldownMinutes(cooldownUntil) {
     if (!cooldownUntil) {
         return 0;
@@ -3592,6 +3609,14 @@ app.post('/api/admin/cdks/import', requireSecondaryAuth, async (req, res) => {
     if (cdks.length === 0) {
         return res.status(400).json({ success: false, message: '请提供要导入的卡密' });
     }
+    const weakCdks = adminAuth.findWeakCdkCodes(cdks);
+    if (weakCdks.length > 0) {
+        const preview = weakCdks.slice(0, 5).join('、');
+        return res.status(400).json({
+            success: false,
+            message: `有 ${weakCdks.length} 个卡密少于 ${adminAuth.MIN_IMPORTED_CDK_LENGTH} 位，容易被猜中，已拒绝整批导入：${preview}${weakCdks.length > 5 ? ' 等' : ''}`
+        });
+    }
 
     try {
         await ensureStoreReady();
@@ -4957,7 +4982,7 @@ async function handleActivationRequest(req, res) {
     }
 }
 
-app.post('/api/run-process', handleActivationRequest);
+app.post('/api/run-process', (req, res, next) => (enforcePublicCdkQuota(req, res, 'activation') ? next() : undefined), handleActivationRequest);
 
 app.post('/api/admin/trigger-activation', handleActivationRequest);
 
@@ -4966,6 +4991,9 @@ app.post('/api/verify-cdk', async (req, res) => {
     const clientIp = getClientIp(req);
     if (!cdk) {
         return res.status(400).json({ success: false, message: '请输入 CDK' });
+    }
+    if (!enforcePublicCdkQuota(req, res, 'lookup')) {
+        return;
     }
 
     try {
@@ -5077,6 +5105,9 @@ app.get('/api/cdk/query', async (req, res) => {
     if (!cdk) {
         return res.status(400).json({ success: false, message: '请输入查询激活码' });
     }
+    if (!enforcePublicCdkQuota(req, res, 'lookup')) {
+        return;
+    }
 
     try {
         await ensureStoreReady();
@@ -5103,6 +5134,9 @@ app.post('/api/cdk/query-batch', async (req, res) => {
     }
     if (cdks.length > 100) {
         return res.status(400).json({ success: false, message: '一次最多查询 100 个卡密' });
+    }
+    if (!enforcePublicCdkQuota(req, res, 'lookup', cdks.length)) {
+        return;
     }
 
     try {

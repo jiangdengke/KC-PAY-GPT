@@ -168,3 +168,34 @@ describe('2FA challenge attempts', () => {
         }
     });
 });
+
+describe('public request quotas', () => {
+    it('charges batch requests by cost and blocks once the window is used up', () => {
+        const auth = freshAdminAuth();
+        const limits = { windowMs: 60 * 1000, max: 600 };
+        for (let i = 0; i < 6; i += 1) {
+            expect(auth.consumeRequestQuota('lookup', '203.0.113.50', { ...limits, cost: 100 }).allowed).toBe(true);
+        }
+        const blocked = auth.consumeRequestQuota('lookup', '203.0.113.50', { ...limits, cost: 1 });
+        expect(blocked.allowed).toBe(false);
+        expect(blocked.retryAfterSec).toBeGreaterThan(0);
+        expect(auth.consumeRequestQuota('activation', '203.0.113.50', { windowMs: 60 * 1000, max: 30 }).allowed).toBe(true);
+        expect(auth.consumeRequestQuota('lookup', '203.0.113.51', { ...limits, cost: 100 }).allowed).toBe(true);
+    });
+
+    it('shares one quota across an IPv6 /64', () => {
+        const auth = freshAdminAuth();
+        const limits = { windowMs: 60 * 1000, max: 2 };
+        expect(auth.consumeRequestQuota('activation', '2605:a140:2361:126::1', limits).allowed).toBe(true);
+        expect(auth.consumeRequestQuota('activation', '2605:a140:2361:126::2', limits).allowed).toBe(true);
+        expect(auth.consumeRequestQuota('activation', '2605:a140:2361:126:abcd::9', limits).allowed).toBe(false);
+    });
+});
+
+describe('findWeakCdkCodes', () => {
+    it('flags imported codes shorter than the minimum length', () => {
+        expect(adminAuth.findWeakCdkCodes(['KC-K25PBB6MNM7VVV8', ' 12345678 ', 'ABCDEFGHIJK', 'ABCDEFGHIJKL', '', null]))
+            .toEqual(['12345678', 'ABCDEFGHIJK']);
+        expect(adminAuth.findWeakCdkCodes(['KC-K25PBB6MNM7VVV8'])).toEqual([]);
+    });
+});

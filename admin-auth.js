@@ -18,12 +18,16 @@ const LOGIN_GLOBAL_MAX_ATTEMPTS = 100;
 const LOGIN_GLOBAL_KEY = '*';
 const MAX_TRACKED_LOGIN_KEYS = 10000;
 const CHALLENGE_MAX_ATTEMPTS = 5;
+const MAX_TRACKED_QUOTA_KEYS = 20000;
+// 系统生成的码是 KC- + 15 位（2^75 种）；导入的码低于这个长度就可能被批量查询接口爆破
+const MIN_IMPORTED_CDK_LENGTH = 12;
 
 const MIN_ADMIN_TOKEN_SECRET_LENGTH = 32;
 
 const loginAttempts = new Map();
 const tgLoginCodes = new Map();
 const challengeStates = new Map();
+const requestQuotas = new Map();
 let processAdminTokenSecret = '';
 
 // 不能从 cwd 等公开信息派生密钥：仓库公开，派生值可被任何人算出并伪造管理员 token
@@ -300,6 +304,37 @@ function recordLoginFailure(key, entry) {
 }
 
 /**
+ * 按真实 IP（IPv6 按 /64）做固定窗口计数。cost 让批量接口按条数计费，
+ * 例如一次查 100 个码就消耗 100。返回 { allowed, retryAfterSec }。
+ */
+function consumeRequestQuota(bucket, ip, { windowMs, max, cost = 1 }) {
+    const key = `${bucket}|${toRateLimitKey(ip)}`;
+    const now = Date.now();
+    let entry = requestQuotas.get(key);
+    if (!entry || now >= entry.resetAt) {
+        entry = { used: 0, resetAt: now + windowMs };
+    }
+    if (entry.used + cost > max) {
+        requestQuotas.set(key, entry);
+        return { allowed: false, retryAfterSec: Math.max(1, Math.ceil((entry.resetAt - now) / 1000)) };
+    }
+    entry.used += cost;
+    requestQuotas.set(key, entry);
+    if (requestQuotas.size > MAX_TRACKED_QUOTA_KEYS) {
+        for (const [quotaKey, quota] of requestQuotas) {
+            if (now >= quota.resetAt) requestQuotas.delete(quotaKey);
+        }
+    }
+    return { allowed: true, retryAfterSec: 0 };
+}
+
+function findWeakCdkCodes(codes = []) {
+    return [...new Set((Array.isArray(codes) ? codes : [])
+        .map((code) => String(code || '').trim())
+        .filter((code) => code && code.length < MIN_IMPORTED_CDK_LENGTH))];
+}
+
+/**
  * 每个登录 challenge 最多尝试 CHALLENGE_MAX_ATTEMPTS 次二次验证，成功后作废。
  * 否则拿到一个 challenge 就能在有效期内无限次猜 6 位 TOTP。
  */
@@ -530,6 +565,9 @@ module.exports = {
     clearLoginAttempts,
     consumeChallengeAttempt,
     markChallengeUsed,
+    consumeRequestQuota,
+    MIN_IMPORTED_CDK_LENGTH,
+    findWeakCdkCodes,
     generateTotpSecret,
     verifyTotpCode,
     getTotpUri,

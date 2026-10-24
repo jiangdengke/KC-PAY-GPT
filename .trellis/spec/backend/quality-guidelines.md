@@ -207,6 +207,8 @@ Background: on 2026-10-16, production was taken over with forged admin tokens. T
 - Client IP comes only from `adminAuth.resolveClientIp(req)`, which reads `X-Real-IP` written by the local nginx (Cloudflare `real_ip`, see `deploy/nginx/cloudflare-realip.conf`). Never read the first `X-Forwarded-For` entry; clients set it freely. The app port must stay bound to `127.0.0.1`.
 - Login throttling uses `checkLoginRateLimit(ip, scope)`, which counts IPv6 per /64 and has a global failure cap. 2FA verification calls `consumeChallengeAttempt(challenge)` before checking the code and `markChallengeUsed(challenge)` after success.
 - Identifiers that grant access (job keys, login codes) use `crypto`, never `Math.random`.
+- Public CDK endpoints call `enforcePublicCdkQuota(req, res, bucket, cost)` in `server.js` before touching the database. `lookup` (verify-cdk, cdk/query, cdk/query-batch charged per code) allows 600 per 10 minutes per IP; `activation` (`/api/run-process` only, not the admin trigger) allows 30. The CDK space (2^75) is not guessable; the quota protects the DB pool from batch-query floods.
+- `/api/admin/cdks/import` rejects the whole batch when `adminAuth.findWeakCdkCodes` finds a code shorter than 12 characters. Generated codes are `KC-` plus 15 random characters.
 - Overview responses (`/api/admin/data`) must not carry full card numbers, CVC, or bot tokens; return a prefix or last 4 digits.
 - Production deploys bind-mount single root files read-only (`:ro`); only `data/`, `debug_screenshots/`, and `product_files/` are writable. Put new security code in an existing mounted module (`admin-auth.js`, `server.js`), or add the new file to the compose `volumes` list and rebuild.
 
