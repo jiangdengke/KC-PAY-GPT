@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Backend route patterns and required checks; add the admin token / credential endpoint contract here."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Route error response shape ({ success:false, message }) for the new 400 rejections."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Root module layout; new code must stay in bind-mounted files."}

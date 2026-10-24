@@ -51,9 +51,12 @@ cp .env.example .env
 DB_PASSWORD=填写一个强密码
 ADMIN_EMAIL=管理员邮箱
 ADMIN_PASSWORD=管理员登录密码
+ADMIN_TOKEN_SECRET=用 openssl rand -hex 32 生成
 ```
 
-生产环境不要使用 `.env.example` 或 Compose 中的默认值，也不要把 `.env` 提交到 Git。当前 Compose 会将 `ADMIN_PASSWORD` 传入 app；`ADMIN_SECONDARY_PASSWORD` 与 `ADMIN_TOKEN_SECRET` 需要在 `docker-compose.yml` 的 `app.environment` 中显式映射后再重建容器。首次启动后，请登录后台并修改二次认证密码。
+生产环境不要使用 `.env.example` 或 Compose 中的默认值，也不要把 `.env` 提交到 Git。当前 Compose 会将 `ADMIN_PASSWORD` 和 `ADMIN_TOKEN_SECRET` 传入 app；`ADMIN_SECONDARY_PASSWORD` 需要在 `docker-compose.yml` 的 `app.environment` 中显式映射后再重建容器。首次启动后，请登录后台并修改二次认证密码。
+
+`ADMIN_TOKEN_SECRET` 必须是至少 32 位的随机值。未配置或过短时，服务每次启动都会随机生成一个密钥，管理员重启后需要重新登录。更换这个值会让所有已登录的后台会话失效。
 
 ### 2. 启动服务
 
@@ -149,7 +152,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | MySQL 连接 |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | 管理员主登录 |
 | `ADMIN_SECONDARY_PASSWORD` | 首次初始化二次认证密码；后台可修改，当前 Compose 需补充 app 环境映射 |
-| `ADMIN_TOKEN_SECRET` | 管理员会话签名；当前 Compose 需补充 app 环境映射 |
+| `ADMIN_TOKEN_SECRET` | 管理员会话签名，至少 32 位随机值；未配置时每次启动随机生成 |
 | `PROXY` | 浏览器自动化或上游请求使用的代理（按实际流程配置） |
 | `HEADFUL` | 是否以有头模式运行浏览器，默认 `0` |
 | `BROWSER_POOL*` | 浏览器池运行参数；按并发量和内存配置 |

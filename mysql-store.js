@@ -1,6 +1,17 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+
+const JOB_KEY_CHARSET = 'abcdefghijklmnopqrstuvwxyz0123456789';
+
+// 任务编号是客户查询进度、订阅 WebSocket 的唯一凭据，必须不可预测（Math.random 可被推算）
+function randomJobKeySuffix(length) {
+    let out = '';
+    for (let i = 0; i < length; i += 1) {
+        out += JOB_KEY_CHARSET[crypto.randomInt(JOB_KEY_CHARSET.length)];
+    }
+    return out;
+}
 const mysql = require('mysql2/promise');
 const {
     substituteProxySession,
@@ -2968,7 +2979,7 @@ async function updateAdminPassword(password) {
 async function createTaskLog({ tokenPreview, sessionPayload, cdkCode, phone, cardLast4, status, progress = 0 }) {
     const now = new Date();
     const displayTime = formatTaskDisplayTime(now);
-    const jobKey = `${now.getTime()}-${Math.random().toString(36).slice(2, 10)}`;
+    const jobKey = `${now.getTime()}-${randomJobKeySuffix(12)}`;
     const message = String(status) === 'running' ? '正在开通中' : null;
 
     await runExecute(
@@ -3244,7 +3255,7 @@ async function claimProductAccount(cdk) {
         );
 
         // 5. 创建成功日志
-        const jobKey = `PROD-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const jobKey = `PROD-${Date.now()}-${randomJobKeySuffix(8)}`;
         await connection.query(
             `INSERT INTO task_logs (job_key, token_preview, cdk_code, status, message, progress, display_time)
              VALUES (?, ?, ?, 'success', ?, 100, ?)`,

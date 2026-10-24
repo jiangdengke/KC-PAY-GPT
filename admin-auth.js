@@ -13,15 +13,53 @@ const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_LOCK_MS = 30 * 60 * 1000;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const TG_CODE_MAX_ATTEMPTS = 5;
+// 全站登录失败上限：换 IP 也绕不过去；超过后所有来源暂停登录一个窗口期
+const LOGIN_GLOBAL_MAX_ATTEMPTS = 100;
+const LOGIN_GLOBAL_KEY = '*';
+const MAX_TRACKED_LOGIN_KEYS = 10000;
+const CHALLENGE_MAX_ATTEMPTS = 5;
+
+const MIN_ADMIN_TOKEN_SECRET_LENGTH = 32;
 
 const loginAttempts = new Map();
 const tgLoginCodes = new Map();
+const challengeStates = new Map();
+let processAdminTokenSecret = '';
 
+// 不能从 cwd 等公开信息派生密钥：仓库公开，派生值可被任何人算出并伪造管理员 token
 function resolveAdminTokenSecret() {
-    return process.env.ADMIN_TOKEN_SECRET || crypto
-        .createHash('sha256')
-        .update(`web_redeem:${process.cwd()}:admin-token-secret`)
-        .digest('hex');
+    const configured = String(process.env.ADMIN_TOKEN_SECRET || '').trim();
+    if (configured.length >= MIN_ADMIN_TOKEN_SECRET_LENGTH) {
+        return configured;
+    }
+    if (!processAdminTokenSecret) {
+        processAdminTokenSecret = crypto.randomBytes(32).toString('hex');
+        console.warn(`⚠️  [AdminAuth] ADMIN_TOKEN_SECRET ${configured ? `少于 ${MIN_ADMIN_TOKEN_SECRET_LENGTH} 位` : '未配置'}，已改用本进程随机密钥，重启后需重新登录。请用 openssl rand -hex 32 生成并写入 .env`);
+    }
+    return processAdminTokenSecret;
+}
+
+function normalizeEndpointUrl(value) {
+    return String(value || '').trim().replace(/\/+$/, '');
+}
+
+/**
+ * 已保存的密钥只发往已保存的地址：请求改了地址却没带对应的新密钥时返回错误文案，
+ * 防止后台被冒用时借“测试/保存”把已存密钥转发到外部服务器。
+ * rules: [{ urlField, secretFields, label }]
+ */
+function findSavedSecretRedirect(body = {}, saved = {}, rules = []) {
+    for (const { urlField, secretFields, label } of rules) {
+        const requestedUrl = normalizeEndpointUrl(body[urlField]);
+        if (!requestedUrl || requestedUrl === normalizeEndpointUrl(saved[urlField])) {
+            continue;
+        }
+        const missing = secretFields.filter((field) => String(saved[field] || '').trim() && !String(body[field] || '').trim());
+        if (missing.length > 0) {
+            return `${label}已修改，需要重新填写 ${missing.join('、')}，已保存的密钥不会发往新地址`;
+        }
+    }
+    return '';
 }
 
 function encodeBase64Url(input) {
@@ -160,14 +198,39 @@ function verifySecondaryToken(token) {
     return verifySignedToken(token, { expectedSub: 'admin_secondary' });
 }
 
+/**
+ * 只信任本机 nginx 写入的 X-Real-IP（nginx 按 Cloudflare 网段开启 real_ip，见 deploy/nginx）。
+ * X-Forwarded-For 首段可由客户端任意填写，用它限流等于没有限流。
+ * app 端口只绑定 127.0.0.1，外部请求无法绕过 nginx 直接伪造 X-Real-IP。
+ */
+function resolveClientIp(req) {
+    const realIp = String(req?.headers?.['x-real-ip'] || '').trim();
+    const raw = realIp || req?.socket?.remoteAddress || req?.ip || '';
+    return String(raw)
+        .replace(/^::ffff:/, '')
+        .replace(/^::1$/, '127.0.0.1')
+        .trim()
+        .slice(0, 45);
+}
+
+// IPv6 按 /64 合并计数：同一用户可以轻易换用 /64 内的任意地址
+function toRateLimitKey(ip) {
+    const value = String(ip || '').trim().toLowerCase();
+    if (!value.includes(':')) {
+        return value || 'unknown';
+    }
+    const [head, tail = ''] = value.split('::');
+    const headParts = head ? head.split(':') : [];
+    const tailParts = tail ? tail.split(':') : [];
+    const parts = value.includes('::')
+        ? [...headParts, ...Array(Math.max(0, 8 - headParts.length - tailParts.length)).fill('0'), ...tailParts]
+        : headParts;
+    return `${parts.slice(0, 4).map((part) => part || '0').join(':')}::/64`;
+}
+
 function getClientMeta(req) {
-    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-    const ip = forwarded
-        || String(req.headers['x-real-ip'] || '').trim()
-        || req.socket?.remoteAddress
-        || '';
     return {
-        ip: ip.replace(/^::ffff:/, ''),
+        ip: resolveClientIp(req),
         userAgent: String(req.headers['user-agent'] || '').slice(0, 512),
         fingerprint: String(req.body?.fingerprint || req.headers['x-client-fingerprint'] || '').slice(0, 128)
     };
@@ -177,9 +240,24 @@ function normalizeEmail(email) {
     return String(email || '').trim().toLowerCase();
 }
 
-function checkLoginRateLimit(ip) {
-    const key = String(ip || 'unknown').slice(0, 45);
+function pruneLoginAttempts(now) {
+    if (loginAttempts.size <= MAX_TRACKED_LOGIN_KEYS) {
+        return;
+    }
+    for (const [key, entry] of loginAttempts) {
+        if (key !== LOGIN_GLOBAL_KEY && entry.lockedUntil <= now && now - entry.firstAt > LOGIN_WINDOW_MS) {
+            loginAttempts.delete(key);
+        }
+    }
+}
+
+function checkLoginRateLimit(ip, scope = 'login') {
+    const key = `${scope}|${toRateLimitKey(ip)}`;
     const now = Date.now();
+    const globalEntry = loginAttempts.get(LOGIN_GLOBAL_KEY);
+    if (globalEntry?.lockedUntil && now < globalEntry.lockedUntil) {
+        return { allowed: false, retryAfterSec: Math.ceil((globalEntry.lockedUntil - now) / 1000), reason: 'global_locked' };
+    }
     const entry = loginAttempts.get(key) || { count: 0, firstAt: now, lockedUntil: 0 };
     if (entry.lockedUntil && now < entry.lockedUntil) {
         const retryAfterSec = Math.ceil((entry.lockedUntil - now) / 1000);
@@ -206,6 +284,52 @@ function recordLoginFailure(key, entry) {
         next.lockedUntil = now + LOGIN_LOCK_MS;
     }
     loginAttempts.set(key, next);
+
+    const globalEntry = loginAttempts.get(LOGIN_GLOBAL_KEY) || { count: 0, firstAt: now, lockedUntil: 0 };
+    if (now - globalEntry.firstAt > LOGIN_WINDOW_MS) {
+        globalEntry.count = 0;
+        globalEntry.firstAt = now;
+        globalEntry.lockedUntil = 0;
+    }
+    globalEntry.count += 1;
+    if (globalEntry.count >= LOGIN_GLOBAL_MAX_ATTEMPTS) {
+        globalEntry.lockedUntil = now + LOGIN_WINDOW_MS;
+    }
+    loginAttempts.set(LOGIN_GLOBAL_KEY, globalEntry);
+    pruneLoginAttempts(now);
+}
+
+/**
+ * 每个登录 challenge 最多尝试 CHALLENGE_MAX_ATTEMPTS 次二次验证，成功后作废。
+ * 否则拿到一个 challenge 就能在有效期内无限次猜 6 位 TOTP。
+ */
+function consumeChallengeAttempt(challenge) {
+    const cid = String(challenge?.cid || '').trim();
+    if (!cid) {
+        return { ok: false, reason: 'invalid' };
+    }
+    const now = Date.now();
+    for (const [key, state] of challengeStates) {
+        if (state.exp <= now) challengeStates.delete(key);
+    }
+    const state = challengeStates.get(cid) || { attempts: 0, used: false, exp: Number(challenge.exp) || now + CHALLENGE_TTL_MS };
+    if (state.used) {
+        return { ok: false, reason: 'used' };
+    }
+    if (state.attempts >= CHALLENGE_MAX_ATTEMPTS) {
+        return { ok: false, reason: 'too_many_attempts' };
+    }
+    state.attempts += 1;
+    challengeStates.set(cid, state);
+    return { ok: true };
+}
+
+function markChallengeUsed(challenge) {
+    const cid = String(challenge?.cid || '').trim();
+    if (!cid) return;
+    const state = challengeStates.get(cid) || { attempts: 0, exp: Number(challenge.exp) || Date.now() + CHALLENGE_TTL_MS };
+    state.used = true;
+    challengeStates.set(cid, state);
 }
 
 function clearLoginAttempts(key) {
@@ -322,7 +446,7 @@ function verifyTelegramLoginCode(challengeId, inputCode) {
 }
 
 function generateTelegramLoginCode() {
-    return String(Math.floor(100000 + Math.random() * 900000));
+    return String(crypto.randomInt(100000, 1000000));
 }
 
 function is2faRequired(authConfig = {}, telegramSettings = {}) {
@@ -383,7 +507,12 @@ function createRequireSecondaryAuth(store, ensureStoreReady) {
 module.exports = {
     ADMIN_TOKEN_TTL_MS,
     ADMIN_REFRESH_AFTER_MS,
+    MIN_ADMIN_TOKEN_SECRET_LENGTH,
     resolveAdminTokenSecret,
+    findSavedSecretRedirect,
+    safeEqualString,
+    issueSignedToken,
+    verifySignedToken,
     createPasswordHash,
     verifyPassword,
     issueAdminToken,
@@ -392,11 +521,15 @@ module.exports = {
     verifyLoginChallenge,
     issueSecondaryToken,
     verifySecondaryToken,
+    resolveClientIp,
+    toRateLimitKey,
     getClientMeta,
     normalizeEmail,
     checkLoginRateLimit,
     recordLoginFailure,
     clearLoginAttempts,
+    consumeChallengeAttempt,
+    markChallengeUsed,
     generateTotpSecret,
     verifyTotpCode,
     getTotpUri,

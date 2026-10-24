@@ -43,7 +43,6 @@ const WS_HEARTBEAT_PONG_TYPE = 'pong';
 const ACCESS_DEACTIVATED_MESSAGES_URL = '';
 const ACCESS_DEACTIVATED_SYNC_KEY = '';
 const ACCESS_DEACTIVATED_SYNC_COOLDOWN_MS = 30 * 1000;
-const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET || adminAuth.resolveAdminTokenSecret();
 
 // 追踪活跃的子进程，防止产生僵尸进程
 const activeProcesses = new Set();
@@ -167,12 +166,7 @@ async function getSystemMetrics() {
 }
 
 function getClientIp(req) {
-    const forwarded = String(req.headers['x-forwarded-for'] || '').trim();
-    const rawIp = forwarded ? forwarded.split(',')[0].trim() : (req.ip || req.socket?.remoteAddress || '');
-    return String(rawIp || '')
-        .replace(/^::ffff:/, '')
-        .replace(/^::1$/, '127.0.0.1')
-        .trim();
+    return adminAuth.resolveClientIp(req);
 }
 
 function getRemainingCooldownMinutes(cooldownUntil) {
@@ -339,6 +333,16 @@ process.on('exit', () => cleanupProcesses());
 let storeReadyPromise = null;
 
 const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '15mb';
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'same-origin');
+    if (req.path.startsWith('/api/')) {
+        res.setHeader('Cache-Control', 'no-store');
+    }
+    next();
+});
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 let cachedAdminPaths = null;
@@ -1427,11 +1431,19 @@ app.post('/api/admin/login/verify-2fa', async (req, res) => {
         return res.status(400).json({ success: false, message: '请输入验证码' });
     }
 
-    const rate = adminAuth.checkLoginRateLimit(`${clientMeta.ip}:2fa`);
+    const rate = adminAuth.checkLoginRateLimit(clientMeta.ip, '2fa');
     if (!rate.allowed) {
         return res.status(429).json({
             success: false,
             message: `验证尝试过多，请 ${rate.retryAfterSec} 秒后再试`
+        });
+    }
+
+    const attempt = adminAuth.consumeChallengeAttempt(challenge);
+    if (!attempt.ok) {
+        return res.status(401).json({
+            success: false,
+            message: attempt.reason === 'used' ? '登录会话已失效，请重新登录' : '验证尝试过多，请重新输入密码登录'
         });
     }
 
@@ -1491,6 +1503,7 @@ app.post('/api/admin/login/verify-2fa', async (req, res) => {
         }
 
         adminAuth.clearLoginAttempts(rate.key);
+        adminAuth.markChallengeUsed(challenge);
         const { token, payload } = issueAdminToken(authConfig.passwordVersion, authConfig.email);
         await logAdminSecurityEvent('login_success', {
             ...clientMeta,
@@ -1603,7 +1616,7 @@ app.post('/api/external/cards/push', async (req, res) => {
             return res.status(401).json({ success: false, error: 'API Key 无效或缺失' });
         }
         const expectedKey = await store.getAppConfigValue('external_card_api_key', '');
-        if (!expectedKey || apiKey !== expectedKey) {
+        if (!expectedKey || !adminAuth.safeEqualString(apiKey, expectedKey)) {
             return res.status(401).json({ success: false, error: 'API Key 无效或缺失' });
         }
 
@@ -2016,10 +2029,30 @@ app.post('/api/admin/activation-manual-holds/:id/resolve', async (req, res) => {
     }
 });
 
+// 后台页面只用卡池数量和 bot token 前缀；完整卡号、CVC、token 不随概览接口下发，
+// 避免后台会话泄露时一次拿走全部支付数据
+function maskAdminDataSecrets(data) {
+    const masked = { ...data };
+    if (masked.config && Array.isArray(masked.config.card_pool)) {
+        masked.config = {
+            ...masked.config,
+            card_pool: masked.config.card_pool.map((card) => ({
+                ...card,
+                number: card.number ? `****${String(card.number).slice(-4)}` : '',
+                cvc: card.cvc ? '***' : ''
+            }))
+        };
+    }
+    if (masked.telegram && masked.telegram.bot_token) {
+        masked.telegram = { ...masked.telegram, bot_token: `${String(masked.telegram.bot_token).slice(0, 10)}…` };
+    }
+    return masked;
+}
+
 app.get('/api/admin/data', async (req, res) => {
     try {
         await ensureStoreReady();
-        const data = await store.getAdminData();
+        const data = maskAdminDataSecrets(await store.getAdminData());
         const system = await getSystemMetrics();
         data.runtime = {
             active_activation_jobs: getTotalActiveJobs(),
@@ -2396,10 +2429,24 @@ app.post('/api/admin/telegram/test', async (req, res) => {
     }
 });
 
+// 改了这些地址时必须同时提供新密钥，已保存的密钥不会被发往新地址
+const HCAPTCHA_SECRET_TARGETS = [
+    { urlField: 'vlm_base_url', secretFields: ['vlm_api_key'], label: 'VLM 地址' },
+    { urlField: 'captcha_platform_api_url', secretFields: ['captcha_platform_api_key'], label: '打码平台地址' }
+];
+const GPT_API_SECRET_TARGETS = [
+    { urlField: 'base_url', secretFields: ['api_key'], label: '代充 API 地址' },
+    { urlField: 'orbitcard_base_url', secretFields: ['orbitcard_api_key', 'orbitcard_api_secret'], label: 'Orbitcard 地址' }
+];
+
 app.post('/api/admin/hcaptcha', async (req, res) => {
     try {
         await ensureStoreReady();
         const body = req.body || {};
+        const redirectError = adminAuth.findSavedSecretRedirect(body, await store.getHcaptchaConfig(), HCAPTCHA_SECRET_TARGETS);
+        if (redirectError) {
+            return res.status(400).json({ success: false, message: redirectError });
+        }
         await store.saveHcaptchaConfig({
             enabled: Boolean(body.enabled),
             vlm_api_key: body.vlm_api_key,
@@ -2454,6 +2501,10 @@ app.post('/api/admin/hcaptcha/test-vlm', async (req, res) => {
         await ensureStoreReady();
         const body = req.body || {};
         const cfg = await store.getHcaptchaConfig();
+        const redirectError = adminAuth.findSavedSecretRedirect(body, cfg, HCAPTCHA_SECRET_TARGETS);
+        if (redirectError) {
+            return res.status(400).json({ success: false, message: redirectError });
+        }
         const merged = {
             ...cfg,
             vlm_api_key: String(body.vlm_api_key || '').trim() || cfg.vlm_api_key,
@@ -2476,6 +2527,10 @@ app.post('/api/admin/hcaptcha/test-captcha-platform', async (req, res) => {
         await ensureStoreReady();
         const body = req.body || {};
         const cfg = await store.getHcaptchaConfig();
+        const redirectError = adminAuth.findSavedSecretRedirect(body, cfg, HCAPTCHA_SECRET_TARGETS);
+        if (redirectError) {
+            return res.status(400).json({ success: false, message: redirectError });
+        }
         const merged = {
             captcha_platform_api_key: String(body.captcha_platform_api_key || '').trim() || cfg.captcha_platform_api_key,
             captcha_platform_api_url: String(body.captcha_platform_api_url || '').trim() || cfg.captcha_platform_api_url,
@@ -2569,6 +2624,10 @@ app.post('/api/admin/gpt-api', async (req, res) => {
     try {
         await ensureStoreReady();
         const body = req.body || {};
+        const redirectError = adminAuth.findSavedSecretRedirect(body, await store.getGptApiConfig(), GPT_API_SECRET_TARGETS);
+        if (redirectError) {
+            return res.status(400).json({ success: false, message: redirectError });
+        }
         await store.saveGptApiConfig({
             enabled: Boolean(body.enabled),
             base_url: body.base_url,
@@ -2705,6 +2764,10 @@ app.post('/api/admin/gpt-api/test', async (req, res) => {
         await ensureStoreReady();
         const body = req.body || {};
         const saved = await store.getGptApiConfig();
+        const redirectError = adminAuth.findSavedSecretRedirect(body, saved, GPT_API_SECRET_TARGETS);
+        if (redirectError) {
+            return res.status(400).json({ success: false, message: redirectError });
+        }
         const merged = {
             base_url: String(body.base_url || '').trim() || saved.base_url,
             api_key: String(body.api_key || '').trim() || saved.api_key,

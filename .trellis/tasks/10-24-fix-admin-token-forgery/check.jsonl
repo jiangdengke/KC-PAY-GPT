@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify the admin token secret and credential endpoint contract is followed and tested."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Check rejection responses match the existing route error shape."}

@@ -197,8 +197,34 @@ const idempotencyKey = normalizeDesolateIdempotencyKey(stableSeed) || uuidv4();
 await submitWithRetry(body, { idempotencyKey, requestId, retryAfterMs });
 ```
 
+### Admin Token and Saved Credential Contract
+
+Background: on 2026-10-16, production was taken over with forged admin tokens. The repository is public, and the old fallback secret was `sha256("web_redeem:" + cwd + ":admin-token-secret")`. Any value derived from public data (cwd, paths, project name) is a known secret.
+
+- `resolveAdminTokenSecret()` in `admin-auth.js` uses `ADMIN_TOKEN_SECRET` only when it has at least 32 characters. Otherwise it generates one random secret per process and logs one warning. Never reintroduce a deterministic fallback.
+- `requireSecondaryAuth` passes every request, so `authenticateAdmin` is the only gate in front of CDK, card, and Session data. Treat any change to token signing or verification as security critical.
+- Saved third-party secrets go only to the saved address. Before a route merges request fields with saved config and calls or saves an external endpoint, call `adminAuth.findSavedSecretRedirect(body, saved, RULES)`. If it returns a message, respond `400 { success: false, message }`. The rules are `GPT_API_SECRET_TARGETS` and `HCAPTCHA_SECRET_TARGETS` in `server.js`; add a rule when a new endpoint URL field gets a saved key.
+- Client IP comes only from `adminAuth.resolveClientIp(req)`, which reads `X-Real-IP` written by the local nginx (Cloudflare `real_ip`, see `deploy/nginx/cloudflare-realip.conf`). Never read the first `X-Forwarded-For` entry; clients set it freely. The app port must stay bound to `127.0.0.1`.
+- Login throttling uses `checkLoginRateLimit(ip, scope)`, which counts IPv6 per /64 and has a global failure cap. 2FA verification calls `consumeChallengeAttempt(challenge)` before checking the code and `markChallengeUsed(challenge)` after success.
+- Identifiers that grant access (job keys, login codes) use `crypto`, never `Math.random`.
+- Overview responses (`/api/admin/data`) must not carry full card numbers, CVC, or bot tokens; return a prefix or last 4 digits.
+- Production deploys bind-mount single root files read-only (`:ro`); only `data/`, `debug_screenshots/`, and `product_files/` are writable. Put new security code in an existing mounted module (`admin-auth.js`, `server.js`), or add the new file to the compose `volumes` list and rebuild.
+
+**Wrong:**
+```js
+const merged = { base_url: body.base_url || saved.base_url, api_key: body.api_key || saved.api_key };
+await testConnection(merged); // sends the saved key to any URL in the request
+```
+
+**Correct:**
+```js
+const redirectError = adminAuth.findSavedSecretRedirect(body, saved, GPT_API_SECRET_TARGETS);
+if (redirectError) return res.status(400).json({ success: false, message: redirectError });
+```
+
 ## Testing Requirements
 
+- `test/admin-auth.test.js` must keep proving that a token signed with the legacy cwd-derived secret fails `verifyAdminToken`, with and without `ADMIN_TOKEN_SECRET`.
 - Run `npm test` after changing product selection behavior.
 - Add coverage for an unclassified, zero-inventory `provider_validated` product.
 - Assert automatic priority remains unchanged and BIN 4002 remains excluded.

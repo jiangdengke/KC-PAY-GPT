@@ -14,8 +14,9 @@ services:
       MYSQL_DATABASE: ${DB_NAME:-plus_papay}
       MYSQL_CHARSET: utf8mb4
       MYSQL_COLLATION: utf8mb4_unicode_ci
+    # 只监听本机；需要远程连库请用 SSH 隧道：ssh -L 3310:127.0.0.1:3310 <server>
     ports:
-      - "3310:3306"
+      - "127.0.0.1:3310:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./mysql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -54,6 +55,7 @@ services:
       PROXY: ${PROXY:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@vru.cc}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      ADMIN_TOKEN_SECRET: ${ADMIN_TOKEN_SECRET:-}
       HCAPTCHA_CONFIG_FILE: /app/data/hcaptcha-config.json
       HCAPTCHA_VLM_API_KEY: ${HCAPTCHA_VLM_API_KEY:-}
       HCAPTCHA_VLM_BASE_URL: ${HCAPTCHA_VLM_BASE_URL:-https://api.openai.com/v1}
@@ -68,41 +70,42 @@ services:
       BROWSER_POOL_SIZE: ${BROWSER_POOL_SIZE:-2}
       BROWSER_POOL_MAX_SIZE: ${BROWSER_POOL_MAX_SIZE:-24}
       BROWSER_POOL_BASE_PORT: ${BROWSER_POOL_BASE_PORT:-19222}
+    # 代码与静态页只读挂载：即使应用被入侵，也无法改写宿主机上的源码留后门
     volumes:
       - ./debug_screenshots:/app/debug_screenshots
       - ./data:/app/data
       - ./product_files:/app/product_files
-      - ./public:/app/public
-      - ./server.js:/app/server.js
-      - ./chatgpt.js:/app/chatgpt.js
-      - ./index.js:/app/index.js
-      - ./playwright-proxy.js:/app/playwright-proxy.js
-      - ./mysql-store.js:/app/mysql-store.js
-      - ./hcaptcha-runtime.js:/app/hcaptcha-runtime.js
-      - ./payment-retry.js:/app/payment-retry.js
-      - ./proxy-pool.js:/app/proxy-pool.js
-      - ./stripe-payment.js:/app/stripe-payment.js
-      - ./hcaptcha-solver.js:/app/hcaptcha-solver.js
-      - ./captcha-platform.js:/app/captcha-platform.js
-      - ./hcaptcha-runtime.js:/app/hcaptcha-runtime.js
-      - ./human-verification.js:/app/human-verification.js
-      - ./auth-page-detect.js:/app/auth-page-detect.js
-      - ./session-auth.js:/app/session-auth.js
-      - ./subscription-check.js:/app/subscription-check.js
-      - ./pricing-checkout.js:/app/pricing-checkout.js
-      - ./tax-free-address.js:/app/tax-free-address.js
-      - ./browser-pool.js:/app/browser-pool.js
-      - ./browser-pool-client.js:/app/browser-pool-client.js
-      - ./browser-standalone.js:/app/browser-standalone.js
-      - ./browser-runtime.js:/app/browser-runtime.js
-      - ./admin-auth.js:/app/admin-auth.js
-      - ./admin-paths.js:/app/admin-paths.js
-      - ./telegram-notify.js:/app/telegram-notify.js
-      - ./gpt-api-client.js:/app/gpt-api-client.js
-      - ./gpt-api-failure.js:/app/gpt-api-failure.js
-      - ./orbitcard-client.js:/app/orbitcard-client.js
-      - ./plan-registry.js:/app/plan-registry.js
-      - ./hcaptcha/solver.py:/app/hcaptcha/solver.py
+      - ./public:/app/public:ro
+      - ./server.js:/app/server.js:ro
+      - ./chatgpt.js:/app/chatgpt.js:ro
+      - ./index.js:/app/index.js:ro
+      - ./playwright-proxy.js:/app/playwright-proxy.js:ro
+      - ./mysql-store.js:/app/mysql-store.js:ro
+      - ./hcaptcha-runtime.js:/app/hcaptcha-runtime.js:ro
+      - ./payment-retry.js:/app/payment-retry.js:ro
+      - ./proxy-pool.js:/app/proxy-pool.js:ro
+      - ./stripe-payment.js:/app/stripe-payment.js:ro
+      - ./hcaptcha-solver.js:/app/hcaptcha-solver.js:ro
+      - ./captcha-platform.js:/app/captcha-platform.js:ro
+      - ./hcaptcha-runtime.js:/app/hcaptcha-runtime.js:ro
+      - ./human-verification.js:/app/human-verification.js:ro
+      - ./auth-page-detect.js:/app/auth-page-detect.js:ro
+      - ./session-auth.js:/app/session-auth.js:ro
+      - ./subscription-check.js:/app/subscription-check.js:ro
+      - ./pricing-checkout.js:/app/pricing-checkout.js:ro
+      - ./tax-free-address.js:/app/tax-free-address.js:ro
+      - ./browser-pool.js:/app/browser-pool.js:ro
+      - ./browser-pool-client.js:/app/browser-pool-client.js:ro
+      - ./browser-standalone.js:/app/browser-standalone.js:ro
+      - ./browser-runtime.js:/app/browser-runtime.js:ro
+      - ./admin-auth.js:/app/admin-auth.js:ro
+      - ./admin-paths.js:/app/admin-paths.js:ro
+      - ./telegram-notify.js:/app/telegram-notify.js:ro
+      - ./gpt-api-client.js:/app/gpt-api-client.js:ro
+      - ./gpt-api-failure.js:/app/gpt-api-failure.js:ro
+      - ./orbitcard-client.js:/app/orbitcard-client.js:ro
+      - ./plan-registry.js:/app/plan-registry.js:ro
+      - ./hcaptcha/solver.py:/app/hcaptcha/solver.py:ro
     # 浏览器自动化 + hCaptcha ML 推理需要较大共享内存
     shm_size: '2gb'
     deploy:

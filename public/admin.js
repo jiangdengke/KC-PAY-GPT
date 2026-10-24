@@ -1288,7 +1288,12 @@
             const item = document.createElement('div');
             item.className = `message-item message-${type}`;
             const iconMap = { success: 'check-circle-2', error: 'x-circle', warning: 'alert-triangle' };
-            item.innerHTML = `<i data-lucide="${iconMap[type] || 'info'}"></i><span>${content}</span>`;
+            // 提示文案常含上游接口返回的内容，只按纯文本渲染
+            const icon = document.createElement('i');
+            icon.setAttribute('data-lucide', iconMap[type] || 'info');
+            const text = document.createElement('span');
+            text.textContent = String(content ?? '');
+            item.append(icon, text);
             container.appendChild(item);
             lucide.createIcons();
             setTimeout(() => {

@@ -215,12 +215,17 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 86400;
     }
 }
 ```
+
+应用的登录限流和 CDK 冷却只信任 nginx 写入的 `X-Real-IP`，不读客户端自带的 `X-Forwarded-For`。因此：
+
+- 应用端口只能绑定 `127.0.0.1`，不能直接暴露到公网。
+- 站点放在 Cloudflare 后面时，在 server 块中 `include` [`deploy/nginx/cloudflare-realip.conf`](deploy/nginx/cloudflare-realip.conf)，否则 `$remote_addr` 是 Cloudflare 节点 IP。
 
 配合 Let's Encrypt 免费 HTTPS：
 ```bash
