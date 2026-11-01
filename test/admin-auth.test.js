@@ -199,3 +199,27 @@ describe('findWeakCdkCodes', () => {
         expect(adminAuth.findWeakCdkCodes(['KC-K25PBB6MNM7VVV8'])).toEqual([]);
     });
 });
+
+describe('crash-proof request parsing', () => {
+    it('drops keys that would shadow prototype methods so String() cannot throw', () => {
+        const body = JSON.parse('{"cdk":{"toString":1,"valueOf":2,"__proto__":{"x":1},"constructor":3},"email":"a@b.c"}', adminAuth.safeJsonReviver);
+        expect(Object.keys(body.cdk)).toEqual([]);
+        expect(() => String(body.cdk)).not.toThrow();
+        expect(body.email).toBe('a@b.c');
+        expect(() => String(JSON.parse('{"toString":1}'))).toThrow();
+    });
+});
+
+describe('admin login /48 grouping', () => {
+    it('counts every /64 inside one IPv6 /48 against the same login limit', () => {
+        expect(adminAuth.toRateLimitKey('2a01:e5c0:2e15:d011::1', 3)).toBe('2a01:e5c0:2e15::/48');
+        const auth = freshAdminAuth();
+        for (let i = 0; i < 5; i += 1) {
+            const rate = auth.checkLoginRateLimit(`2a01:e5c0:2e15:d0${10 + i}::1`);
+            expect(rate.allowed).toBe(true);
+            auth.recordLoginFailure(rate.key, rate.entry);
+        }
+        expect(auth.checkLoginRateLimit('2a01:e5c0:2e15:ffff::99').allowed).toBe(false);
+        expect(auth.checkLoginRateLimit('2a01:e5c0:2e16::1').allowed).toBe(true);
+    });
+});

@@ -63,6 +63,14 @@
 1. 公开 CDK 接口按真实 IP 限频：查询类每 10 分钟 600 个码（批量按条数计），开通每 10 分钟 30 次；超限返回 429 和 `Retry-After`。
 2. 后台导入 CDK 时，任何一个码少于 12 位就整批拒绝。
 
+## 第四部分：请求打崩进程（2026-11-01）
+
+10-31 20:36 起，攻击者用 `?cdk[toString]=1`、`{"cdk":{"toString":1}}` 让 `String()` 抛错，async 路由的未处理 rejection 让进程退出（共 3286 次），内存里的登录限流随之清零，第二天 2.1 万个 IPv6 地址撞库 29 万次（无成功）。
+
+1. JSON 请求体用 reviver 丢弃 `toString`、`valueOf`、`__proto__`、`constructor` 等键；查询串改用 `allowPrototypes: false`。
+2. async 路由异常交给 Express 错误处理；统一 JSON 错误响应；`unhandledRejection` 只记录不退出。
+3. 后台登录限流对 IPv6 按 /48 计数。
+
 ## 不在本次范围
 
 - 二级密码校验（`requireSecondaryAuth` 直接放行是之前的产品决定）。

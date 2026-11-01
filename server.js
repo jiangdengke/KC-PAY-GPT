@@ -1,4 +1,5 @@
 const express = require('express');
+const qs = require('qs');
 const { spawn, execFileSync } = require('child_process');
 const path = require('path');
 const crypto = require('crypto');
@@ -33,6 +34,32 @@ const { buildGptApiFailureDiagnostic } = require('./gpt-api-failure');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+
+// Express 4 默认用 qs 且 allowPrototypes: true，?cdk[toString]=1 会得到一个 String() 时抛错的对象；
+// 改回 qs 默认的 allowPrototypes: false，丢弃会遮住原型方法的键
+app.set('query parser', (str) => qs.parse(str, { allowPrototypes: false }));
+
+// Express 4 不会捕获 async 路由抛出的异常，未处理的 rejection 在 Node 20 会让整个进程退出。
+// 2026-10-31 起攻击者靠一个畸形请求反复打崩服务，清空内存里的登录限流后撞库。
+function forwardAsyncErrors(handler) {
+    if (typeof handler !== 'function' || handler.length === 4) {
+        return handler;
+    }
+    return function asyncSafeHandler(req, res, next) {
+        const result = handler(req, res, next);
+        if (result && typeof result.catch === 'function') {
+            result.catch(next);
+        }
+        return result;
+    };
+}
+
+for (const method of ['get', 'post', 'put', 'delete', 'patch']) {
+    const register = app[method].bind(app);
+    app[method] = (path, ...handlers) => (handlers.length === 0
+        ? register(path)
+        : register(path, ...handlers.map(forwardAsyncErrors)));
+}
 const ADMIN_TOKEN_TTL_MS = adminAuth.ADMIN_TOKEN_TTL_MS;
 const ADMIN_REFRESH_AFTER_MS = adminAuth.ADMIN_REFRESH_AFTER_MS;
 const PROCESS_IDLE_TIMEOUT_MS = Number(process.env.PROCESS_IDLE_TIMEOUT_MS) || (3 * 60 * 1000);
@@ -346,6 +373,10 @@ function logTaskChunk(jobKey, attempt, source, chunk) {
 process.on('SIGINT', () => { cleanupProcesses(); process.exit(0); });
 process.on('SIGTERM', () => { cleanupProcesses(); process.exit(0); });
 process.on('exit', () => cleanupProcesses());
+// 兜底：漏网的 rejection 只记录，不再让进程退出
+process.on('unhandledRejection', (reason) => {
+    console.error('[unhandledRejection]', reason instanceof Error ? reason.stack : reason);
+});
 
 let storeReadyPromise = null;
 
@@ -360,7 +391,7 @@ app.use((req, res, next) => {
     }
     next();
 });
-app.use(express.json({ limit: JSON_BODY_LIMIT }));
+app.use(express.json({ limit: JSON_BODY_LIMIT, reviver: adminAuth.safeJsonReviver }));
 
 let cachedAdminPaths = null;
 
@@ -5249,6 +5280,21 @@ app.get('/api/task-captcha/:jobKey', async (req, res) => {
 
 app.get('/api/cdk/download', async (req, res) => {
     return res.status(410).send('成品号下载功能已移除，仅支持自助开通');
+});
+
+// 统一错误出口：畸形请求返回 400，其余返回 500，都不暴露内部细节
+app.use((error, req, res, next) => {
+    if (res.headersSent) {
+        return next(error);
+    }
+    const status = Number(error?.status || error?.statusCode) || 500;
+    if (status >= 500) {
+        console.error(`[HTTP ${req.method} ${req.path}]`, error?.stack || error);
+    }
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
+        success: false,
+        message: status >= 500 ? '服务器内部错误，请稍后再试' : '请求格式错误'
+    });
 });
 
 async function start() {

@@ -217,8 +217,9 @@ function resolveClientIp(req) {
         .slice(0, 45);
 }
 
-// IPv6 按 /64 合并计数：同一用户可以轻易换用 /64 内的任意地址
-function toRateLimitKey(ip) {
+// IPv6 默认按 /64 合并计数：同一用户可以轻易换用 /64 内的任意地址。
+// ipv6Hextets 传 3 即按 /48 合并（2026-11 撞库来自同一个 /48 下的两万多个 /64）
+function toRateLimitKey(ip, ipv6Hextets = 4) {
     const value = String(ip || '').trim().toLowerCase();
     if (!value.includes(':')) {
         return value || 'unknown';
@@ -229,7 +230,7 @@ function toRateLimitKey(ip) {
     const parts = value.includes('::')
         ? [...headParts, ...Array(Math.max(0, 8 - headParts.length - tailParts.length)).fill('0'), ...tailParts]
         : headParts;
-    return `${parts.slice(0, 4).map((part) => part || '0').join(':')}::/64`;
+    return `${parts.slice(0, ipv6Hextets).map((part) => part || '0').join(':')}::/${ipv6Hextets * 16}`;
 }
 
 function getClientMeta(req) {
@@ -255,8 +256,9 @@ function pruneLoginAttempts(now) {
     }
 }
 
+// 后台只有一个管理员，登录限流对 IPv6 按 /48 合并，误伤面可以忽略
 function checkLoginRateLimit(ip, scope = 'login') {
-    const key = `${scope}|${toRateLimitKey(ip)}`;
+    const key = `${scope}|${toRateLimitKey(ip, 3)}`;
     const now = Date.now();
     const globalEntry = loginAttempts.get(LOGIN_GLOBAL_KEY);
     if (globalEntry?.lockedUntil && now < globalEntry.lockedUntil) {
@@ -326,6 +328,14 @@ function consumeRequestQuota(bucket, ip, { windowMs, max, cost = 1 }) {
         }
     }
     return { allowed: true, retryAfterSec: 0 };
+}
+
+// 这些键会遮住对象原型上的方法：{"toString": 1} 经 String() 时直接抛错，
+// 在 async 路由里变成未处理的 rejection 把进程打崩（2026-10-31 起被利用来清空内存里的登录限流）
+const DANGEROUS_INPUT_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'toLocaleString', 'toJSON']);
+
+function safeJsonReviver(key, value) {
+    return DANGEROUS_INPUT_KEYS.has(key) ? undefined : value;
 }
 
 function findWeakCdkCodes(codes = []) {
@@ -566,6 +576,7 @@ module.exports = {
     consumeChallengeAttempt,
     markChallengeUsed,
     consumeRequestQuota,
+    safeJsonReviver,
     MIN_IMPORTED_CDK_LENGTH,
     findWeakCdkCodes,
     generateTotpSecret,
