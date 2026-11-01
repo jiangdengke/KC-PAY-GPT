@@ -60,6 +60,9 @@ for (const method of ['get', 'post', 'put', 'delete', 'patch']) {
         ? register(path)
         : register(path, ...handlers.map(forwardAsyncErrors)));
 }
+// app.use 的中间件（如 /api/admin 鉴权）同样是 async；本项目没有挂载子应用，包一层不影响路由
+const registerMiddleware = app.use.bind(app);
+app.use = (...args) => registerMiddleware(...args.map(forwardAsyncErrors));
 const ADMIN_TOKEN_TTL_MS = adminAuth.ADMIN_TOKEN_TTL_MS;
 const ADMIN_REFRESH_AFTER_MS = adminAuth.ADMIN_REFRESH_AFTER_MS;
 const PROCESS_IDLE_TIMEOUT_MS = Number(process.env.PROCESS_IDLE_TIMEOUT_MS) || (3 * 60 * 1000);
@@ -632,8 +635,26 @@ async function logAdminSecurityEvent(event, meta = {}) {
     }
 }
 
+// 撞库时每次失败都发 Telegram 会刷屏、触发 Telegram 限流，连带二次验证码发不出去。
+// 失败类通知每 10 分钟最多 5 条，其余只计数，并入下一条通知
+const THROTTLED_SECURITY_EVENTS = new Set(['admin_login_failed', 'admin_2fa_failed']);
+const suppressedSecurityNotifications = new Map();
+
 async function fireAdminSecurityNotification(event, payload = {}) {
-    notifyAdminSecurityEvent(store, event, payload).catch((error) => {
+    let notifyPayload = payload;
+    if (THROTTLED_SECURITY_EVENTS.has(event)) {
+        const quota = adminAuth.consumeRequestQuota(`notify:${event}`, 'global', { windowMs: 10 * 60 * 1000, max: 5 });
+        if (!quota.allowed) {
+            suppressedSecurityNotifications.set(event, (suppressedSecurityNotifications.get(event) || 0) + 1);
+            return;
+        }
+        const suppressed = suppressedSecurityNotifications.get(event) || 0;
+        if (suppressed > 0) {
+            suppressedSecurityNotifications.delete(event);
+            notifyPayload = { ...payload, message: `${payload.message || ''}（此前另有 ${suppressed} 次失败未单独通知）` };
+        }
+    }
+    notifyAdminSecurityEvent(store, event, notifyPayload).catch((error) => {
         console.warn(`[AdminAuth] Telegram 通知失败: ${error.message}`);
     });
 }
@@ -644,7 +665,8 @@ function getBearerToken(req) {
     if (scheme === 'Bearer' && token) {
         return token.trim();
     }
-    return (req.query?.token || '').trim() || null;
+    const queryToken = req.query?.token;
+    return (typeof queryToken === 'string' ? queryToken.trim() : '') || null;
 }
 
 async function authenticateAdmin(req, res, next) {
