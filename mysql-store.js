@@ -400,6 +400,77 @@ async function ensureOrbitcardUsageTable() {
     await ensureColumn('orbitcard_card_recharges', 'card_last4', "VARCHAR(4) NOT NULL DEFAULT ''");
 }
 
+// mysql-schema.sql 没有挂载进 app 容器，新表必须在运行时创建
+async function ensureIpBanTable() {
+    await runQuery(`
+        CREATE TABLE IF NOT EXISTS ip_bans (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            cidr VARCHAR(64) NOT NULL,
+            reason VARCHAR(255) NOT NULL DEFAULT '',
+            source VARCHAR(16) NOT NULL DEFAULT 'manual' COMMENT 'manual/auto',
+            hits BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            last_hit_at TIMESTAMP NULL DEFAULT NULL,
+            expires_at TIMESTAMP NULL DEFAULT NULL COMMENT 'NULL = 永久',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_ip_bans_cidr (cidr),
+            KEY idx_ip_bans_expires (expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+}
+
+async function listIpBans() {
+    return runQuery(
+        `SELECT id, cidr, reason, source, hits, last_hit_at, expires_at, created_at
+         FROM ip_bans
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1000`
+    );
+}
+
+// 手动封禁直接覆盖原规则；自动封禁不会缩短已有规则（永久的保持永久）
+async function saveIpBan({ cidr, reason = '', source = 'manual', expiresAt = null }) {
+    const params = [String(cidr), String(reason || '').slice(0, 255), source === 'auto' ? 'auto' : 'manual', expiresAt];
+    if (source === 'auto') {
+        await runExecute(
+            `INSERT INTO ip_bans (cidr, reason, source, expires_at) VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                expires_at = IF(expires_at IS NULL, NULL, GREATEST(expires_at, VALUES(expires_at)))`,
+            params
+        );
+        return;
+    }
+    await runExecute(
+        `INSERT INTO ip_bans (cidr, reason, source, expires_at) VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE reason = VALUES(reason), source = VALUES(source), expires_at = VALUES(expires_at)`,
+        params
+    );
+}
+
+async function deleteIpBan(id) {
+    const result = await runExecute('DELETE FROM ip_bans WHERE id = ?', [Number(id)]);
+    return Number(result.affectedRows || 0) > 0;
+}
+
+async function addIpBanHits(counts = new Map()) {
+    for (const [id, count] of counts) {
+        await runExecute(
+            'UPDATE ip_bans SET hits = hits + ?, last_hit_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [Number(count) || 0, Number(id)]
+        );
+    }
+}
+
+async function listRecentAdminLoginIps(days = 30) {
+    const rows = await runQuery(
+        `SELECT DISTINCT ip FROM admin_login_logs
+         WHERE event = 'login_success' AND ip IS NOT NULL AND ip <> ''
+           AND created_at >= NOW() - INTERVAL ? DAY`,
+        [Math.max(1, Number(days) || 30)]
+    );
+    return rows.map((row) => String(row.ip));
+}
+
 async function ensureActivationManualHoldTable() {
     await runQuery(`
         CREATE TABLE IF NOT EXISTS activation_manual_holds (
@@ -747,6 +818,7 @@ async function ensureReady() {
     await ensureGptApiColumns();
     await ensureOrbitcardUsageTable();
     await ensureActivationManualHoldTable();
+    await ensureIpBanTable();
     await initializeBaseData();
     await ensureAdminSecurityDefaults();
     await ensureHcaptchaConfigDefaults();
@@ -4510,6 +4582,11 @@ module.exports = {
     markCdkShipped,
     insertCdks,
     deleteCdk,
+    listIpBans,
+    saveIpBan,
+    deleteIpBan,
+    addIpBanHits,
+    listRecentAdminLoginIps,
     verifyCdk,
     verifyCdkDetails,
     markCdkUsed,

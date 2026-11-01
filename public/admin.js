@@ -618,7 +618,7 @@
                         <td>${escapeHtml(String(row.created_at || ''))}</td>
                         <td>${escapeHtml(ADMIN_LOGIN_EVENT_LABELS[row.event] || row.event || '')}</td>
                         <td>${escapeHtml(String(row.admin_email || ''))}</td>
-                        <td>${escapeHtml(String(row.ip || ''))}</td>
+                        <td>${escapeHtml(String(row.ip || ''))}${row.ip ? ` <button type="button" class="btn btn-secondary" style="padding:2px 8px; font-size:12px; margin-left:6px;" data-ban-ip="${escapeHtml(String(row.ip))}" title="填入上方封禁表单">封禁</button>` : ''}</td>
                         <td title="${escapeHtml(String(row.fingerprint || ''))}">${escapeHtml(String(row.fingerprint || '').slice(0, 16))}</td>
                         <td title="${escapeHtml(String(row.user_agent || ''))}">${escapeHtml(String(row.user_agent || '').slice(0, 40))}</td>
                         <td>${escapeHtml(String(row.detail || ''))}</td>
@@ -628,6 +628,99 @@
                 showMessage(error.message || '加载登录日志失败', 'error');
             }
         }
+
+        async function loadIpBans() {
+            const body = document.getElementById('ip_ban_body');
+            if (!body) return;
+            try {
+                const res = await authFetch('/api/admin/ip-bans');
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || '加载封禁列表失败');
+                const yourIp = document.getElementById('ip_ban_your_ip');
+                if (yourIp) yourIp.textContent = `你当前的 IP：${data.yourIp || '未知'}（包含它的网段不能封禁）`;
+                const bans = data.bans || [];
+                if (!bans.length) {
+                    body.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-dim);">暂无封禁</td></tr>';
+                    return;
+                }
+                body.innerHTML = bans.map((ban) => `
+                    <tr style="${ban.active ? '' : 'opacity:0.55;'}">
+                        <td><code>${escapeHtml(ban.cidr)}</code></td>
+                        <td><span class="status-badge ${ban.source === 'auto' ? 'status-warning' : 'status-running'}" style="white-space:nowrap;">${ban.source === 'auto' ? '自动' : '手动'}</span></td>
+                        <td title="${escapeHtml(ban.reason)}">${escapeHtml(ban.reason.slice(0, 40))}</td>
+                        <td>${Number(ban.hits || 0)}</td>
+                        <td>${escapeHtml(formatTimeShort(ban.createdAt))}</td>
+                        <td>${ban.expiresAt ? escapeHtml(formatTimeShort(ban.expiresAt)) + (ban.active ? '' : '（已过期）') : '永久'}</td>
+                        <td style="text-align:center"><button type="button" class="btn btn-secondary" style="padding:6px 10px; font-size:12px;" data-unban-id="${Number(ban.id)}" data-unban-cidr="${escapeHtml(ban.cidr)}">解封</button></td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                body.innerHTML = `<tr><td colspan="7" style="text-align:center; color: var(--error);">${escapeHtml(error.message || '加载失败')}</td></tr>`;
+            }
+        }
+
+        async function submitIpBan() {
+            const cidr = document.getElementById('ip_ban_cidr')?.value.trim() || '';
+            const reason = document.getElementById('ip_ban_reason')?.value.trim() || '';
+            const duration = document.getElementById('ip_ban_duration')?.value || '7d';
+            if (!cidr) {
+                showMessage('请填写要封禁的 IP 或网段', 'warning');
+                return;
+            }
+            try {
+                const res = await authFetch('/api/admin/ip-bans', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cidr, reason, duration })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || '封禁失败');
+                document.getElementById('ip_ban_cidr').value = '';
+                document.getElementById('ip_ban_reason').value = '';
+                showMessage(data.message || '已封禁', 'success');
+                await loadIpBans();
+            } catch (error) {
+                showMessage(error.message || '封禁失败', 'error');
+            }
+        }
+
+        async function removeIpBan(id, cidr) {
+            if (!confirm(`确定解封 ${cidr}？`)) return;
+            try {
+                const res = await authFetch(`/api/admin/ip-bans/${encodeURIComponent(id)}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || '解封失败');
+                showMessage(data.message || '已解封', 'success');
+                await loadIpBans();
+            } catch (error) {
+                showMessage(error.message || '解封失败', 'error');
+            }
+        }
+
+        // 登录日志里点“封禁”：IPv6 默认填 /48（同一攻击者常在 /48 内换地址），确认后再提交
+        function prefillIpBan(ip) {
+            const input = document.getElementById('ip_ban_cidr');
+            if (!input) return;
+            input.value = ip.includes(':') ? `${ip}/48` : ip;
+            const reason = document.getElementById('ip_ban_reason');
+            if (reason && !reason.value) reason.value = '后台登录失败';
+            input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            input.focus();
+        }
+
+        document.addEventListener('click', (event) => {
+            const banBtn = event.target.closest('[data-ban-ip]');
+            if (banBtn) {
+                event.preventDefault();
+                prefillIpBan(banBtn.getAttribute('data-ban-ip') || '');
+                return;
+            }
+            const unbanBtn = event.target.closest('[data-unban-id]');
+            if (unbanBtn) {
+                event.preventDefault();
+                removeIpBan(unbanBtn.getAttribute('data-unban-id'), unbanBtn.getAttribute('data-unban-cidr') || '');
+            }
+        });
 
         async function readJsonResponse(response) {
             const text = await response.text();
@@ -1712,6 +1805,7 @@
             }
 
             if (pId === 'admin_login_logs') {
+                loadIpBans().catch(() => { });
                 loadAdminLoginLogs().catch(() => { });
             }
 

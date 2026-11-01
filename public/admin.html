@@ -1429,6 +1429,60 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                 <h1>后台登录日志</h1>
                 <p>记录后台登录、二次验证等安全事件（IP、浏览器指纹）</p>
             </div>
+            <div class="panel" style="margin-bottom: 24px;">
+                <div class="panel-header">
+                    <h2 class="panel-title">IP 封禁</h2>
+                    <button class="btn btn-secondary" onclick="loadIpBans()">
+                        <i data-lucide="refresh-cw"></i>
+                        刷新
+                    </button>
+                </div>
+                <p style="font-size: 13px; color: var(--text-dim); margin-top: 10px;">
+                    被封禁的 IP 或网段访问任何页面和接口都会被拒绝。后台登录被限流后仍持续尝试的来源会自动封禁 7 天（IPv6 按 /48），近 30 天成功登录过的 IP 不会被自动封禁。
+                </p>
+                <div style="display: grid; grid-template-columns: minmax(200px, 2fr) minmax(160px, 2fr) minmax(110px, 1fr) auto; gap: 10px; margin-top: 14px; align-items: end;">
+                    <div class="form-group" style="margin: 0;">
+                        <label>IP 或网段</label>
+                        <input type="text" id="ip_ban_cidr" class="asset-input" placeholder="例如 1.2.3.4 或 2a01:e5c0:2e15::/48" autocomplete="off" spellcheck="false">
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label>原因</label>
+                        <input type="text" id="ip_ban_reason" class="asset-input" placeholder="例如 撞库" maxlength="255" autocomplete="off">
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label>时长</label>
+                        <select id="ip_ban_duration" class="asset-input">
+                            <option value="1d">1 天</option>
+                            <option value="7d" selected>7 天</option>
+                            <option value="30d">30 天</option>
+                            <option value="permanent">永久</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="submitIpBan()">
+                        <i data-lucide="ban"></i>
+                        封禁
+                    </button>
+                </div>
+                <div id="ip_ban_your_ip" style="font-size: 12px; color: var(--text-dim); margin-top: 8px;"></div>
+                <div style="overflow:auto; margin-top: 14px;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>IP / 网段</th>
+                                <th style="white-space:nowrap">来源</th>
+                                <th>原因</th>
+                                <th style="white-space:nowrap">拦截次数</th>
+                                <th>封禁时间</th>
+                                <th>到期</th>
+                                <th style="text-align:center">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ip_ban_body">
+                            <tr><td colspan="7" style="text-align:center; color: var(--text-dim);">加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
             <div class="panel">
                 <div class="panel-header">
                     <h2 class="panel-title">最近登录记录</h2>
@@ -1459,7 +1513,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
         </div>
     </main>
 
-    <script src="/admin.js?v=20261024-security-hardening"></script>
+    <script src="/admin.js?v=20261101-ip-ban"></script>
 </body>
 
 </html>

@@ -237,3 +237,17 @@ CREATE TABLE IF NOT EXISTS admin_login_logs (
     KEY idx_admin_login_created (created_at),
     KEY idx_admin_login_event (event)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ip_bans (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    cidr VARCHAR(64) NOT NULL,
+    reason VARCHAR(255) NOT NULL DEFAULT '',
+    source VARCHAR(16) NOT NULL DEFAULT 'manual' COMMENT 'manual/auto',
+    hits BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    last_hit_at TIMESTAMP NULL DEFAULT NULL,
+    expires_at TIMESTAMP NULL DEFAULT NULL COMMENT 'NULL = 永久',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_ip_bans_cidr (cidr),
+    KEY idx_ip_bans_expires (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

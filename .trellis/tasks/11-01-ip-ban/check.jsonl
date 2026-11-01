@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify bans use resolveClientIp, never lock out the admin, and do not crash on bad input."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check the ban table escapes values and the page loads without errors."}

@@ -8,6 +8,7 @@ const os = require('os');
 const WebSocket = require('ws');
 const axios = require('axios');
 const store = require('./mysql-store');
+const ipBan = require('./ip-ban');
 const runtimeLog = require('./runtime-log');
 const { REGION_CONFIG, isSupportedRegion, getPlanTypeLabel } = require('./region-config');
 const taxFreeAddress = require('./tax-free-address');
@@ -197,6 +198,74 @@ async function getSystemMetrics() {
 
 function getClientIp(req) {
     return adminAuth.resolveClientIp(req);
+}
+
+// ─── IP 封禁 ─────────────────────────────────────────────────────────────────
+// 规则缓存在内存，30 秒从库里刷新一次，增删后立即刷新；命中次数攒批写回
+const IP_BAN_REFRESH_MS = 30 * 1000;
+const IP_BAN_DURATION_DAYS = { '1d': 1, '7d': 7, '30d': 30, permanent: null };
+// 登录被限流后 15 分钟内仍被拒 20 次以上 → 自动封禁 7 天（IPv4 单个地址，IPv6 整个 /48）
+const AUTO_BAN = { windowMs: 15 * 60 * 1000, threshold: 20, durationMs: 7 * 24 * 60 * 60 * 1000 };
+const ipBanState = { matcher: ipBan.createBanMatcher([]), trustedIps: [], pendingHits: new Map() };
+const autoBanCounters = new Map();
+
+async function refreshIpBans() {
+    const [rows, trustedIps] = await Promise.all([store.listIpBans(), store.listRecentAdminLoginIps(30)]);
+    ipBanState.matcher = ipBan.createBanMatcher(rows);
+    ipBanState.trustedIps = trustedIps;
+}
+
+async function flushIpBanHits() {
+    if (ipBanState.pendingHits.size === 0) return;
+    const batch = new Map(ipBanState.pendingHits);
+    ipBanState.pendingHits.clear();
+    await store.addIpBanHits(batch);
+}
+
+function findBannedSource(req) {
+    const ban = ipBanState.matcher.match(getClientIp(req));
+    if (ban) {
+        ipBanState.pendingHits.set(ban.id, (ipBanState.pendingHits.get(ban.id) || 0) + 1);
+    }
+    return ban;
+}
+
+// 近 30 天成功登录过后台的 IP 永远不会被自动封禁
+function coversTrustedAdminIp(cidr) {
+    return ipBanState.trustedIps.some((ip) => ipBan.cidrContainsIp(cidr, ip));
+}
+
+async function recordThrottledLoginAttempt(ip, reason) {
+    // 全站锁定时所有人都被拒，不计入，免得误封管理员
+    if (reason !== 'locked' || ipBan.isLoopback(ip)) return;
+    const cidr = ipBan.autoBanCidrForIp(ip);
+    if (!cidr) return;
+    const now = Date.now();
+    let entry = autoBanCounters.get(cidr);
+    if (!entry || now - entry.firstAt > AUTO_BAN.windowMs) {
+        entry = { count: 0, firstAt: now, banned: false };
+    }
+    entry.count += 1;
+    autoBanCounters.set(cidr, entry);
+    if (autoBanCounters.size > 10000) {
+        for (const [key, value] of autoBanCounters) {
+            if (now - value.firstAt > AUTO_BAN.windowMs) autoBanCounters.delete(key);
+        }
+    }
+    if (entry.count < AUTO_BAN.threshold || entry.banned) return;
+    entry.banned = true;
+    if (coversTrustedAdminIp(cidr)) {
+        console.warn(`[IPBan] ${cidr} 触发自动封禁阈值，但包含近期成功登录的 IP，已跳过`);
+        return;
+    }
+    await store.saveIpBan({
+        cidr,
+        reason: `自动封禁：后台登录被限流后 15 分钟内仍尝试 ${entry.count} 次`,
+        source: 'auto',
+        expiresAt: new Date(now + AUTO_BAN.durationMs)
+    });
+    await refreshIpBans();
+    console.warn(`[IPBan] 已自动封禁 ${cidr} 7 天`);
 }
 
 // 公开 CDK 接口按真实 IP 限频。码空间 2^75 猜不中，这里防的是批量查询把数据库连接刷满、拖慢真实客户
@@ -393,6 +462,15 @@ app.use((req, res, next) => {
         res.setHeader('Cache-Control', 'no-store');
     }
     next();
+});
+app.use((req, res, next) => {
+    if (!findBannedSource(req)) {
+        return next();
+    }
+    if (req.path.startsWith('/api/')) {
+        return res.status(403).json({ success: false, message: '访问被拒绝' });
+    }
+    return res.status(403).type('text/plain').send('Forbidden');
 });
 app.use(express.json({ limit: JSON_BODY_LIMIT, reviver: adminAuth.safeJsonReviver }));
 
@@ -1379,6 +1457,7 @@ app.post('/api/admin/login', async (req, res) => {
 
     const rate = adminAuth.checkLoginRateLimit(clientMeta.ip);
     if (!rate.allowed) {
+        recordThrottledLoginAttempt(clientMeta.ip, rate.reason).catch((error) => console.warn(`[IPBan] 自动封禁失败: ${error.message}`));
         return res.status(429).json({
             success: false,
             message: `登录尝试过多，请 ${rate.retryAfterSec} 秒后再试`
@@ -1503,6 +1582,7 @@ app.post('/api/admin/login/verify-2fa', async (req, res) => {
 
     const rate = adminAuth.checkLoginRateLimit(clientMeta.ip, '2fa');
     if (!rate.allowed) {
+        recordThrottledLoginAttempt(clientMeta.ip, rate.reason).catch((error) => console.warn(`[IPBan] 自动封禁失败: ${error.message}`));
         return res.status(429).json({
             success: false,
             message: `验证尝试过多，请 ${rate.retryAfterSec} 秒后再试`
@@ -1853,6 +1933,73 @@ app.get('/api/admin/login-logs', async (req, res) => {
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
+});
+
+function formatIpBanRow(row) {
+    const expiresAt = row.expires_at ? new Date(row.expires_at) : null;
+    return {
+        id: Number(row.id),
+        cidr: row.cidr,
+        reason: row.reason || '',
+        source: row.source === 'auto' ? 'auto' : 'manual',
+        hits: Number(row.hits || 0),
+        lastHitAt: row.last_hit_at ? new Date(row.last_hit_at).toISOString() : null,
+        expiresAt: expiresAt ? expiresAt.toISOString() : null,
+        createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+        active: !expiresAt || expiresAt.getTime() > Date.now()
+    };
+}
+
+app.get('/api/admin/ip-bans', async (req, res) => {
+    await ensureStoreReady();
+    await flushIpBanHits().catch(() => {});
+    const rows = await store.listIpBans();
+    res.json({
+        success: true,
+        bans: rows.map(formatIpBanRow),
+        yourIp: getClientIp(req),
+        trustedIps: ipBanState.trustedIps
+    });
+});
+
+app.post('/api/admin/ip-bans', async (req, res) => {
+    let rule;
+    try {
+        rule = ipBan.normalizeBanCidr(req.body?.cidr);
+    } catch (error) {
+        return res.status(400).json({ success: false, message: error.message });
+    }
+    const yourIp = getClientIp(req);
+    if (ipBan.cidrContainsIp(rule.cidr, yourIp)) {
+        return res.status(400).json({ success: false, message: `${rule.cidr} 包含你当前的 IP（${yourIp}），不能封禁` });
+    }
+    const durationKey = String(req.body?.duration || '7d');
+    if (!Object.prototype.hasOwnProperty.call(IP_BAN_DURATION_DAYS, durationKey)) {
+        return res.status(400).json({ success: false, message: '封禁时长无效' });
+    }
+    const days = IP_BAN_DURATION_DAYS[durationKey];
+    await ensureStoreReady();
+    await store.saveIpBan({
+        cidr: rule.cidr,
+        reason: String(req.body?.reason || '').trim() || '手动封禁',
+        source: 'manual',
+        expiresAt: days === null ? null : new Date(Date.now() + days * 24 * 60 * 60 * 1000)
+    });
+    await refreshIpBans();
+    return res.json({ success: true, message: `已封禁 ${rule.cidr}`, cidr: rule.cidr });
+});
+
+app.delete('/api/admin/ip-bans/:id', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, message: '缺少封禁记录编号' });
+    }
+    await ensureStoreReady();
+    const deleted = await store.deleteIpBan(id);
+    await refreshIpBans();
+    return deleted
+        ? res.json({ success: true, message: '已解封' })
+        : res.status(404).json({ success: false, message: '未找到该封禁记录' });
 });
 
 app.get('/api/admin/secondary/session', (req, res) => {
@@ -5323,6 +5470,17 @@ async function start() {
     await ensureStoreReady();
 
     try {
+        await refreshIpBans();
+        console.log(`🚫 [IPBan] 已加载 ${ipBanState.matcher.size} 条生效中的封禁规则`);
+    } catch (error) {
+        console.error(`❌ [IPBan] 加载封禁规则失败: ${error.message}`);
+    }
+    setInterval(() => {
+        refreshIpBans().catch((error) => console.warn(`[IPBan] 刷新失败: ${error.message}`));
+        flushIpBanHits().catch((error) => console.warn(`[IPBan] 写入命中次数失败: ${error.message}`));
+    }, IP_BAN_REFRESH_MS).unref();
+
+    try {
         const poolInfo = await syncBrowserPoolModeFromStore();
         if (poolInfo.enabled && poolInfo.initialized !== false) {
             runtimeLog.push({
@@ -5378,7 +5536,11 @@ async function start() {
 
     // WebSocket Server Setup
     const wss = new WebSocket.Server({ server });
-    wss.on('connection', (ws) => {
+    wss.on('connection', (ws, req) => {
+        if (findBannedSource(req)) {
+            ws.close(1008, 'forbidden');
+            return;
+        }
         let currentJobKey = null;
 
         ws.on('message', async (message) => {
