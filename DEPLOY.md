@@ -226,6 +226,8 @@ server {
 
 - 应用端口只能绑定 `127.0.0.1`，不能直接暴露到公网。
 - 站点放在 Cloudflare 后面时，在 server 块中 `include` [`deploy/nginx/cloudflare-realip.conf`](deploy/nginx/cloudflare-realip.conf)，否则 `$remote_addr` 是 Cloudflare 节点 IP。
+- 站点放在 Cloudflare 后面时，再把 [`deploy/nginx/cloudflare-origin-geo.conf`](deploy/nginx/cloudflare-origin-geo.conf) 放到 `/etc/nginx/conf.d/`，并在 server 块里加 `if ($from_cloudflare = 0) { return 444; }`，直连源站 IP 的请求会被直接断开。
+- Cloudflare 网段变更时，`cloudflare-realip.conf` 和 `cloudflare-origin-geo.conf` 两处都要更新，否则正常访问会被断开。
 
 配合 Let's Encrypt 免费 HTTPS：
 ```bash

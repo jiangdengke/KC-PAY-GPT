@@ -46,3 +46,4 @@ Thumbs.db
 # Sister project (kept as a separate repo)
 plus_gopay/
 .cortexkit/magic-context/
+data/runtime-state.json

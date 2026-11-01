@@ -16,6 +16,9 @@ const EVENT_LABELS = {
     admin_secondary_success: '🔒 敏感模块已解锁'
 };
 
+// 只用于本地测试时指向假接口截获消息
+const TELEGRAM_API_BASE = String(process.env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/+$/, '');
+
 function escapeHtml(text) {
     return String(text || '')
         .replace(/&/g, '&amp;')
@@ -88,7 +91,7 @@ async function sendTelegramMessage(botToken, chatId, text) {
 
     try {
         const response = await axios.post(
-            `https://api.telegram.org/bot${token}/sendMessage`,
+            `${TELEGRAM_API_BASE}/bot${token}/sendMessage`,
             {
                 chat_id: chat,
                 text,
@@ -239,7 +242,30 @@ function isCardPoolExhaustedIssue(rawOutput, analysis) {
         || message.includes('卡池');
 }
 
+/**
+ * 安全告警（服务崩溃、自动封禁、撞库激增、未处理异常）。
+ * 发给管理员本人（与二次验证码同一个 chat），未配置时退回常规通知目标。
+ */
+async function sendSecurityAlert(store, title, lines = []) {
+    const settings = await store.getTelegramConfig();
+    if (!settings?.bot_token) {
+        return { sent: 0, skipped: true, reason: 'no_bot_token' };
+    }
+    const chatIds = settings.admin_chat_id
+        ? [settings.admin_chat_id]
+        : getTargetChatIds(settings).map((target) => target.chatId);
+    const text = [escapeHtml(title), '', ...lines.map((line) => escapeHtml(line))].join('\n');
+    let sent = 0;
+    for (const chatId of chatIds) {
+        const result = await sendTelegramMessage(settings.bot_token, chatId, text);
+        if (result.ok) sent += 1;
+        else console.warn(`[Telegram] 安全告警发送失败: ${result.error}`);
+    }
+    return { sent };
+}
+
 module.exports = {
+    sendSecurityAlert,
     formatTelegramMessage,
     sendTelegramMessage,
     dispatchTelegramNotification,

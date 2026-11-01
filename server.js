@@ -14,7 +14,7 @@ const { REGION_CONFIG, isSupportedRegion, getPlanTypeLabel } = require('./region
 const taxFreeAddress = require('./tax-free-address');
 const { testProxyUrl, normalizeProxyLines } = require('./proxy-pool');
 const { extractSessionPreview, extractAccessTokenFromRaw, parseSessionJson, extractEmailFromSession, extractAccountIdFromSession } = require('./session-auth');
-const { notifyTelegramEvent, notifyAdminSecurityEvent, sendTelegramLoginCode, sendTelegramTest, isCardPoolExhaustedIssue } = require('./telegram-notify');
+const { notifyTelegramEvent, notifyAdminSecurityEvent, sendTelegramLoginCode, sendTelegramTest, isCardPoolExhaustedIssue, sendSecurityAlert } = require('./telegram-notify');
 const adminAuth = require('./admin-auth');
 const { buildAdminLoginUrl, buildAdminPanelUrl } = require('./admin-paths');
 const { buildHcaptchaEnvFromConfig } = require('./hcaptcha-runtime');
@@ -235,6 +235,116 @@ function coversTrustedAdminIp(cidr) {
     return ipBanState.trustedIps.some((ip) => ipBan.cidrContainsIp(cidr, ip));
 }
 
+// ─── 安全告警（Telegram） ────────────────────────────────────────────────────
+// 10-31 起服务被打崩一天多、同时被撞库 29 万次，期间没有任何告警。每类告警都限频，合并的条数附在下一条里
+const suppressedAlerts = new Map();
+
+function formatAlertTime(ts = Date.now()) {
+    return new Date(ts).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+}
+
+function alertSecurity(kind, title, lines, { windowMs, max }) {
+    const quota = adminAuth.consumeRequestQuota(`alert:${kind}`, 'global', { windowMs, max });
+    if (!quota.allowed) {
+        suppressedAlerts.set(kind, (suppressedAlerts.get(kind) || 0) + 1);
+        return;
+    }
+    const suppressed = suppressedAlerts.get(kind) || 0;
+    suppressedAlerts.delete(kind);
+    const body = [...lines];
+    if (suppressed > 0) body.push(`（此前另有 ${suppressed} 条同类告警已合并）`);
+    body.push(`时间：${formatAlertTime()}`);
+    sendSecurityAlert(store, title, body).catch((error) => console.warn(`[Alert] ${kind} 发送失败: ${error.message}`));
+}
+
+// 服务崩溃检测：启动时标记 running，收到 SIGTERM/SIGINT 正常退出时清除；
+// 下次启动若仍是 running，说明上次是崩溃或被强杀。状态存在可写的 data/ 目录，跨重启保留
+const RUNTIME_STATE_PATH = path.join(__dirname, 'data', 'runtime-state.json');
+const CRASH_ALERT_INTERVAL_MS = 10 * 60 * 1000;
+
+function readRuntimeState() {
+    try {
+        return JSON.parse(fs.readFileSync(RUNTIME_STATE_PATH, 'utf8')) || {};
+    } catch (_) {
+        return {};
+    }
+}
+
+function writeRuntimeState(state) {
+    try {
+        fs.writeFileSync(RUNTIME_STATE_PATH, JSON.stringify(state), { mode: 0o600 });
+    } catch (error) {
+        console.warn(`[Alert] 写入运行状态失败: ${error.message}`);
+    }
+}
+
+function markCleanShutdown() {
+    writeRuntimeState({ ...readRuntimeState(), running: false, stoppedAt: Date.now() });
+}
+
+function announceStartup() {
+    const previous = readRuntimeState();
+    const now = Date.now();
+    const crashed = previous.running === true;
+    const state = {
+        running: true,
+        startedAt: now,
+        pendingCrashes: crashed ? Number(previous.pendingCrashes || 0) + 1 : 0,
+        lastCrashAlertAt: Number(previous.lastCrashAlertAt || 0)
+    };
+    if (!crashed) {
+        sendSecurityAlert(store, '🟢 KC-PAY 服务已启动', ['上次为正常退出（部署或手动重启）', `时间：${formatAlertTime(now)}`])
+            .catch((error) => console.warn(`[Alert] 启动通知发送失败: ${error.message}`));
+    } else if (now - state.lastCrashAlertAt >= CRASH_ALERT_INTERVAL_MS) {
+        sendSecurityAlert(store, '⚠️ KC-PAY 服务异常退出后已自动重启', [
+            `自上次告警以来异常退出 ${state.pendingCrashes} 次`,
+            previous.startedAt ? `崩溃前的启动时间：${formatAlertTime(previous.startedAt)}` : '',
+            '可能有人在用畸形请求打崩服务，请查看容器日志',
+            `时间：${formatAlertTime(now)}`
+        ].filter(Boolean)).catch((error) => console.warn(`[Alert] 崩溃告警发送失败: ${error.message}`));
+        state.pendingCrashes = 0;
+        state.lastCrashAlertAt = now;
+    }
+    writeRuntimeState(state);
+}
+
+// 撞库激增：10 分钟内后台登录被拒（密码错误 + 限流）超过 50 次就告警，每小时最多 1 条
+const LOGIN_SURGE = { windowMs: 10 * 60 * 1000, threshold: 50 };
+const loginSurge = { windowStart: 0, total: 0, sources: new Map(), alerted: false };
+
+function noteRejectedAdminLogin(ip) {
+    const now = Date.now();
+    if (now - loginSurge.windowStart > LOGIN_SURGE.windowMs) {
+        loginSurge.windowStart = now;
+        loginSurge.total = 0;
+        loginSurge.sources.clear();
+        loginSurge.alerted = false;
+    }
+    loginSurge.total += 1;
+    const source = ipBan.autoBanCidrForIp(ip) || String(ip || 'unknown');
+    if (loginSurge.sources.has(source) || loginSurge.sources.size < 5000) {
+        loginSurge.sources.set(source, (loginSurge.sources.get(source) || 0) + 1);
+    }
+    if (loginSurge.total < LOGIN_SURGE.threshold || loginSurge.alerted) return;
+    loginSurge.alerted = true;
+    const top = [...loginSurge.sources].sort((a, b) => b[1] - a[1]).slice(0, 3)
+        .map(([key, count]) => `${key} × ${count}`);
+    alertSecurity('login-surge', '⚠️ 后台登录正在被大量尝试', [
+        `10 分钟内被拒 ${loginSurge.total} 次`,
+        `主要来源：${top.join('，')}`,
+        '被限流后仍持续尝试的来源会自动封禁'
+    ], { windowMs: 60 * 60 * 1000, max: 1 });
+}
+
+function alertUnexpectedError(where, error) {
+    const message = String(error?.message || error || '').split('\n')[0].slice(0, 200);
+    alertSecurity('unexpected-error', '❗ KC-PAY 出现未处理的异常', [
+        `位置：${where}`,
+        `错误：${message}`,
+        '可能是新的攻击手法或代码缺陷，请查看容器日志'
+    ], { windowMs: 30 * 60 * 1000, max: 1 });
+}
+
 async function recordThrottledLoginAttempt(ip, reason) {
     // 全站锁定时所有人都被拒，不计入，免得误封管理员
     if (reason !== 'locked' || ipBan.isLoopback(ip)) return;
@@ -254,18 +364,24 @@ async function recordThrottledLoginAttempt(ip, reason) {
     }
     if (entry.count < AUTO_BAN.threshold || entry.banned) return;
     entry.banned = true;
+    const attempts = entry.count;
     if (coversTrustedAdminIp(cidr)) {
         console.warn(`[IPBan] ${cidr} 触发自动封禁阈值，但包含近期成功登录的 IP，已跳过`);
         return;
     }
     await store.saveIpBan({
         cidr,
-        reason: `自动封禁：后台登录被限流后 15 分钟内仍尝试 ${entry.count} 次`,
+        reason: `自动封禁：后台登录被限流后 15 分钟内仍尝试 ${attempts} 次`,
         source: 'auto',
         expiresAt: new Date(now + AUTO_BAN.durationMs)
     });
     await refreshIpBans();
     console.warn(`[IPBan] 已自动封禁 ${cidr} 7 天`);
+    alertSecurity('autoban', '🚫 已自动封禁攻击来源', [
+        `来源：${cidr}`,
+        `原因：后台登录被限流后 15 分钟内仍尝试 ${attempts} 次`,
+        '时长：7 天，可在后台“登录日志 → IP 封禁”解封'
+    ], { windowMs: 10 * 60 * 1000, max: 5 });
 }
 
 // 公开 CDK 接口按真实 IP 限频。码空间 2^75 猜不中，这里防的是批量查询把数据库连接刷满、拖慢真实客户
@@ -442,12 +558,13 @@ function logTaskChunk(jobKey, attempt, source, chunk) {
     }
 }
 
-process.on('SIGINT', () => { cleanupProcesses(); process.exit(0); });
-process.on('SIGTERM', () => { cleanupProcesses(); process.exit(0); });
+process.on('SIGINT', () => { cleanupProcesses(); markCleanShutdown(); process.exit(0); });
+process.on('SIGTERM', () => { cleanupProcesses(); markCleanShutdown(); process.exit(0); });
 process.on('exit', () => cleanupProcesses());
 // 兜底：漏网的 rejection 只记录，不再让进程退出
 process.on('unhandledRejection', (reason) => {
     console.error('[unhandledRejection]', reason instanceof Error ? reason.stack : reason);
+    alertUnexpectedError('unhandledRejection', reason);
 });
 
 let storeReadyPromise = null;
@@ -1457,6 +1574,7 @@ app.post('/api/admin/login', async (req, res) => {
 
     const rate = adminAuth.checkLoginRateLimit(clientMeta.ip);
     if (!rate.allowed) {
+        noteRejectedAdminLogin(clientMeta.ip);
         recordThrottledLoginAttempt(clientMeta.ip, rate.reason).catch((error) => console.warn(`[IPBan] 自动封禁失败: ${error.message}`));
         return res.status(429).json({
             success: false,
@@ -1473,6 +1591,7 @@ app.post('/api/admin/login', async (req, res) => {
 
         if (!emailOk || !passwordOk) {
             adminAuth.recordLoginFailure(rate.key, rate.entry);
+            noteRejectedAdminLogin(clientMeta.ip);
             await logAdminSecurityEvent('login_failed', {
                 ...clientMeta,
                 email,
@@ -1582,6 +1701,7 @@ app.post('/api/admin/login/verify-2fa', async (req, res) => {
 
     const rate = adminAuth.checkLoginRateLimit(clientMeta.ip, '2fa');
     if (!rate.allowed) {
+        noteRejectedAdminLogin(clientMeta.ip);
         recordThrottledLoginAttempt(clientMeta.ip, rate.reason).catch((error) => console.warn(`[IPBan] 自动封禁失败: ${error.message}`));
         return res.status(429).json({
             success: false,
@@ -5459,6 +5579,7 @@ app.use((error, req, res, next) => {
     const status = Number(error?.status || error?.statusCode) || 500;
     if (status >= 500) {
         console.error(`[HTTP ${req.method} ${req.path}]`, error?.stack || error);
+        alertUnexpectedError(`${req.method} ${req.path}`, error);
     }
     return res.status(status >= 400 && status < 600 ? status : 500).json({
         success: false,
@@ -5532,6 +5653,7 @@ async function start() {
         console.log('数据库表检查完成');
         console.log(`http://localhost:${PORT}`);
         console.log(`MySQL => ${conn.user}@${conn.host}:${conn.port}/${conn.database}`);
+        announceStartup();
     });
 
     // WebSocket Server Setup

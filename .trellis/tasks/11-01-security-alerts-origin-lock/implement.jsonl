@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Security contracts: client IP, throttling, crash safety, IP bans, mounted modules."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Logging conventions for new alert paths."}
