@@ -447,6 +447,18 @@ async function listRecentLoginFailures(minutes = 30) {
     );
 }
 
+async function listLoginFailureCounts(minutes = 1440) {
+    return runQuery(
+        `SELECT ip, admin_email, COUNT(*) AS attempts, MIN(created_at) AS first_at
+         FROM admin_login_logs
+         WHERE event = 'login_failed' AND ip IS NOT NULL AND ip <> ''
+           AND created_at >= NOW() - INTERVAL ? MINUTE
+         GROUP BY ip, admin_email
+         LIMIT 100000`,
+        [Math.max(1, Number(minutes) || 1440)]
+    );
+}
+
 // 手动封禁直接覆盖原规则；自动封禁不会缩短已有规则（永久的保持永久）
 async function saveIpBan({ cidr, reason = '', source = 'manual', expiresAt = null }) {
     const params = [String(cidr), String(reason || '').slice(0, 255), source === 'auto' ? 'auto' : 'manual', expiresAt];
@@ -4604,6 +4616,7 @@ module.exports = {
     listIpBans,
     listActiveIpBanRules,
     listRecentLoginFailures,
+    listLoginFailureCounts,
     saveIpBan,
     deleteIpBan,
     addIpBanHits,

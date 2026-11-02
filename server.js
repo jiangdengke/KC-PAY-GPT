@@ -205,13 +205,15 @@ function getClientIp(req) {
 const IP_BAN_REFRESH_MS = 30 * 1000;
 const IP_BAN_DURATION_DAYS = { '1d': 1, '7d': 7, '30d': 30, permanent: null };
 // 登录被限流后 15 分钟内仍被拒 20 次以上 → 自动封禁 7 天（IPv4 单个地址，IPv6 整个 /48）
-// 用不存在的邮箱试 5 次也直接封：这类尝试不可能成功，且攻击者每个 IP 只试几次就换（Tor 出口）
+// 猜错邮箱 24 小时累计 3 次也直接封：这类尝试不可能成功。攻击者每个 IP 一轮只试 4 次、隔半小时以上再来，短窗口永远攒不够
+// 邮箱对、密码错 24 小时累计 10 次同样封：攻击者已知道真实邮箱，同样的节奏不能漏过去
+const AUTO_BAN_DAY_MS = 24 * 60 * 60 * 1000;
 const AUTO_BAN = {
-    windowMs: 15 * 60 * 1000,
-    durationMs: 7 * 24 * 60 * 60 * 1000,
+    durationMs: 7 * AUTO_BAN_DAY_MS,
     signals: {
-        throttled: { threshold: 20, label: '后台登录被限流后 15 分钟内仍尝试' },
-        wrong_email: { threshold: 5, label: '用不存在的管理员邮箱尝试登录' }
+        throttled: { threshold: 20, windowMs: 15 * 60 * 1000, label: '后台登录被限流后 15 分钟内仍尝试' },
+        wrong_email: { threshold: 3, windowMs: AUTO_BAN_DAY_MS, label: '24 小时内用不存在的管理员邮箱尝试登录' },
+        wrong_password: { threshold: 10, windowMs: AUTO_BAN_DAY_MS, label: '24 小时内用正确邮箱、错误密码尝试登录' }
     }
 };
 const ipBanState = { matcher: ipBan.createBanMatcher([]), trustedIps: [], pendingHits: new Map() };
@@ -369,9 +371,9 @@ function noteRejectedAdminLogin(ip) {
     const top = [...loginSurge.sources].sort((a, b) => b[1] - a[1]).slice(0, 3)
         .map(([key, count]) => `${key} × ${count}`);
     alertSecurity('login-surge', '⚠️ 后台登录正在被大量尝试', [
-        `10 分钟内被拒 ${loginSurge.total} 次`,
+        `10 分钟内被拒 ${loginSurge.total} 次，来自 ${loginSurge.sources.size} 个来源`,
         `主要来源：${top.join('，')}`,
-        '被限流后仍持续尝试的来源会自动封禁'
+        '同一来源 24 小时内猜错邮箱 3 次或密码错 10 次会自动封禁'
     ], { windowMs: 60 * 60 * 1000, max: 1 });
 }
 
@@ -398,14 +400,14 @@ async function noteAutoBanSignal(ip, signal) {
     const counterKey = `${signal}|${cidr}`;
     const now = Date.now();
     let entry = autoBanCounters.get(counterKey);
-    if (!entry || now - entry.firstAt > AUTO_BAN.windowMs) {
-        entry = { count: 0, firstAt: now, banned: false };
+    if (!entry || now - entry.firstAt > rule.windowMs) {
+        entry = { count: 0, firstAt: now, windowMs: rule.windowMs, banned: false };
     }
     entry.count += 1;
     autoBanCounters.set(counterKey, entry);
     if (autoBanCounters.size > 10000) {
         for (const [key, value] of autoBanCounters) {
-            if (now - value.firstAt > AUTO_BAN.windowMs) autoBanCounters.delete(key);
+            if (now - value.firstAt > value.windowMs) autoBanCounters.delete(key);
         }
     }
     if (entry.count < rule.threshold || entry.banned) return;
@@ -428,6 +430,21 @@ async function noteAutoBanSignal(ip, signal) {
         `原因：${rule.label} ${attempts} 次`,
         '时长：7 天，可在后台“登录日志 → IP 封禁”解封'
     ], { windowMs: 30 * 60 * 1000, max: 1 });
+}
+
+// 重启后接着累计，否则进程一重启这些慢速来源的计数就清零
+async function restoreAutoBanCounters(adminEmail) {
+    const rows = await store.listLoginFailureCounts(AUTO_BAN_DAY_MS / 60000);
+    const counts = ipBan.mergeAutoBanCounts(rows.map((row) => ({
+        ip: row.ip,
+        signal: adminAuth.normalizeEmail(row.admin_email) === adminEmail ? 'wrong_password' : 'wrong_email',
+        attempts: Number(row.attempts),
+        at: new Date(row.first_at).getTime()
+    })));
+    for (const { signal, cidr, count, firstAt } of counts) {
+        autoBanCounters.set(`${signal}|${cidr}`, { count, firstAt, windowMs: AUTO_BAN.signals[signal].windowMs, banned: false });
+    }
+    return counts.length;
 }
 
 // 公开 CDK 接口按真实 IP 限频。码空间 2^75 猜不中，这里防的是批量查询把数据库连接刷满、拖慢真实客户
@@ -1647,9 +1664,7 @@ app.post('/api/admin/login', async (req, res) => {
         if (!emailOk || !passwordOk) {
             adminAuth.recordLoginFailure(rate.key, rate.entry, { countGlobal: emailOk });
             noteRejectedAdminLogin(clientMeta.ip);
-            if (!emailOk) {
-                noteAutoBanSignal(clientMeta.ip, 'wrong_email').catch((error) => console.warn(`[IPBan] 自动封禁失败: ${error.message}`));
-            }
+            noteAutoBanSignal(clientMeta.ip, emailOk ? 'wrong_password' : 'wrong_email').catch((error) => console.warn(`[IPBan] 自动封禁失败: ${error.message}`));
             await logAdminSecurityEvent('login_failed', {
                 ...clientMeta,
                 email,
@@ -5682,7 +5697,8 @@ async function start() {
             at: new Date(row.created_at).getTime(),
             countGlobal: row.event === '2fa_failed' || adminAuth.normalizeEmail(row.admin_email) === adminEmail
         })));
-        console.log(`🔒 [AdminAuth] 已从登录日志恢复 ${failures.length} 条失败记录`);
+        const restoredSources = await restoreAutoBanCounters(adminEmail);
+        console.log(`🔒 [AdminAuth] 已从登录日志恢复 ${failures.length} 条失败记录，${restoredSources} 个来源的自动封禁计数`);
     } catch (error) {
         console.error(`❌ [AdminAuth] 恢复登录失败记录失败: ${error.message}`);
     }

@@ -167,6 +167,21 @@ function autoBanCidrForIp(ip) {
     return `${formatNetwork(maskNetwork(parsed.value, parsed.family, prefix), parsed.family)}/${prefix}`;
 }
 
+// 把按 IP 汇总的登录失败合并成自动封禁计数，范围与 autoBanCidrForIp 一致（IPv6 合并到 /48）
+function mergeAutoBanCounts(rows = []) {
+    const merged = new Map();
+    for (const { ip, signal, attempts, at } of rows) {
+        const cidr = isLoopback(ip) ? '' : autoBanCidrForIp(ip);
+        if (!cidr) continue;
+        const key = `${signal}|${cidr}`;
+        const entry = merged.get(key) || { signal, cidr, count: 0, firstAt: at };
+        entry.count += attempts;
+        entry.firstAt = Math.min(entry.firstAt, at);
+        merged.set(key, entry);
+    }
+    return [...merged.values()];
+}
+
 // 解析 Tor 官方出口列表（每行一个 IP），非法行直接丢弃
 function parseTorExitList(text) {
     const ips = new Set();
@@ -179,6 +194,7 @@ function parseTorExitList(text) {
 
 module.exports = {
     parseTorExitList,
+    mergeAutoBanCounts,
     MIN_BAN_PREFIX,
     AUTO_BAN_IPV6_PREFIX,
     normalizeBanCidr,

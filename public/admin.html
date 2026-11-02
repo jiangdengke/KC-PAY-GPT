@@ -1438,7 +1438,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     </button>
                 </div>
                 <p style="font-size: 13px; color: var(--text-dim); margin-top: 10px;">
-                    被封禁的 IP 或网段访问任何页面和接口都会被拒绝。用不存在的邮箱试 5 次，或后台登录被限流后仍持续尝试的来源，会自动封禁 7 天（IPv6 按 /48）；近 30 天成功登录过的 IP 不会被自动封禁。Tor 出口节点整站拦截。
+                    被封禁的 IP 或网段访问任何页面和接口都会被拒绝。同一来源 24 小时内用不存在的邮箱试 3 次、密码错 10 次，或后台登录被限流后仍持续尝试，会自动封禁 7 天（IPv6 按 /48）；近 30 天成功登录过的 IP 不会被自动封禁。Tor 出口节点整站拦截。
                 </p>
                 <div style="display: grid; grid-template-columns: minmax(200px, 2fr) minmax(160px, 2fr) minmax(110px, 1fr) auto; gap: 10px; margin-top: 14px; align-items: end;">
                     <div class="form-group" style="margin: 0;">

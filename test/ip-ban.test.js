@@ -63,6 +63,30 @@ describe('ban helpers', () => {
     });
 });
 
+describe('mergeAutoBanCounts', () => {
+    it('merges per-IP failures into auto-ban scopes and keeps the earliest time', () => {
+        const counts = ipBan.mergeAutoBanCounts([
+            { ip: '72.167.143.171', signal: 'wrong_email', attempts: 4, at: 2000 },
+            { ip: '72.167.143.171', signal: 'wrong_email', attempts: 4, at: 1000 },
+            { ip: '2a09:bac1:7aa0:50::246:f6', signal: 'wrong_email', attempts: 2, at: 3000 },
+            { ip: '2a09:bac1:7aa0:51::1', signal: 'wrong_email', attempts: 1, at: 2500 },
+            { ip: '72.167.143.171', signal: 'wrong_password', attempts: 1, at: 4000 }
+        ]);
+        expect(counts).toEqual([
+            { signal: 'wrong_email', cidr: '72.167.143.171/32', count: 8, firstAt: 1000 },
+            { signal: 'wrong_email', cidr: '2a09:bac1:7aa0::/48', count: 3, firstAt: 2500 },
+            { signal: 'wrong_password', cidr: '72.167.143.171/32', count: 1, firstAt: 4000 }
+        ]);
+    });
+
+    it('skips loopback and unparseable sources', () => {
+        expect(ipBan.mergeAutoBanCounts([
+            { ip: '127.0.0.1', signal: 'wrong_email', attempts: 9, at: 1 },
+            { ip: 'bad', signal: 'wrong_email', attempts: 9, at: 1 }
+        ])).toEqual([]);
+    });
+});
+
 describe('parseTorExitList', () => {
     it('keeps valid addresses and drops everything else', () => {
         const ips = ipBan.parseTorExitList('185.220.101.4\r\n\n<html>\n2001:67C::1\nnot-an-ip\n');
