@@ -637,7 +637,10 @@
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.message || '加载封禁列表失败');
                 const yourIp = document.getElementById('ip_ban_your_ip');
-                if (yourIp) yourIp.textContent = `你当前的 IP：${data.yourIp || '未知'}（包含它的网段不能封禁）`;
+                if (yourIp) {
+                    const tor = data.tor || {};
+                    yourIp.textContent = `你当前的 IP：${data.yourIp || '未知'}（包含它的网段不能封禁）｜生效规则 ${Number(data.activeCount || 0)} 条｜Tor 出口节点 ${Number(tor.count || 0)} 个已整站拦截，本次启动后拦截 ${Number(tor.hits || 0)} 次`;
+                }
                 const bans = data.bans || [];
                 if (!bans.length) {
                     body.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-dim);">暂无封禁</td></tr>';

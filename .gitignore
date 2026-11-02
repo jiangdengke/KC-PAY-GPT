@@ -47,3 +47,4 @@ Thumbs.db
 plus_gopay/
 .cortexkit/magic-context/
 data/runtime-state.json
+data/tor-exit-list.txt

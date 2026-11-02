@@ -223,3 +223,27 @@ describe('admin login /48 grouping', () => {
         expect(auth.checkLoginRateLimit('2a01:e5c0:2e16::1').allowed).toBe(true);
     });
 });
+
+describe('login failure accounting', () => {
+    it('does not let wrong-email failures trip the global cap', () => {
+        const auth = freshAdminAuth();
+        for (let i = 0; i < 150; i += 1) {
+            const rate = auth.checkLoginRateLimit(`10.2.${Math.floor(i / 4)}.${i % 4}`);
+            auth.recordLoginFailure(rate.key, rate.entry, { countGlobal: false });
+        }
+        expect(auth.checkLoginRateLimit('192.0.2.201').allowed).toBe(true);
+    });
+
+    it('restores per-source locks and the global cap from logged failures', () => {
+        const auth = freshAdminAuth();
+        const at = Date.now() - 60 * 1000;
+        const rows = Array.from({ length: 5 }, (_, i) => ({ ip: '198.51.100.9', scope: 'login', at: at + i, countGlobal: false }));
+        auth.restoreLoginFailures(rows);
+        expect(auth.checkLoginRateLimit('198.51.100.9').allowed).toBe(false);
+        expect(auth.checkLoginRateLimit('198.51.100.10').allowed).toBe(true);
+
+        const fresh = freshAdminAuth();
+        fresh.restoreLoginFailures(Array.from({ length: 100 }, (_, i) => ({ ip: `10.3.${Math.floor(i / 4)}.${i % 4}`, at: at + i, countGlobal: true })));
+        expect(fresh.checkLoginRateLimit('192.0.2.202')).toMatchObject({ allowed: false, reason: 'global_locked' });
+    });
+});

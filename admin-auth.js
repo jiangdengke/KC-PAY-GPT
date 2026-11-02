@@ -282,14 +282,19 @@ function checkLoginRateLimit(ip, scope = 'login') {
     return { allowed: true, entry, key };
 }
 
-function recordLoginFailure(key, entry) {
-    const now = Date.now();
+// countGlobal: 只有真实管理员邮箱的失败才计入全站上限。猜错邮箱不可能登录成功，
+// 不该让攻击者靠它把真正的管理员锁在外面（2026-11-01 就发生过）
+function recordLoginFailure(key, entry, { countGlobal = true, now = Date.now() } = {}) {
     const next = entry || { count: 0, firstAt: now, lockedUntil: 0 };
     next.count += 1;
     if (next.count >= LOGIN_MAX_ATTEMPTS) {
         next.lockedUntil = now + LOGIN_LOCK_MS;
     }
     loginAttempts.set(key, next);
+    if (!countGlobal) {
+        pruneLoginAttempts(now);
+        return;
+    }
 
     const globalEntry = loginAttempts.get(LOGIN_GLOBAL_KEY) || { count: 0, firstAt: now, lockedUntil: 0 };
     if (now - globalEntry.firstAt > LOGIN_WINDOW_MS) {
@@ -303,6 +308,18 @@ function recordLoginFailure(key, entry) {
     }
     loginAttempts.set(LOGIN_GLOBAL_KEY, globalEntry);
     pruneLoginAttempts(now);
+}
+
+// 启动时用登录日志回放失败记录，限流计数不会因为重启或崩溃清零。rows 需按时间升序
+function restoreLoginFailures(rows = []) {
+    for (const { ip, scope = 'login', at, countGlobal = true } of rows) {
+        const key = `${scope}|${toRateLimitKey(ip, 3)}`;
+        let entry = loginAttempts.get(key);
+        if (!entry || at - entry.firstAt > LOGIN_WINDOW_MS) {
+            entry = { count: 0, firstAt: at, lockedUntil: entry?.lockedUntil || 0 };
+        }
+        recordLoginFailure(key, entry, { countGlobal, now: at });
+    }
 }
 
 /**
@@ -572,6 +589,7 @@ module.exports = {
     normalizeEmail,
     checkLoginRateLimit,
     recordLoginFailure,
+    restoreLoginFailures,
     clearLoginAttempts,
     consumeChallengeAttempt,
     markChallengeUsed,

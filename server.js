@@ -205,14 +205,47 @@ function getClientIp(req) {
 const IP_BAN_REFRESH_MS = 30 * 1000;
 const IP_BAN_DURATION_DAYS = { '1d': 1, '7d': 7, '30d': 30, permanent: null };
 // 登录被限流后 15 分钟内仍被拒 20 次以上 → 自动封禁 7 天（IPv4 单个地址，IPv6 整个 /48）
-const AUTO_BAN = { windowMs: 15 * 60 * 1000, threshold: 20, durationMs: 7 * 24 * 60 * 60 * 1000 };
+// 用不存在的邮箱试 5 次也直接封：这类尝试不可能成功，且攻击者每个 IP 只试几次就换（Tor 出口）
+const AUTO_BAN = {
+    windowMs: 15 * 60 * 1000,
+    durationMs: 7 * 24 * 60 * 60 * 1000,
+    signals: {
+        throttled: { threshold: 20, label: '后台登录被限流后 15 分钟内仍尝试' },
+        wrong_email: { threshold: 5, label: '用不存在的管理员邮箱尝试登录' }
+    }
+};
 const ipBanState = { matcher: ipBan.createBanMatcher([]), trustedIps: [], pendingHits: new Map() };
 const autoBanCounters = new Map();
 
 async function refreshIpBans() {
-    const [rows, trustedIps] = await Promise.all([store.listIpBans(), store.listRecentAdminLoginIps(30)]);
+    const [rows, trustedIps] = await Promise.all([store.listActiveIpBanRules(), store.listRecentAdminLoginIps(30)]);
     ipBanState.matcher = ipBan.createBanMatcher(rows);
     ipBanState.trustedIps = trustedIps;
+}
+
+// Tor 出口节点整站拦截：2026-11 的崩溃攻击和撞库 98% 来自 Tor。列表每小时更新，缓存到 data/ 供重启后立即生效
+const TOR_EXIT_LIST_URL = process.env.TOR_EXIT_LIST_URL || 'https://check.torproject.org/torbulkexitlist';
+const TOR_EXIT_CACHE_PATH = path.join(__dirname, 'data', 'tor-exit-list.txt');
+const TOR_EXIT_REFRESH_MS = 60 * 60 * 1000;
+const torExitState = { ips: new Set(), updatedAt: 0, hits: 0 };
+
+function loadCachedTorExitList() {
+    try {
+        torExitState.ips = ipBan.parseTorExitList(fs.readFileSync(TOR_EXIT_CACHE_PATH, 'utf8'));
+        torExitState.updatedAt = fs.statSync(TOR_EXIT_CACHE_PATH).mtimeMs;
+    } catch (_) { /* 首次启动没有缓存 */ }
+}
+
+async function refreshTorExitList() {
+    const response = await axios.get(TOR_EXIT_LIST_URL, { timeout: 20000, responseType: 'text' });
+    const ips = ipBan.parseTorExitList(response.data);
+    // 正常列表有上千条，太少说明响应不对，保留旧列表
+    if (ips.size < 100) {
+        throw new Error(`Tor 出口列表异常，只解析到 ${ips.size} 条`);
+    }
+    torExitState.ips = ips;
+    torExitState.updatedAt = Date.now();
+    fs.writeFileSync(TOR_EXIT_CACHE_PATH, [...ips].join('\n'), { mode: 0o600 });
 }
 
 async function flushIpBanHits() {
@@ -223,11 +256,17 @@ async function flushIpBanHits() {
 }
 
 function findBannedSource(req) {
-    const ban = ipBanState.matcher.match(getClientIp(req));
+    const ip = getClientIp(req);
+    const ban = ipBanState.matcher.match(ip);
     if (ban) {
         ipBanState.pendingHits.set(ban.id, (ipBanState.pendingHits.get(ban.id) || 0) + 1);
+        return ban;
     }
-    return ban;
+    if (torExitState.ips.has(String(ip).toLowerCase()) && !ipBanState.trustedIps.includes(ip)) {
+        torExitState.hits += 1;
+        return { tor: true };
+    }
+    return null;
 }
 
 // 近 30 天成功登录过后台的 IP 永远不会被自动封禁
@@ -347,22 +386,29 @@ function alertUnexpectedError(where, error) {
 
 async function recordThrottledLoginAttempt(ip, reason) {
     // 全站锁定时所有人都被拒，不计入，免得误封管理员
-    if (reason !== 'locked' || ipBan.isLoopback(ip)) return;
+    if (reason !== 'locked') return;
+    await noteAutoBanSignal(ip, 'throttled');
+}
+
+async function noteAutoBanSignal(ip, signal) {
+    if (ipBan.isLoopback(ip)) return;
     const cidr = ipBan.autoBanCidrForIp(ip);
     if (!cidr) return;
+    const rule = AUTO_BAN.signals[signal];
+    const counterKey = `${signal}|${cidr}`;
     const now = Date.now();
-    let entry = autoBanCounters.get(cidr);
+    let entry = autoBanCounters.get(counterKey);
     if (!entry || now - entry.firstAt > AUTO_BAN.windowMs) {
         entry = { count: 0, firstAt: now, banned: false };
     }
     entry.count += 1;
-    autoBanCounters.set(cidr, entry);
+    autoBanCounters.set(counterKey, entry);
     if (autoBanCounters.size > 10000) {
         for (const [key, value] of autoBanCounters) {
             if (now - value.firstAt > AUTO_BAN.windowMs) autoBanCounters.delete(key);
         }
     }
-    if (entry.count < AUTO_BAN.threshold || entry.banned) return;
+    if (entry.count < rule.threshold || entry.banned) return;
     entry.banned = true;
     const attempts = entry.count;
     if (coversTrustedAdminIp(cidr)) {
@@ -371,7 +417,7 @@ async function recordThrottledLoginAttempt(ip, reason) {
     }
     await store.saveIpBan({
         cidr,
-        reason: `自动封禁：后台登录被限流后 15 分钟内仍尝试 ${attempts} 次`,
+        reason: `自动封禁：${rule.label} ${attempts} 次`,
         source: 'auto',
         expiresAt: new Date(now + AUTO_BAN.durationMs)
     });
@@ -379,9 +425,9 @@ async function recordThrottledLoginAttempt(ip, reason) {
     console.warn(`[IPBan] 已自动封禁 ${cidr} 7 天`);
     alertSecurity('autoban', '🚫 已自动封禁攻击来源', [
         `来源：${cidr}`,
-        `原因：后台登录被限流后 15 分钟内仍尝试 ${attempts} 次`,
+        `原因：${rule.label} ${attempts} 次`,
         '时长：7 天，可在后台“登录日志 → IP 封禁”解封'
-    ], { windowMs: 10 * 60 * 1000, max: 5 });
+    ], { windowMs: 30 * 60 * 1000, max: 1 });
 }
 
 // 公开 CDK 接口按真实 IP 限频。码空间 2^75 猜不中，这里防的是批量查询把数据库连接刷满、拖慢真实客户
@@ -561,6 +607,15 @@ function logTaskChunk(jobKey, attempt, source, chunk) {
 process.on('SIGINT', () => { cleanupProcesses(); markCleanShutdown(); process.exit(0); });
 process.on('SIGTERM', () => { cleanupProcesses(); markCleanShutdown(); process.exit(0); });
 process.on('exit', () => cleanupProcesses());
+// 单个连接抛出的异常不该带走整个进程：正在进行的客户开通任务会被打断，内存里的状态也会丢。
+// 只有端口被占用这类启动错误才退出
+process.on('uncaughtException', (error) => {
+    console.error('[uncaughtException]', error?.stack || error);
+    if (error?.code === 'EADDRINUSE' || error?.code === 'EACCES') {
+        process.exit(1);
+    }
+    alertUnexpectedError('uncaughtException', error);
+});
 // 兜底：漏网的 rejection 只记录，不再让进程退出
 process.on('unhandledRejection', (reason) => {
     console.error('[unhandledRejection]', reason instanceof Error ? reason.stack : reason);
@@ -1590,8 +1645,11 @@ app.post('/api/admin/login', async (req, res) => {
         const passwordOk = verifyPassword(password, authConfig.passwordHash);
 
         if (!emailOk || !passwordOk) {
-            adminAuth.recordLoginFailure(rate.key, rate.entry);
+            adminAuth.recordLoginFailure(rate.key, rate.entry, { countGlobal: emailOk });
             noteRejectedAdminLogin(clientMeta.ip);
+            if (!emailOk) {
+                noteAutoBanSignal(clientMeta.ip, 'wrong_email').catch((error) => console.warn(`[IPBan] 自动封禁失败: ${error.message}`));
+            }
             await logAdminSecurityEvent('login_failed', {
                 ...clientMeta,
                 email,
@@ -2078,7 +2136,13 @@ app.get('/api/admin/ip-bans', async (req, res) => {
         success: true,
         bans: rows.map(formatIpBanRow),
         yourIp: getClientIp(req),
-        trustedIps: ipBanState.trustedIps
+        trustedIps: ipBanState.trustedIps,
+        activeCount: ipBanState.matcher.size,
+        tor: {
+            count: torExitState.ips.size,
+            hits: torExitState.hits,
+            updatedAt: torExitState.updatedAt ? new Date(torExitState.updatedAt).toISOString() : null
+        }
     });
 });
 
@@ -5601,6 +5665,28 @@ async function start() {
         flushIpBanHits().catch((error) => console.warn(`[IPBan] 写入命中次数失败: ${error.message}`));
     }, IP_BAN_REFRESH_MS).unref();
 
+    loadCachedTorExitList();
+    const updateTorExitList = () => refreshTorExitList()
+        .then(() => console.log(`🚫 [IPBan] Tor 出口列表已更新，共 ${torExitState.ips.size} 个`))
+        .catch((error) => console.warn(`[IPBan] Tor 出口列表更新失败，继续使用旧列表（${torExitState.ips.size} 个）: ${error.message}`));
+    updateTorExitList();
+    setInterval(updateTorExitList, TOR_EXIT_REFRESH_MS).unref();
+
+    try {
+        const { email } = await store.getAdminAuthConfig();
+        const adminEmail = adminAuth.normalizeEmail(email);
+        const failures = await store.listRecentLoginFailures(30);
+        adminAuth.restoreLoginFailures(failures.map((row) => ({
+            ip: row.ip,
+            scope: row.event === '2fa_failed' ? '2fa' : 'login',
+            at: new Date(row.created_at).getTime(),
+            countGlobal: row.event === '2fa_failed' || adminAuth.normalizeEmail(row.admin_email) === adminEmail
+        })));
+        console.log(`🔒 [AdminAuth] 已从登录日志恢复 ${failures.length} 条失败记录`);
+    } catch (error) {
+        console.error(`❌ [AdminAuth] 恢复登录失败记录失败: ${error.message}`);
+    }
+
     try {
         const poolInfo = await syncBrowserPoolModeFromStore();
         if (poolInfo.enabled && poolInfo.initialized !== false) {
@@ -5657,8 +5743,12 @@ async function start() {
     });
 
     // WebSocket Server Setup
-    const wss = new WebSocket.Server({ server });
+    // 客户端只发心跳和订阅，消息很小；默认上限 100MB 没有必要
+    const wss = new WebSocket.Server({ server, maxPayload: 64 * 1024 });
+    wss.on('error', (error) => console.warn(`[WebSocket] 服务错误: ${error.message}`));
     wss.on('connection', (ws, req) => {
+        // 必须监听 error：不符合协议的帧（如未加掩码）会在连接上触发 error，没人监听就会让整个进程崩溃（2026-11-02 被利用）
+        ws.on('error', () => ws.terminate());
         if (findBannedSource(req)) {
             ws.close(1008, 'forbidden');
             return;
@@ -5677,7 +5767,7 @@ async function start() {
                     }
                     return;
                 }
-                if (data.type === 'subscribe' && data.jobKey) {
+                if (data.type === 'subscribe' && typeof data.jobKey === 'string' && data.jobKey.length <= 128) {
                     if (currentJobKey && currentJobKey !== data.jobKey) {
                         unsubscribeTaskClient(currentJobKey, ws);
                     }

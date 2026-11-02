@@ -167,7 +167,18 @@ function autoBanCidrForIp(ip) {
     return `${formatNetwork(maskNetwork(parsed.value, parsed.family, prefix), parsed.family)}/${prefix}`;
 }
 
+// 解析 Tor 官方出口列表（每行一个 IP），非法行直接丢弃
+function parseTorExitList(text) {
+    const ips = new Set();
+    for (const line of String(text || '').split(/\r?\n/)) {
+        const address = stripZone(line);
+        if (address && net.isIP(address)) ips.add(address);
+    }
+    return ips;
+}
+
 module.exports = {
+    parseTorExitList,
     MIN_BAN_PREFIX,
     AUTO_BAN_IPV6_PREFIX,
     normalizeBanCidr,

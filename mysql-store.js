@@ -419,12 +419,31 @@ async function ensureIpBanTable() {
     `);
 }
 
+// 后台列表只取最近 300 条；拦截用的规则走 listActiveIpBanRules，不受这个上限影响
 async function listIpBans() {
     return runQuery(
         `SELECT id, cidr, reason, source, hits, last_hit_at, expires_at, created_at
          FROM ip_bans
          ORDER BY created_at DESC, id DESC
-         LIMIT 1000`
+         LIMIT 300`
+    );
+}
+
+async function listActiveIpBanRules() {
+    return runQuery(
+        `SELECT id, cidr, expires_at FROM ip_bans
+         WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP`
+    );
+}
+
+async function listRecentLoginFailures(minutes = 30) {
+    return runQuery(
+        `SELECT ip, event, admin_email, created_at FROM admin_login_logs
+         WHERE event IN ('login_failed', '2fa_failed') AND ip IS NOT NULL AND ip <> ''
+           AND created_at >= NOW() - INTERVAL ? MINUTE
+         ORDER BY id ASC
+         LIMIT 20000`,
+        [Math.max(1, Number(minutes) || 30)]
     );
 }
 
@@ -4583,6 +4602,8 @@ module.exports = {
     insertCdks,
     deleteCdk,
     listIpBans,
+    listActiveIpBanRules,
+    listRecentLoginFailures,
     saveIpBan,
     deleteIpBan,
     addIpBanHits,

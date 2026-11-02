@@ -62,3 +62,10 @@ describe('ban helpers', () => {
         expect(ipBan.cidrContainsIp('2a01:e5c0:2e15::/48', '1.2.3.4')).toBe(false);
     });
 });
+
+describe('parseTorExitList', () => {
+    it('keeps valid addresses and drops everything else', () => {
+        const ips = ipBan.parseTorExitList('185.220.101.4\r\n\n<html>\n2001:67C::1\nnot-an-ip\n');
+        expect([...ips]).toEqual(['185.220.101.4', '2001:67c::1']);
+    });
+});
