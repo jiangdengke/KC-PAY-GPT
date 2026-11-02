@@ -433,7 +433,13 @@
             }
 
             const headers = { ...(options.headers || {}), Authorization: `Bearer ${token}` };
-            const response = await fetch(url, { ...options, headers });
+            let response;
+            try {
+                response = await fetch(url, { ...options, headers });
+            } catch (_) {
+                // Cloudflare Access 会话过期后接口会跳转到它的登录页，fetch 只报网络错误，刷新页面才能重新验证
+                throw new Error('网络错误或 Cloudflare 验证已过期，请刷新页面');
+            }
             if (response.status === 401) {
                 redirectToLogin();
                 throw new Error('登录已失效');

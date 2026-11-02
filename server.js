@@ -9,6 +9,7 @@ const WebSocket = require('ws');
 const axios = require('axios');
 const store = require('./mysql-store');
 const ipBan = require('./ip-ban');
+const cfAccess = require('./cf-access');
 const runtimeLog = require('./runtime-log');
 const { REGION_CONFIG, isSupportedRegion, getPlanTypeLabel } = require('./region-config');
 const taxFreeAddress = require('./tax-free-address');
@@ -1634,6 +1635,22 @@ app.get('/admin', (req, res) => {
 app.get(['/admin-login', '/admin-login/', '/admin-login.html'], (req, res) => {
     res.status(404).type('text/plain').send('Not Found');
 });
+
+// 启用 Cloudflare Access 后，后台接口必须带它签发的令牌：只拦边缘不够，请求可能因配置失误或绕过边缘直接到达这里
+// CF_ACCESS_TEAM_DOMAIN 和 CF_ACCESS_AUD 都留空时不启用；CF_ACCESS_CERTS_URL 仅供本地测试
+app.use('/api/admin', cfAccess.createAccessGuard({
+    teamDomain: process.env.CF_ACCESS_TEAM_DOMAIN,
+    audience: process.env.CF_ACCESS_AUD,
+    certsUrl: process.env.CF_ACCESS_CERTS_URL,
+    fetchCerts: (url) => axios.get(url, { timeout: 10000 }).then((response) => response.data),
+    onReject: (reason, req) => {
+        alertSecurity('cf-access-reject', '🛡️ 有请求绕过 Cloudflare Access 到达后台接口', [
+            `来源：${getClientIp(req)}`,
+            `路径：${req.originalUrl.split('?')[0].slice(0, 100)}`,
+            `原因：${reason}`
+        ], { windowMs: 60 * 60 * 1000, max: 1 });
+    }
+}));
 
 app.post('/api/admin/login', async (req, res) => {
     const email = adminAuth.normalizeEmail(req.body?.email);
