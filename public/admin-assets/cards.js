@@ -11,6 +11,7 @@ let cardPoolList = [];
 let orbitcardUsageList = [];
 let orbitcardShowSensitive = false;
 const orbitcardExpandedHistoryIds = new Set();
+const DEFAULT_ORBITCARD_CARD_STATUS = 'active';
 const orbitcardUsageState = {
     page: 1,
     pageSize: 20,
@@ -19,7 +20,7 @@ const orbitcardUsageState = {
     filters: {
         keyword: '',
         planType: '',
-        cardStatus: '',
+        cardStatus: DEFAULT_ORBITCARD_CARD_STATUS,
         rechargeStatus: ''
     }
 };
@@ -429,10 +430,12 @@ function applyOrbitcardUsageFilters(event) {
 }
 
 function resetOrbitcardUsageFilters() {
-    for (const id of ['orbitcard_usage_keyword', 'orbitcard_usage_plan', 'orbitcard_usage_card_status', 'orbitcard_usage_recharge_status']) {
+    for (const id of ['orbitcard_usage_keyword', 'orbitcard_usage_plan', 'orbitcard_usage_recharge_status']) {
         const element = document.getElementById(id);
         if (element) element.value = '';
     }
+    const statusSelect = document.getElementById('orbitcard_usage_card_status');
+    if (statusSelect) statusSelect.value = DEFAULT_ORBITCARD_CARD_STATUS;
     orbitcardUsageState.filters = readOrbitcardUsageFilters();
     return loadOrbitcardUsage(false, false, 1);
 }
@@ -532,9 +535,8 @@ function renderOrbitcardQuickTabs() {
         container.innerHTML = '';
         return;
     }
-    const current = orbitcardUsageState.filters.cardStatus || '';
+    const current = orbitcardUsageState.filters.cardStatus ?? DEFAULT_ORBITCARD_CARD_STATUS;
     const tabs = [
-        { value: '', label: '全部', count: s.total, tone: 'neutral' },
         { value: 'active', label: '有效卡', count: s.active, tone: 'neutral' },
         {
             value: 'reusable',
@@ -545,7 +547,8 @@ function renderOrbitcardQuickTabs() {
         },
         { value: 'unassigned', label: '待绑定', count: s.unassigned, tone: 'warning' },
         { value: 'retired', label: '已退役', count: s.retired, tone: 'muted' },
-        { value: 'provider_deleted', label: '上游已删除', count: s.providerDeleted, tone: 'danger' }
+        { value: 'provider_deleted', label: '上游已删除', count: s.providerDeleted, tone: 'danger' },
+        { value: '', label: '全部', count: s.total, tone: 'neutral' }
     ];
     container.innerHTML = tabs.map((tab) => {
         const isActive = current === tab.value;
@@ -572,7 +575,17 @@ function renderOrbitcardUsageTable() {
     if (!tbody) return;
     renderOrbitcardQuickTabs();
     if (!orbitcardUsageList.length) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-dim); padding:40px 0;">${Object.values(orbitcardUsageState.filters).some(Boolean) ? '暂无符合条件的 Orbitcard 用卡记录' : '暂无 Orbitcard 用卡记录，请点击“同步卡台卡片”'}</td></tr>`;
+        const onlyDefaultActive = orbitcardUsageState.filters.cardStatus === DEFAULT_ORBITCARD_CARD_STATUS
+            && !orbitcardUsageState.filters.keyword
+            && !orbitcardUsageState.filters.planType
+            && !orbitcardUsageState.filters.rechargeStatus;
+        const hiddenDeleted = Number(orbitcardUsageState.summary?.providerDeleted || 0);
+        const emptyText = onlyDefaultActive && hiddenDeleted > 0
+            ? `当前暂无有效卡片（已默认隐藏 ${hiddenDeleted} 张上游已删除记录，可点击上方“全部”查看）`
+            : (Object.values(orbitcardUsageState.filters).some(Boolean)
+                ? '暂无符合条件的 Orbitcard 用卡记录'
+                : '暂无 Orbitcard 用卡记录，请点击“同步卡台卡片”');
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-dim); padding:40px 0;">${emptyText}</td></tr>`;
         lucide.createIcons();
         return;
     }
