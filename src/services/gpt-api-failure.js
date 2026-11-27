@@ -148,6 +148,7 @@ function redactSensitiveText(value, maxLength = MAX_FIELD_LENGTH, options = {}) 
         text = text.replace(/(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g, '[已隐藏卡号]');
     }
     text = protectedUrls.restore(text)
+        // eslint-disable-next-line no-control-regex
         .replace(/[\u0000-\u001f\u007f]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
@@ -243,9 +244,9 @@ function sanitizeErrorReason(value, maxLength = MAX_REASON_LENGTH) {
     if (!raw) return '';
 
     const bracketTag = raw.match(/^\[(?:[A-Z][A-Z0-9_.:/-]{2,}|(?:Error|Warn(?:ing)?|HTTP)[^\]]*)\](?=\s|$)/);
-    let objectIndex = raw.search(/[\[{]/);
+    let objectIndex = raw.search(/[[{]/);
     if (objectIndex === 0 && bracketTag) {
-        const tailIndex = raw.slice(bracketTag[0].length).search(/[\[{]/);
+        const tailIndex = raw.slice(bracketTag[0].length).search(/[[{]/);
         objectIndex = tailIndex < 0 ? -1 : bracketTag[0].length + tailIndex;
     }
     if (objectIndex < 0) return redactSensitiveText(raw, maxLength);

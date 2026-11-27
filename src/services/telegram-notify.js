@@ -1,7 +1,7 @@
 'use strict';
 
 const axios = require('axios');
-const { getPlanLabel } = require('./plan-registry');
+const { getPlanLabel } = require('../config/plan-registry');
 const { MAX_REASON_LENGTH, redactSensitiveText } = require('./gpt-api-failure');
 
 const METADATA_REDACTION_OPTIONS = Object.freeze({ skipPanHeuristic: true });

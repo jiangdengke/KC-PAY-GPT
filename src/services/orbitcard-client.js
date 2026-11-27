@@ -10,7 +10,7 @@ const {
     getDefaultReuseLimit,
     getDefaultSafetyMargin,
     getPlanLabel
-} = require('./plan-registry');
+} = require('../config/plan-registry');
 
 const DEFAULT_BASE_URL = 'https://orbitcard.cc';
 

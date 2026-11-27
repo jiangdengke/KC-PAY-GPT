@@ -1,10 +1,9 @@
 'use strict';
 
 const axios = require('axios');
-const { request: playwrightRequest } = require('playwright');
-const { extractProfileFromToken } = require('./session-auth');
-const { preparePlaywrightProxy } = require('./playwright-proxy');
-const { normalizeCredentialPlan, getPlanLabel } = require('./plan-registry');
+const { ProxyAgent } = require('proxy-agent');
+const { extractProfileFromToken, decodeJwtPart } = require('../utils/session-parser');
+const { normalizeCredentialPlan, getPlanLabel } = require('../config/plan-registry');
 
 const CHECK_V4_BASE = 'https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27';
 const CANCEL_SUBSCRIPTION_URL = 'https://chatgpt.com/backend-api/subscriptions/cancel';
@@ -152,12 +151,6 @@ function buildCheckHeaders(accessToken) {
     };
 }
 
-function decodeJwtPart(part) {
-    const normalized = String(part || '').replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized.padEnd(normalized.length + ((4 - normalized.length % 4) % 4), '=');
-    return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
-}
-
 function validateSessionTokenForQuery(token) {
     const value = String(token || '').trim();
     if (!value) {
@@ -265,124 +258,71 @@ function isCloudflareBlock(status, data) {
     return /cloudflare|cf-ray|attention required|just a moment|cf_chl/i.test(text);
 }
 
-async function fetchAccountCheckWithPlaywright(accessToken, timezoneOffsetMin = 0) {
-    const url = buildCheckUrl(timezoneOffsetMin);
-    const proxyValue = String(process.env.PROXY || '').trim();
-    const { proxyConfig, cleanup } = await preparePlaywrightProxy(proxyValue);
-    const ctx = await playwrightRequest.newContext({
-        userAgent: USER_AGENT,
-        proxy: proxyConfig || undefined,
-        extraHTTPHeaders: buildCheckHeaders(accessToken)
-    });
-
-    try {
-        const response = await ctx.get(url, { timeout: 20000 });
-        const status = response.status();
-        let data;
-        try {
-            data = await response.json();
-        } catch (_) {
-            data = await response.text().catch(() => '');
-        }
-        return { status, data, via: 'playwright' };
-    } finally {
-        await ctx.dispose().catch(() => {});
-        await cleanup().catch(() => {});
+function buildProxyAxiosOptions(proxyUrl) {
+    const normalized = String(proxyUrl || '').trim();
+    if (!normalized) {
+        return {};
     }
+    const agent = new ProxyAgent({ getProxyForUrl: () => normalized });
+    return {
+        httpAgent: agent,
+        httpsAgent: agent,
+        proxy: false,
+        _agent: agent
+    };
 }
 
-async function fetchAccountCheckWithAxios(accessToken, timezoneOffsetMin = 0) {
-    const url = buildCheckUrl(timezoneOffsetMin);
-    const response = await axios.get(url, {
-        headers: buildCheckHeaders(accessToken),
-        timeout: 20000,
-        validateStatus: () => true
-    });
-    return { status: response.status, data: response.data, via: 'axios' };
-}
-
-async function fetchAccountCheck(accessToken, timezoneOffsetMin = 0) {
-    let lastError = null;
-
-    try {
-        const playwrightResult = await fetchAccountCheckWithPlaywright(accessToken, timezoneOffsetMin);
-        if (playwrightResult.status === 200 || playwrightResult.status === 401) {
-            return playwrightResult;
-        }
-        lastError = playwrightResult;
-    } catch (error) {
-        lastError = { status: 0, data: error.message, via: 'playwright', error };
-    }
-
-    try {
-        const axiosResult = await fetchAccountCheckWithAxios(accessToken, timezoneOffsetMin);
-        if (axiosResult.status === 200 || axiosResult.status === 401) {
-            return axiosResult;
-        }
-        if (!lastError || lastError.status !== 200) {
-            lastError = axiosResult;
-        }
-    } catch (error) {
-        if (!lastError) {
-            lastError = { status: 0, data: error.message, via: 'axios', error };
-        }
-    }
-
-    return lastError || { status: 502, data: 'unknown error', via: 'none' };
-}
-
-async function requestOpenAiJson(accessToken, { method = 'GET', url, body = null }) {
+async function requestWithAxios(accessToken, { method = 'GET', url, body = null, proxyUrl = '' }) {
     const headers = buildCheckHeaders(accessToken);
-    const proxyValue = String(process.env.PROXY || '').trim();
-    let lastError = null;
-
+    const requestHeaders = body != null ? { ...headers, 'Content-Type': 'application/json' } : headers;
+    const proxyOpts = buildProxyAxiosOptions(proxyUrl);
     try {
-        const { proxyConfig, cleanup } = await preparePlaywrightProxy(proxyValue);
-        const ctx = await playwrightRequest.newContext({
-            userAgent: USER_AGENT,
-            proxy: proxyConfig || undefined,
-            extraHTTPHeaders: headers
-        });
-        try {
-            const response = await ctx.fetch(url, {
-                method,
-                timeout: 20000,
-                headers: body != null ? { ...headers, 'Content-Type': 'application/json' } : headers,
-                data: body != null ? body : undefined
-            });
-            const status = response.status();
-            let data;
-            try {
-                data = await response.json();
-            } catch (_) {
-                data = await response.text().catch(() => '');
-            }
-            if (status >= 200 && status < 300 || status === 401) {
-                return { status, data, via: 'playwright' };
-            }
-            lastError = { status, data, via: 'playwright' };
-        } finally {
-            await ctx.dispose().catch(() => {});
-            await cleanup().catch(() => {});
-        }
-    } catch (error) {
-        lastError = { status: 0, data: error.message, via: 'playwright', error };
-    }
-
-    try {
-        const response = await axios({
+        const response = await axios.request({
             method,
             url,
-            headers: body != null ? { ...headers, 'Content-Type': 'application/json' } : headers,
+            headers: requestHeaders,
             data: body != null ? body : undefined,
+            httpAgent: proxyOpts.httpAgent,
+            httpsAgent: proxyOpts.httpsAgent,
+            proxy: proxyOpts.proxy,
             timeout: 20000,
             validateStatus: () => true
         });
-        if (response.status >= 200 && response.status < 300 || response.status === 401) {
-            return { status: response.status, data: response.data, via: 'axios' };
+        return {
+            status: response.status,
+            data: response.data,
+            via: proxyUrl ? 'axios-proxy' : 'axios'
+        };
+    } finally {
+        if (proxyOpts._agent && typeof proxyOpts._agent.destroy === 'function') {
+            try { proxyOpts._agent.destroy(); } catch (_) { /* ignore */ }
+        }
+    }
+}
+
+async function requestOpenAiJson(accessToken, { method = 'GET', url, body = null, proxy = '' }) {
+    const proxyValue = String(proxy || process.env.PROXY || '').trim();
+    let lastError = null;
+
+    if (proxyValue) {
+        try {
+            const proxyResult = await requestWithAxios(accessToken, { method, url, body, proxyUrl: proxyValue });
+            if ((proxyResult.status >= 200 && proxyResult.status < 300) || proxyResult.status === 401) {
+                return proxyResult;
+            }
+            lastError = proxyResult;
+        } catch (error) {
+            lastError = { status: 0, data: error.message, via: 'axios-proxy', error };
+        }
+    }
+
+    try {
+        const directResult = await requestWithAxios(accessToken, { method, url, body });
+        if ((directResult.status >= 200 && directResult.status < 300) || directResult.status === 401) {
+            return directResult;
         }
         if (!lastError || (lastError.status !== 200 && lastError.status !== 401)) {
-            lastError = { status: response.status, data: response.data, via: 'axios' };
+            lastError = directResult;
         }
     } catch (error) {
         if (!lastError) {
@@ -401,6 +341,82 @@ function isAppStoreOrigin(channelRaw) {
         || raw.includes('android');
 }
 
+function mapCheckError(status, data) {
+    const body = normalizeResponseBody(data);
+
+    if (status === 401) {
+        return { statusCode: 401, error: 'Session 无效或已过期，请重新获取 Session' };
+    }
+
+    if (status === 403) {
+        if (isCloudflareBlock(status, body)) {
+            return {
+                statusCode: 403,
+                error: 'OpenAI 风控拦截（Cloudflare），请稍后重试或在后台代理池配置住宅代理'
+            };
+        }
+        return {
+            statusCode: 403,
+            error: 'OpenAI 拒绝访问（403），请确认 Session 来自 chatgpt.com 且 accessToken 未过期'
+        };
+    }
+
+    if (!status) {
+        return { statusCode: 502, error: `无法连接 OpenAI 订阅接口：${String(body || 'network error')}` };
+    }
+
+    const detail = typeof body === 'string'
+        ? body.slice(0, 200)
+        : JSON.stringify(body || {}).slice(0, 200);
+    return {
+        statusCode: status || 502,
+        error: `OpenAI 返回异常 (${status})${detail ? `：${detail}` : ''}`
+    };
+}
+
+async function querySubscriptionBySession(accessToken, options = {}) {
+    const token = String(accessToken || '').trim();
+    if (!token) {
+        return { ok: false, statusCode: 400, error: '缺少 AccessToken' };
+    }
+
+    const tokenProfile = extractProfileFromToken(token);
+    const profile = {
+        ...tokenProfile,
+        email: String(options.email || tokenProfile.email || '').trim()
+    };
+
+    let response;
+    try {
+        response = await requestOpenAiJson(token, {
+            method: 'GET',
+            url: buildCheckUrl(options.timezoneOffsetMin),
+            proxy: options.proxy
+        });
+    } catch (error) {
+        return {
+            ok: false,
+            statusCode: 502,
+            error: `无法连接 OpenAI 订阅接口：${error.message}`
+        };
+    }
+
+    const body = normalizeResponseBody(response.data);
+    if (response.status !== 200) {
+        const mapped = mapCheckError(response.status, body);
+        return { ok: false, ...mapped };
+    }
+
+    if (!body || typeof body !== 'object') {
+        return { ok: false, statusCode: 502, error: 'OpenAI 返回数据格式异常' };
+    }
+
+    return {
+        ok: true,
+        data: parseAccountCheckResponse(body, profile)
+    };
+}
+
 async function cancelAutoRenew(accessToken, options = {}) {
     const token = String(accessToken || '').trim();
     if (!token) {
@@ -415,7 +431,8 @@ async function cancelAutoRenew(accessToken, options = {}) {
 
     const checkResult = await querySubscriptionBySession(token, {
         timezoneOffsetMin: options.timezoneOffsetMin,
-        email: options.email || profile.email || ''
+        email: options.email || profile.email || '',
+        proxy: options.proxy
     });
     if (!checkResult.ok) {
         return checkResult;
@@ -450,7 +467,8 @@ async function cancelAutoRenew(accessToken, options = {}) {
         response = await requestOpenAiJson(token, {
             method: 'POST',
             url: CANCEL_SUBSCRIPTION_URL,
-            body: { account_id: accountId }
+            body: { account_id: accountId },
+            proxy: options.proxy
         });
     } catch (error) {
         return {
@@ -481,7 +499,8 @@ async function cancelAutoRenew(accessToken, options = {}) {
 
     const verify = await querySubscriptionBySession(token, {
         timezoneOffsetMin: options.timezoneOffsetMin,
-        email: options.email || profile.email || ''
+        email: options.email || profile.email || '',
+        proxy: options.proxy
     });
 
     return {
@@ -511,7 +530,8 @@ async function resumeAutoRenew(accessToken, options = {}) {
 
     const checkResult = await querySubscriptionBySession(token, {
         timezoneOffsetMin: options.timezoneOffsetMin,
-        email: options.email || profile.email || ''
+        email: options.email || profile.email || '',
+        proxy: options.proxy
     });
     if (!checkResult.ok) {
         return checkResult;
@@ -546,7 +566,8 @@ async function resumeAutoRenew(accessToken, options = {}) {
         response = await requestOpenAiJson(token, {
             method: 'POST',
             url: RESUME_SUBSCRIPTION_URL,
-            body: { account_id: accountId }
+            body: { account_id: accountId },
+            proxy: options.proxy
         });
     } catch (error) {
         return {
@@ -577,7 +598,8 @@ async function resumeAutoRenew(accessToken, options = {}) {
 
     const verify = await querySubscriptionBySession(token, {
         timezoneOffsetMin: options.timezoneOffsetMin,
-        email: options.email || profile.email || ''
+        email: options.email || profile.email || '',
+        proxy: options.proxy
     });
 
     return {
@@ -590,77 +612,6 @@ async function resumeAutoRenew(accessToken, options = {}) {
                 ? '已成功开启自动续费'
                 : '已提交开启自动续费请求，请稍后刷新确认状态'
         }
-    };
-}
-
-function mapCheckError(status, data) {
-    const body = normalizeResponseBody(data);
-
-    if (status === 401) {
-        return { statusCode: 401, error: 'Session 无效或已过期，请重新获取 Session' };
-    }
-
-    if (status === 403) {
-        if (isCloudflareBlock(status, body)) {
-            return {
-                statusCode: 403,
-                error: 'OpenAI 风控拦截（Cloudflare），请稍后重试或在后台配置住宅代理 PROXY'
-            };
-        }
-        return {
-            statusCode: 403,
-            error: 'OpenAI 拒绝访问（403），请确认 Session 来自 chatgpt.com 且 accessToken 未过期'
-        };
-    }
-
-    if (!status) {
-        return { statusCode: 502, error: `无法连接 OpenAI 订阅接口：${String(body || 'network error')}` };
-    }
-
-    const detail = typeof body === 'string'
-        ? body.slice(0, 200)
-        : JSON.stringify(body || {}).slice(0, 200);
-    return {
-        statusCode: status || 502,
-        error: `OpenAI 返回异常 (${status})${detail ? `：${detail}` : ''}`
-    };
-}
-
-async function querySubscriptionBySession(accessToken, options = {}) {
-    const token = String(accessToken || '').trim();
-    if (!token) {
-        return { ok: false, statusCode: 400, error: '缺少 AccessToken' };
-    }
-
-    const profile = {
-        ...extractProfileFromToken(token),
-        email: String(options.email || extractProfileFromToken(token).email || '').trim()
-    };
-
-    let response;
-    try {
-        response = await fetchAccountCheck(token, options.timezoneOffsetMin);
-    } catch (error) {
-        return {
-            ok: false,
-            statusCode: 502,
-            error: `无法连接 OpenAI 订阅接口：${error.message}`
-        };
-    }
-
-    const body = normalizeResponseBody(response.data);
-    if (response.status !== 200) {
-        const mapped = mapCheckError(response.status, body);
-        return { ok: false, ...mapped };
-    }
-
-    if (!body || typeof body !== 'object') {
-        return { ok: false, statusCode: 502, error: 'OpenAI 返回数据格式异常' };
-    }
-
-    return {
-        ok: true,
-        data: parseAccountCheckResponse(body, profile)
     };
 }
 

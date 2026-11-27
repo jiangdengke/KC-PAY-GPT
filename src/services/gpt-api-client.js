@@ -20,7 +20,7 @@ const {
     CANONICAL_PLAN_TYPES,
     getPlanLabel,
     resolveDesolatePlanCode
-} = require('./plan-registry');
+} = require('../config/plan-registry');
 
 const DEFAULT_BASE_URL = 'https://kc.vpss.eu.cc/';
 const DEFAULT_OPEN_BASE_URL = 'https://recharge.desolate.run/api/v1/open';
