@@ -376,10 +376,14 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
                     });
                 }
             }
+            const summary = typeof store.getOrbitcardUsageSummary === 'function'
+                ? await store.getOrbitcardUsageSummary()
+                : null;
             return res.json({
                 success: true,
                 cards,
                 total,
+                summary,
                 page,
                 pageSize,
                 auto_create_card: Boolean(cfg.orbitcard_auto_create_card),

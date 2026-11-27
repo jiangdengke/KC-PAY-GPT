@@ -419,13 +419,104 @@
             display: none !important;
         }
 
+        .orbitcard-usage-meta-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 0 0 12px;
+            padding: 9px 12px;
+            border: 1px solid var(--divider);
+            border-radius: 10px;
+            background: var(--surface-soft);
+        }
+
+        .orbitcard-mode-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 3px 9px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .orbitcard-mode-pill.is-manual {
+            color: #b45309;
+            background: rgba(245, 158, 11, 0.14);
+        }
+
+        .orbitcard-mode-pill.is-auto {
+            color: #1d4ed8;
+            background: rgba(37, 99, 235, 0.12);
+        }
+
+        .orbitcard-usage-hint-text {
+            font-size: 12.5px;
+            color: var(--text-dim);
+            line-height: 1.5;
+        }
+
+        .orbitcard-quick-tabs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 0 0 12px;
+        }
+
+        .orbitcard-quick-tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 11px;
+            border: 1px solid var(--border-strong);
+            border-radius: 999px;
+            background: var(--surface);
+            color: var(--text-secondary);
+            font-size: 12.5px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+        }
+
+        .orbitcard-quick-tab:hover {
+            border-color: var(--primary);
+            color: var(--text-main);
+        }
+
+        .orbitcard-quick-tab.is-active {
+            border-color: var(--primary);
+            background: rgba(37, 99, 235, 0.1);
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .orbitcard-quick-count {
+            padding: 1px 6px;
+            border-radius: 999px;
+            background: var(--surface-soft);
+            font-size: 11.5px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .orbitcard-quick-tab.is-active .orbitcard-quick-count {
+            background: rgba(37, 99, 235, 0.16);
+            color: var(--primary);
+        }
+
+        .orbitcard-quick-extra {
+            font-size: 11px;
+            color: #047857;
+            font-weight: 600;
+        }
+
         .orbitcard-usage-filters {
             display: grid;
-            grid-template-columns: minmax(260px, 2fr) repeat(3, minmax(150px, 1fr)) auto;
+            grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(135px, 1fr)) auto;
             gap: 8px;
             align-items: center;
-            margin: 0 0 16px;
-            padding: 12px;
+            margin: 0 0 14px;
+            padding: 10px 12px;
             border: 1px solid var(--divider);
             border-radius: 10px;
             background: var(--surface-soft);
@@ -443,7 +534,26 @@
         }
 
         .orbitcard-usage-table {
-            min-width: 1520px;
+            width: 100%;
+            min-width: 980px;
+        }
+
+        .orbitcard-usage-table th,
+        .orbitcard-usage-table td {
+            padding: 12px 12px;
+            vertical-align: middle;
+        }
+
+        .orbitcard-usage-table .status-badge {
+            white-space: nowrap;
+        }
+
+        .orbitcard-row-muted {
+            opacity: 0.66;
+        }
+
+        .orbitcard-row-muted:hover {
+            opacity: 0.92;
         }
 
         @media (max-width: 1100px) {
@@ -473,55 +583,296 @@
             }
         }
 
-        .orbitcard-sensitive-details {
+        .orbitcard-card-cell {
             display: flex;
             flex-direction: column;
-            gap: 3px;
+            gap: 4px;
             min-width: 0;
-            font-size: 12px;
         }
 
-        .orbitcard-sensitive-details code {
-            width: fit-content;
-            max-width: 100%;
-            overflow-wrap: anywhere;
-            word-break: break-all;
-        }
-
-        .orbitcard-sensitive-details span,
-        .orbitcard-product-code {
-            color: var(--text-dim);
-            font-size: 11px;
-        }
-
-        .orbitcard-actions,
-        .orbitcard-plan-actions {
+        .orbitcard-card-top {
             display: flex;
             align-items: center;
-            justify-content: center;
             gap: 6px;
             flex-wrap: wrap;
         }
 
-        .orbitcard-plan-select {
-            min-width: 92px;
-            padding: 5px 6px;
-            border: 1px solid var(--border-strong);
+        .orbitcard-id-chip {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 11.5px;
+            font-weight: 600;
+            color: var(--primary);
+            background: rgba(37, 99, 235, 0.08);
+            padding: 1px 6px;
+            border-radius: 5px;
+        }
+
+        .orbitcard-product-tag {
+            font-size: 11px;
+            color: var(--text-dim);
+            background: var(--surface-soft);
+            border: 1px solid var(--divider);
+            padding: 1px 6px;
+            border-radius: 5px;
+            max-width: 140px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .orbitcard-card-number-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: var(--text-main);
+            cursor: pointer;
+            text-align: left;
+            width: fit-content;
+            max-width: 100%;
+        }
+
+        .orbitcard-card-number-btn code {
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            color: var(--text-main);
+            background: transparent;
+            padding: 0;
+            white-space: nowrap;
+        }
+
+        .orbitcard-card-number-btn svg {
+            width: 13px;
+            height: 13px;
+            color: var(--text-dim);
+            opacity: 0.65;
+            flex-shrink: 0;
+        }
+
+        .orbitcard-card-number-btn:hover code,
+        .orbitcard-card-number-btn:hover svg {
+            color: var(--primary);
+            opacity: 1;
+        }
+
+        .orbitcard-card-missing {
+            font-size: 12.5px;
+            color: var(--text-dim);
+        }
+
+        .orbitcard-card-sub {
+            font-size: 11.5px;
+            color: var(--text-dim);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .orbitcard-plan-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            align-items: flex-start;
+        }
+
+        .orbitcard-plan-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
             border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .orbitcard-usage-ratio {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-secondary);
+            width: 100%;
+        }
+
+        .orbitcard-usage-bar {
+            flex: 1;
+            min-width: 44px;
+            max-width: 64px;
+            height: 5px;
+            border-radius: 999px;
+            background: var(--divider);
+            overflow: hidden;
+        }
+
+        .orbitcard-usage-bar i {
+            display: block;
+            height: 100%;
+            border-radius: 999px;
+            background: var(--primary);
+        }
+
+        .orbitcard-usage-bar i.is-done {
+            background: #94a3b8;
+        }
+
+        .orbitcard-balance-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .orbitcard-balance-value {
+            font-size: 13.5px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-main);
+            white-space: nowrap;
+        }
+
+        .orbitcard-balance-value small {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-dim);
+        }
+
+        .orbitcard-balance-value.is-low {
+            color: #b45309;
+        }
+
+        .orbitcard-balance-sub {
+            font-size: 11px;
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        .orbitcard-balance-err {
+            font-size: 12px;
+            color: var(--error);
+            white-space: nowrap;
+        }
+
+        .orbitcard-muted-dash {
+            font-size: 12.5px;
+            color: var(--text-dim);
+        }
+
+        .orbitcard-history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .orbitcard-history-row {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            padding-bottom: 6px;
+            border-bottom: 1px dashed var(--divider);
+            min-width: 0;
+        }
+
+        .orbitcard-history-row:last-of-type {
+            padding-bottom: 0;
+            border-bottom: 0;
+        }
+
+        .orbitcard-history-main {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .orbitcard-history-email {
+            font-size: 12.5px;
+            font-weight: 500;
+            color: var(--text-main);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+
+        .orbitcard-history-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11.5px;
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+
+        .orbitcard-history-toggle {
+            align-self: flex-start;
+            padding: 2px 0;
+            border: 0;
+            background: transparent;
+            color: var(--primary);
+            font-size: 11.5px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        .orbitcard-history-toggle:hover {
+            text-decoration: underline;
+        }
+
+        .orbitcard-actions {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .orbitcard-plan-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            flex-wrap: nowrap;
+        }
+
+        .orbitcard-plan-select {
+            width: 92px;
+            height: 31px;
+            padding: 0 6px;
+            border: 1px solid var(--border-strong);
+            border-radius: 7px;
             background: var(--surface);
             color: var(--text-main);
             font-size: 12px;
         }
 
         .orbitcard-limit-input {
-            width: 58px;
-            padding: 5px 6px;
+            width: 48px;
+            height: 31px;
+            padding: 0 4px;
             border: 1px solid var(--border-strong);
-            border-radius: 6px;
+            border-radius: 7px;
             background: var(--surface);
             color: var(--text-main);
             font-size: 12px;
             text-align: center;
+        }
+
+        .orbitcard-plan-submit {
+            height: 31px;
+            padding: 0 10px !important;
+            font-size: 12px !important;
+            white-space: nowrap;
+        }
+
+        .orbitcard-restore-btn {
+            height: 31px;
+            padding: 0 11px !important;
+            font-size: 12px !important;
+            white-space: nowrap;
         }
 
         @media (max-width: 1100px) {

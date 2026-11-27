@@ -8,6 +8,7 @@ const {
 const { runQuery, runExecute, withTransaction } = require('./pool');
 
 const ORBITCARD_USAGE_CARD_STATUSES = new Set([
+    'active',
     'reusable',
     'in_use',
     'retired',
@@ -251,7 +252,8 @@ function buildOrbitcardUsageFilter(filters = {}) {
     }
 
     const cardStatusConditions = {
-        reusable: "cu.status NOT IN ('PROVIDER_DELETED', 'RETIRED', 'CANCELLED') AND cu.in_use = 0 AND cu.plan_type IS NOT NULL",
+        active: "cu.status NOT IN ('PROVIDER_DELETED', 'CANCELLED')",
+        reusable: "cu.status NOT IN ('PROVIDER_DELETED', 'RETIRED', 'CANCELLED') AND cu.in_use = 0 AND cu.plan_type IS NOT NULL AND cu.usage_count < cu.max_usage_count",
         in_use: "cu.status NOT IN ('PROVIDER_DELETED', 'RETIRED', 'CANCELLED') AND cu.in_use = 1",
         retired: "cu.status = 'RETIRED'",
         provider_deleted: "cu.status = 'PROVIDER_DELETED'",
@@ -292,6 +294,32 @@ async function countOrbitcardUsage(filters = {}) {
     return Number(rows[0]?.total || 0);
 }
 
+async function getOrbitcardUsageSummary() {
+    const rows = await runQuery(
+        `SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN status NOT IN ('PROVIDER_DELETED', 'CANCELLED') THEN 1 ELSE 0 END) AS active_count,
+            SUM(CASE WHEN status NOT IN ('PROVIDER_DELETED', 'RETIRED', 'CANCELLED') AND in_use = 0 AND plan_type IS NOT NULL AND usage_count < max_usage_count THEN 1 ELSE 0 END) AS reusable_count,
+            SUM(CASE WHEN status NOT IN ('PROVIDER_DELETED', 'RETIRED', 'CANCELLED') AND in_use = 0 AND plan_type IS NOT NULL AND usage_count < max_usage_count THEN GREATEST(0, max_usage_count - usage_count) ELSE 0 END) AS remaining_slots,
+            SUM(CASE WHEN status NOT IN ('PROVIDER_DELETED', 'RETIRED', 'CANCELLED') AND in_use = 1 THEN 1 ELSE 0 END) AS in_use_count,
+            SUM(CASE WHEN status NOT IN ('PROVIDER_DELETED', 'RETIRED', 'CANCELLED') AND plan_type IS NULL THEN 1 ELSE 0 END) AS unassigned_count,
+            SUM(CASE WHEN status = 'RETIRED' THEN 1 ELSE 0 END) AS retired_count,
+            SUM(CASE WHEN status = 'PROVIDER_DELETED' THEN 1 ELSE 0 END) AS provider_deleted_count
+         FROM orbitcard_card_usage`
+    );
+    const row = rows[0] || {};
+    return {
+        total: Number(row.total || 0),
+        active: Number(row.active_count || 0),
+        reusable: Number(row.reusable_count || 0),
+        remainingSlots: Number(row.remaining_slots || 0),
+        inUse: Number(row.in_use_count || 0),
+        unassigned: Number(row.unassigned_count || 0),
+        retired: Number(row.retired_count || 0),
+        providerDeleted: Number(row.provider_deleted_count || 0)
+    };
+}
+
 async function listOrbitcardUsage(limit = 200, offset = 0, filters = {}) {
     const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
     const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
@@ -304,7 +332,18 @@ async function listOrbitcardUsage(limit = 200, offset = 0, filters = {}) {
                 cu.last_used_at, cu.status, cu.created_at, cu.updated_at
          FROM orbitcard_card_usage cu
          ${whereSql}
-         ORDER BY cu.updated_at DESC, cu.card_id DESC
+         ORDER BY
+             CASE
+                 WHEN cu.status = 'ACTIVE' AND cu.in_use = 1 THEN 1
+                 WHEN cu.status = 'ACTIVE' AND cu.plan_type IS NOT NULL AND cu.usage_count < cu.max_usage_count THEN 2
+                 WHEN cu.status = 'ACTIVE' AND cu.plan_type IS NULL THEN 3
+                 WHEN cu.status = 'RETIRED' THEN 4
+                 WHEN cu.status = 'CANCELLED' THEN 5
+                 WHEN cu.status = 'PROVIDER_DELETED' THEN 6
+                 ELSE 7
+             END ASC,
+             cu.updated_at DESC,
+             cu.card_id DESC
          LIMIT ? OFFSET ?`,
         [...filterParams, safeLimit, safeOffset]
     );
@@ -616,6 +655,7 @@ module.exports = {
     createOrbitcardRecharge,
     updateOrbitcardRecharge,
     countOrbitcardUsage,
+    getOrbitcardUsageSummary,
     listOrbitcardUsage,
     getOrbitcardCardMetaByIds,
     syncOrbitcardCards,

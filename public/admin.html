@@ -9,7 +9,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="stylesheet" href="/admin/assets/admin.css?v=20261127-refactor">
+    <link rel="stylesheet" href="/admin/assets/admin.css?v=20261127-orbitcard-ui">
 </head>
 
 <body>
@@ -554,6 +554,10 @@
                     <div class="panel-header">
                         <h2 class="panel-title">Orbitcard 用卡记录</h2>
                         <div class="table-toolbar-actions">
+                            <button type="button" class="btn btn-secondary" id="orbitcard_mask_toggle_btn" onclick="toggleOrbitcardSensitiveMask()" title="切换卡号与 CVC 明文/脱敏显示">
+                                <i data-lucide="eye"></i>
+                                <span>显示明文</span>
+                            </button>
                             <button type="button" class="btn btn-primary" id="orbitcard_sync_btn" onclick="syncOrbitcardCards()">
                                 <i data-lucide="cloud-download"></i>
                                 同步卡台卡片
@@ -564,12 +568,14 @@
                             </button>
                         </div>
                     </div>
-                    <p id="orbitcard_usage_hint" style="font-size:13px; color:var(--text-dim); margin:0 0 12px;">
-                        同步卡台卡片会自动拉取余额，并为未绑定套餐的 ACTIVE 新卡按余额自动推算可充 Plus 次数并绑定（不覆盖已绑定卡或 Pro 卡）；4002 系列暂不新开也不复用。你仍可随时在“操作”列手动修改任意卡的套餐和上限。
-                    </p>
+                    <div id="orbitcard_usage_meta" class="orbitcard-usage-meta-bar">
+                        <span id="orbitcard_mode_pill" class="orbitcard-mode-pill is-manual">手动开卡模式</span>
+                        <span id="orbitcard_usage_hint" class="orbitcard-usage-hint-text">同步未绑定 ACTIVE 新卡按余额自动推算 Plus 次数（不覆盖已绑定或 Pro 卡片）。</span>
+                    </div>
+                    <div id="orbitcard_usage_quick_tabs" class="orbitcard-quick-tabs" role="tablist" aria-label="按卡片状态快速筛选"></div>
                     <form id="orbitcard_usage_filters" class="orbitcard-usage-filters" onsubmit="applyOrbitcardUsageFilters(event)">
-                        <input id="orbitcard_usage_keyword" class="asset-input" type="search" maxlength="80" placeholder="搜索卡 ID / 后四位 / 产品编码 / 账号邮箱 / 订单号" aria-label="搜索 Orbitcard 用卡记录">
-                        <select id="orbitcard_usage_plan" class="asset-input" aria-label="按套餐筛选">
+                        <input id="orbitcard_usage_keyword" class="asset-input" type="search" maxlength="80" placeholder="搜索卡 ID / 尾号 / 产品码 / 邮箱 / 订单号" aria-label="搜索 Orbitcard 用卡记录">
+                        <select id="orbitcard_usage_plan" class="asset-input" aria-label="按套餐筛选" onchange="applyOrbitcardUsageFilters()">
                             <option value="">全部套餐</option>
                             <option value="plus">Plus</option>
                             <option value="pro100">Pro 100</option>
@@ -578,16 +584,17 @@
                             <option value="pro_5x">Pro 5x（历史）</option>
                             <option value="pro_20x">Pro 20x（历史）</option>
                         </select>
-                        <select id="orbitcard_usage_card_status" class="asset-input" aria-label="按卡片状态筛选">
+                        <select id="orbitcard_usage_card_status" class="asset-input" aria-label="按卡片状态筛选" onchange="applyOrbitcardUsageFilters()">
                             <option value="">全部卡片状态</option>
+                            <option value="active">有效卡（不含已删除）</option>
                             <option value="reusable">可复用</option>
                             <option value="in_use">使用中</option>
-                            <option value="unassigned">未绑定套餐</option>
+                            <option value="unassigned">待绑定</option>
                             <option value="retired">已退役</option>
                             <option value="provider_deleted">上游已删除</option>
                             <option value="cancelled">已取消</option>
                         </select>
-                        <select id="orbitcard_usage_recharge_status" class="asset-input" aria-label="按充值结果筛选">
+                        <select id="orbitcard_usage_recharge_status" class="asset-input" aria-label="按充值结果筛选" onchange="applyOrbitcardUsageFilters()">
                             <option value="">全部充值状态</option>
                             <option value="success">成功</option>
                             <option value="processing">处理中</option>
@@ -602,17 +609,12 @@
                         <table class="admin-action-table orbitcard-usage-table">
                             <thead>
                                 <tr>
-                                    <th width="110px">卡 ID</th>
-                                    <th width="260px">卡片资料</th>
-                                    <th width="90px">后四位</th>
-                                    <th width="100px">套餐</th>
-                                    <th width="110px" style="text-align:center">已用/上限</th>
-                                    <th width="110px">首充金额</th>
-                                    <th width="120px">当前余额</th>
-                                    <th width="100px">状态</th>
-                                    <th width="300px">充值账号与订单</th>
-                                    <th width="150px">最近使用</th>
-                                    <th width="100px" style="text-align:center">操作</th>
+                                    <th style="width:248px;">卡片信息</th>
+                                    <th style="width:124px;">套餐与次数</th>
+                                    <th style="width:122px;">余额</th>
+                                    <th style="width:98px; text-align:center;">状态</th>
+                                    <th style="min-width:240px;">充值记录</th>
+                                    <th style="width:214px; text-align:center;">操作</th>
                                 </tr>
                             </thead>
                             <tbody id="orbitcard_usage_body"></tbody>
@@ -1152,9 +1154,9 @@
     </main>
 
     <script src="/admin/assets/core.js?v=20261127-refactor"></script>
-    <script src="/admin/assets/security.js?v=20261127-refactor"></script>
+    <script src="/admin/assets/security.js?v=20261127-orbitcard-ui"></script>
     <script src="/admin/assets/config.js?v=20261127-refactor"></script>
-    <script src="/admin/assets/cards.js?v=20261127-refactor"></script>
+    <script src="/admin/assets/cards.js?v=20261127-orbitcard-ui"></script>
     <script src="/admin/assets/cdks.js?v=20261127-refactor"></script>
     <script src="/admin/assets/sessions.js?v=20261127-refactor"></script>
     <script src="/admin/assets/tasks.js?v=20261127-refactor"></script>

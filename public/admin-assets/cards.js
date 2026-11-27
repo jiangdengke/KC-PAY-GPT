@@ -1,17 +1,21 @@
-/* global lucide, authFetch, showMessage, showAdminConfirm, escapeHtml, formatPlanLabel, formatTimeShort,
-   getPaginationItems, CANONICAL_PLAN_TYPES, PLAN_LABELS */
+/* global lucide, authFetch, showMessage, showAdminConfirm, escapeHtml, formatPlanLabel, getPlanColors,
+   formatTimeShort, copyText, getPaginationItems, CANONICAL_PLAN_TYPES, PLAN_LABELS */
 /* exported toggleCardPoolImportBox, loadCardPoolList, deleteCardPoolItem, importCardPool,
    loadOrbitcardProductStrategy, saveOrbitcardProductStrategy, renderOrbitcardStrategyDetails,
    syncOrbitcardCards, applyOrbitcardUsageFilters, resetOrbitcardUsageFilters, loadOrbitcardUsage,
-   setOrbitcardCardPlan, restoreOrbitcardCard */
+   setOrbitcardCardPlan, restoreOrbitcardCard, toggleOrbitcardSensitiveMask, selectOrbitcardQuickStatus,
+   copyOrbitcardNumber, toggleOrbitcardHistoryExpand */
 'use strict';
 
 let cardPoolList = [];
 let orbitcardUsageList = [];
+let orbitcardShowSensitive = false;
+const orbitcardExpandedHistoryIds = new Set();
 const orbitcardUsageState = {
     page: 1,
     pageSize: 20,
     total: 0,
+    summary: null,
     filters: {
         keyword: '',
         planType: '',
@@ -453,7 +457,7 @@ function renderOrbitcardUsagePagination() {
 
 function renderOrbitcardPlanActions(card) {
     const status = String(card.status || '').toUpperCase();
-    if (card.inUse || ['PROVIDER_DELETED', 'CANCELLED'].includes(status)) return '';
+    if (card.inUse || ['PROVIDER_DELETED', 'CANCELLED', 'RETIRED'].includes(status)) return '';
     const cardId = Number(card.cardId);
     const options = CANONICAL_PLAN_TYPES
         .map((value) => `<option value="${value}" ${card.planType === value ? 'selected' : ''}>${PLAN_LABELS[value]}</option>`)
@@ -464,9 +468,93 @@ function renderOrbitcardPlanActions(card) {
             <option value="">选择套餐</option>
             ${options}
         </select>
-        <input id="orbitcard_limit_${cardId}" class="orbitcard-limit-input" type="number" min="1" max="20" step="1" value="${usageLimit}" placeholder="默认" aria-label="单卡使用上限">
-        <button type="button" class="btn btn-secondary" onclick="setOrbitcardCardPlan(${cardId})">${card.planType ? '保存' : '绑定'}</button>
+        <input id="orbitcard_limit_${cardId}" class="orbitcard-limit-input" type="number" min="1" max="20" step="1" value="${usageLimit}" placeholder="次数" title="单卡使用上限（留空按默认）" aria-label="单卡使用上限">
+        <button type="button" class="btn ${card.planType ? 'btn-secondary' : 'btn-primary'} orbitcard-plan-submit" onclick="setOrbitcardCardPlan(${cardId})">${card.planType ? '保存' : '绑定'}</button>
     </div>`;
+}
+
+function formatOrbitcardNumberDisplay(cardNumber, reveal = false) {
+    const digits = String(cardNumber || '').replace(/\s+/g, '');
+    if (!digits) return '';
+    if (reveal) {
+        return digits.replace(/(.{4})/g, '$1 ').trim();
+    }
+    if (digits.length >= 10) {
+        return `${digits.slice(0, 4)} •••• •••• ${digits.slice(-4)}`;
+    }
+    return `•••• ${digits.slice(-4)}`;
+}
+
+function toggleOrbitcardSensitiveMask() {
+    orbitcardShowSensitive = !orbitcardShowSensitive;
+    const btn = document.getElementById('orbitcard_mask_toggle_btn');
+    if (btn) {
+        btn.innerHTML = orbitcardShowSensitive
+            ? '<i data-lucide="eye-off"></i><span>隐藏明文</span>'
+            : '<i data-lucide="eye"></i><span>显示明文</span>';
+    }
+    renderOrbitcardUsageTable();
+}
+
+function copyOrbitcardNumber(cardId) {
+    const card = orbitcardUsageList.find((item) => Number(item.cardId) === Number(cardId));
+    if (!card?.cardNumber) {
+        showMessage('该卡尚未同步完整卡号', 'warning');
+        return;
+    }
+    copyText(card.cardNumber);
+}
+
+function toggleOrbitcardHistoryExpand(cardId) {
+    const id = Number(cardId);
+    if (orbitcardExpandedHistoryIds.has(id)) {
+        orbitcardExpandedHistoryIds.delete(id);
+    } else {
+        orbitcardExpandedHistoryIds.add(id);
+    }
+    renderOrbitcardUsageTable();
+}
+
+function selectOrbitcardQuickStatus(statusValue) {
+    const select = document.getElementById('orbitcard_usage_card_status');
+    if (select) {
+        select.value = statusValue || '';
+    }
+    orbitcardUsageState.filters = readOrbitcardUsageFilters();
+    return loadOrbitcardUsage(false, false, 1);
+}
+
+function renderOrbitcardQuickTabs() {
+    const container = document.getElementById('orbitcard_usage_quick_tabs');
+    if (!container) return;
+    const s = orbitcardUsageState.summary;
+    if (!s) {
+        container.innerHTML = '';
+        return;
+    }
+    const current = orbitcardUsageState.filters.cardStatus || '';
+    const tabs = [
+        { value: '', label: '全部', count: s.total, tone: 'neutral' },
+        { value: 'active', label: '有效卡', count: s.active, tone: 'neutral' },
+        {
+            value: 'reusable',
+            label: '可复用',
+            count: s.reusable,
+            extra: s.remainingSlots > 0 ? `剩 ${s.remainingSlots} 次` : '',
+            tone: 'success'
+        },
+        { value: 'unassigned', label: '待绑定', count: s.unassigned, tone: 'warning' },
+        { value: 'retired', label: '已退役', count: s.retired, tone: 'muted' },
+        { value: 'provider_deleted', label: '上游已删除', count: s.providerDeleted, tone: 'danger' }
+    ];
+    container.innerHTML = tabs.map((tab) => {
+        const isActive = current === tab.value;
+        return `<button type="button" role="tab" aria-selected="${isActive}" class="orbitcard-quick-tab tone-${tab.tone} ${isActive ? 'is-active' : ''}" onclick="selectOrbitcardQuickStatus('${tab.value}')">
+            <span>${tab.label}</span>
+            <span class="orbitcard-quick-count">${tab.count}</span>
+            ${tab.extra ? `<span class="orbitcard-quick-extra">${tab.extra}</span>` : ''}
+        </button>`;
+    }).join('');
 }
 
 function formatOrbitcardRechargeStatus(status) {
@@ -482,52 +570,136 @@ function formatOrbitcardRechargeStatus(status) {
 function renderOrbitcardUsageTable() {
     const tbody = document.getElementById('orbitcard_usage_body');
     if (!tbody) return;
+    renderOrbitcardQuickTabs();
     if (!orbitcardUsageList.length) {
-        tbody.innerHTML = `<tr><td colspan="11" style="text-align:center; color:var(--text-dim); padding:36px 0;">${Object.values(orbitcardUsageState.filters).some(Boolean) ? '暂无符合条件的 Orbitcard 用卡记录' : '暂无 Orbitcard 用卡记录，请点击“同步卡台卡片”'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-dim); padding:40px 0;">${Object.values(orbitcardUsageState.filters).some(Boolean) ? '暂无符合条件的 Orbitcard 用卡记录' : '暂无 Orbitcard 用卡记录，请点击“同步卡台卡片”'}</td></tr>`;
+        lucide.createIcons();
         return;
     }
+    const plusThreshold = Number(orbitcardStrategyPlusUnitPrice || 20) + Number(orbitcardStrategySafetyMargins.plus ?? 1);
     tbody.innerHTML = orbitcardUsageList.map((card) => {
-        const histories = Array.isArray(card.recharges) ? card.recharges : [];
-        const historyHtml = histories.length
-            ? histories.map((item) => `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:3px 0; border-bottom:1px solid var(--border);">
-                <span>${escapeHtml(item.accountEmail || '账号未返回')}</span>
-                <span style="color:var(--text-dim);">${escapeHtml(formatPlanLabel(item.planType))} #${Number(item.useNumber || 0)}</span>
-                ${formatOrbitcardRechargeStatus(item.status)}
-                <span style="color:var(--text-dim);">${escapeHtml(formatTimeShort(item.createdAt))}</span>
-            </div>`).join('')
-            : '<span style="color:var(--text-dim);">暂无账号记录</span>';
+        const cardId = Number(card.cardId);
         const status = String(card.status || '').toUpperCase();
+        const isDeletedOrCancelled = ['PROVIDER_DELETED', 'CANCELLED'].includes(status);
+        const isRetired = status === 'RETIRED';
+        const isActiveCard = !isDeletedOrCancelled && !isRetired;
+        const usageCount = Number(card.usageCount || 0);
+        const maxUsageCount = Math.max(1, Number(card.maxUsageCount || 1));
+        const usagePct = Math.min(100, Math.round((usageCount / maxUsageCount) * 100));
+
+        // 1. 卡片信息
+        const formattedNumber = formatOrbitcardNumberDisplay(card.cardNumber, orbitcardShowSensitive);
+        const cvcDisplay = card.cardCvc ? (orbitcardShowSensitive ? card.cardCvc : '•••') : '-';
+        const cardMetaLine = card.cardNumber
+            ? `有效期 ${escapeHtml(card.cardExpiry || '-')} · CVC ${escapeHtml(cvcDisplay)}${card.cardHolder ? ` · ${escapeHtml(card.cardHolder)}` : ''}`
+            : (card.cardLast4 ? `尾号 ${escapeHtml(card.cardLast4)}` : '');
+        const cardDetailsHtml = `<div class="orbitcard-card-cell">
+            <div class="orbitcard-card-top">
+                <span class="orbitcard-id-chip">#${escapeHtml(cardId)}</span>
+                ${card.productCode ? `<span class="orbitcard-product-tag" title="产品编码">${escapeHtml(card.productCode)}</span>` : ''}
+            </div>
+            ${card.cardNumber
+        ? `<button type="button" class="orbitcard-card-number-btn" onclick="copyOrbitcardNumber(${cardId})" title="点击复制完整卡号">
+                        <code>${escapeHtml(formattedNumber)}</code>
+                        <i data-lucide="copy"></i>
+                    </button>`
+        : '<div class="orbitcard-card-missing">未同步完整卡资料</div>'}
+            ${cardMetaLine ? `<div class="orbitcard-card-sub">${cardMetaLine}</div>` : ''}
+        </div>`;
+
+        // 2. 套餐与次数
+        const [planColor, planBg] = card.planType ? getPlanColors(card.planType) : ['#64748b', 'rgba(100, 116, 139, 0.1)'];
+        const planText = card.planType ? formatPlanLabel(card.planType) : '未绑定';
+        const barTone = isDeletedOrCancelled || isRetired || usageCount >= maxUsageCount ? 'is-done' : 'is-available';
+        const planCellHtml = `<div class="orbitcard-plan-cell">
+            <span class="orbitcard-plan-pill" style="color:${planColor}; background:${planBg};">${escapeHtml(planText)}</span>
+            <div class="orbitcard-usage-ratio">
+                <span>${usageCount} / ${maxUsageCount}</span>
+                <div class="orbitcard-usage-bar"><i class="${barTone}" style="width:${usagePct}%;"></i></div>
+            </div>
+        </div>`;
+
+        // 3. 余额（不再与状态列重复写红色“上游已删除”）
+        const balanceTitle = card.balanceUpdatedAt ? `最近查询：${formatTimeShort(card.balanceUpdatedAt)}` : '';
+        let balanceMainHtml = '<span class="orbitcard-muted-dash">-</span>';
+        if (card.balance != null) {
+            const numBal = Number(card.balance);
+            const balTone = isActiveCard && !card.planType && numBal < plusThreshold ? 'is-low' : '';
+            balanceMainHtml = `<span class="orbitcard-balance-value ${balTone}" title="${escapeHtml(balanceTitle)}">${numBal.toFixed(2)} <small>${escapeHtml(card.balanceCurrency || 'USD')}</small></span>`;
+        } else if (!isDeletedOrCancelled && card.balanceError) {
+            balanceMainHtml = `<span class="orbitcard-balance-err" title="${escapeHtml(card.balanceError)}">${escapeHtml(card.balanceError === '上游未提供单卡余额' ? '上游未返回' : '查询失败')}</span>`;
+        } else if (!isDeletedOrCancelled) {
+            balanceMainHtml = '<span class="orbitcard-muted-dash">未查询</span>';
+        }
+        const balanceSubParts = [];
+        if (card.initialAmount != null) {
+            balanceSubParts.push(`首充 ${Number(card.initialAmount).toFixed(2)}`);
+        } else if (isActiveCard && !card.planType && card.balance != null && Number(card.balance) < plusThreshold) {
+            balanceSubParts.push('余额不足 Plus');
+        }
+        if (card.balance != null && card.balanceError) {
+            balanceSubParts.push(card.balanceError === '上游未提供单卡余额' ? '上游未提供新余额' : '刷新失败');
+        }
+        const balanceCellHtml = `<div class="orbitcard-balance-cell">
+            ${balanceMainHtml}
+            ${balanceSubParts.length ? `<div class="orbitcard-balance-sub">${escapeHtml(balanceSubParts.join(' · '))}</div>` : ''}
+        </div>`;
+
+        // 4. 状态（严格单行胶囊）
         const statusLabel = status === 'PROVIDER_DELETED'
             ? '上游已删除'
             : (status === 'RETIRED'
                 ? '已退役'
                 : (status === 'CANCELLED'
                     ? '已取消'
-                    : (!card.planType ? '未绑定套餐' : (card.inUse ? '使用中' : '可复用'))));
+                    : (!card.planType ? '待绑定' : (card.inUse ? '使用中' : '可复用'))));
         const statusClass = ['PROVIDER_DELETED', 'RETIRED', 'CANCELLED'].includes(status)
             ? 'status-failed'
-            : (!card.planType ? 'status-warning' : (card.inUse ? 'status-warning' : 'status-success'));
-        const balanceTitle = card.balanceUpdatedAt ? `最近查询：${formatTimeShort(card.balanceUpdatedAt)}` : '';
-        const balanceText = card.balance == null
-            ? (status === 'PROVIDER_DELETED' ? '<span style="color:var(--error);">上游已删除</span>' : (card.balanceError ? `<span title="${escapeHtml(card.balanceError)}" style="color:var(--error);">${escapeHtml(card.balanceError === '上游未提供单卡余额' ? '上游未返回' : '查询失败')}</span>` : '<span style="color:var(--text-dim);">未查询</span>'))
-            : `<span title="${escapeHtml(balanceTitle)}">${Number(card.balance).toFixed(2)} ${escapeHtml(card.balanceCurrency || 'USD')}</span>${card.balanceError ? `<br><small title="${escapeHtml(card.balanceError)}" style="color:var(--error);">${escapeHtml(card.balanceError === '上游未提供单卡余额' ? '上游未提供新余额' : '刷新失败')}</small>` : ''}`;
-        const cardDetails = card.cardNumber
-            ? `<div class="orbitcard-sensitive-details"><code>${escapeHtml(card.cardNumber)}</code><span>有效期 ${escapeHtml(card.cardExpiry || '-')} · CVC ${escapeHtml(card.cardCvc || '-')}</span>${card.cardHolder ? `<span>持卡人 ${escapeHtml(card.cardHolder)}</span>` : ''}</div>`
-            : '<span style="color:var(--text-dim);">未同步完整卡资料</span>';
-        const canRestore = status === 'RETIRED' && !card.inUse && Number(card.usageCount || 0) < Number(card.maxUsageCount || 1);
+            : (!card.planType ? 'status-warning' : (card.inUse ? 'status-running' : 'status-success'));
+
+        // 5. 充值记录（避免邮箱截断溢出，多条可折叠）
+        const histories = Array.isArray(card.recharges) ? card.recharges : [];
+        let historyHtml = '<span class="orbitcard-muted-dash">暂无记录</span>';
+        if (histories.length) {
+            const isExpanded = orbitcardExpandedHistoryIds.has(cardId);
+            const visibleItems = isExpanded ? histories : histories.slice(0, 2);
+            const rowsHtml = visibleItems.map((item) => {
+                const email = item.accountEmail || '账号未返回';
+                return `<div class="orbitcard-history-row">
+                    <div class="orbitcard-history-main">
+                        <span class="orbitcard-history-email" title="${escapeHtml(email)}">${escapeHtml(email)}</span>
+                        ${formatOrbitcardRechargeStatus(item.status)}
+                    </div>
+                    <div class="orbitcard-history-meta">
+                        <span>${escapeHtml(formatPlanLabel(item.planType))} #${Number(item.useNumber || 0)}</span>
+                        <span>${escapeHtml(formatTimeShort(item.createdAt))}</span>
+                    </div>
+                </div>`;
+            }).join('');
+            const moreBtn = histories.length > 2
+                ? `<button type="button" class="orbitcard-history-toggle" onclick="toggleOrbitcardHistoryExpand(${cardId})">${isExpanded ? '收起记录' : `展开其余 ${histories.length - 2} 条`}</button>`
+                : '';
+            historyHtml = `<div class="orbitcard-history-list">${rowsHtml}${moreBtn}</div>`;
+        } else if (card.lastUsedAt) {
+            historyHtml = `<span class="orbitcard-muted-dash">最近使用 ${escapeHtml(formatTimeShort(card.lastUsedAt))}</span>`;
+        }
+
+        // 6. 操作（单行紧凑横排；已退役仅保留恢复按钮）
+        const canRestore = isRetired && !card.inUse && usageCount < maxUsageCount;
         const planActions = renderOrbitcardPlanActions(card);
-        return `<tr>
-            <td><code>${escapeHtml(card.cardId)}</code></td>
-            <td>${cardDetails}</td>
-            <td><code>${escapeHtml(card.cardLast4 || '****')}</code></td>
-            <td>${escapeHtml(formatPlanLabel(card.planType))}${card.productCode ? `<br><small class="orbitcard-product-code">${escapeHtml(card.productCode)}</small>` : ''}</td>
-            <td style="text-align:center; font-weight:600;">${Number(card.usageCount || 0)}/${Number(card.maxUsageCount || 1)}</td>
-            <td>${card.initialAmount == null ? '-' : `${Number(card.initialAmount).toFixed(2)} USD`}</td>
-            <td>${balanceText}</td>
-            <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
-            <td style="min-width:300px; font-size:13px;">${historyHtml}</td>
-            <td>${escapeHtml(formatTimeShort(card.lastUsedAt))}</td>
-            <td style="text-align:center;"><div class="orbitcard-actions">${planActions}${canRestore ? `<button type="button" class="btn btn-success" style="padding:5px 9px; font-size:12px;" onclick="restoreOrbitcardCard(${Number(card.cardId)})">恢复</button>` : ''}${!planActions && !canRestore ? '<span style="color:var(--text-dim);">-</span>' : ''}</div></td>
+        const actionsHtml = `<div class="orbitcard-actions">
+            ${planActions}
+            ${canRestore ? `<button type="button" class="btn btn-success orbitcard-restore-btn" onclick="restoreOrbitcardCard(${cardId})"><i data-lucide="rotate-ccw"></i>恢复可用</button>` : ''}
+            ${!planActions && !canRestore ? '<span class="orbitcard-muted-dash">-</span>' : ''}
+        </div>`;
+
+        return `<tr class="${isDeletedOrCancelled ? 'orbitcard-row-muted' : ''}">
+            <td>${cardDetailsHtml}</td>
+            <td>${planCellHtml}</td>
+            <td>${balanceCellHtml}</td>
+            <td style="text-align:center;"><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+            <td>${historyHtml}</td>
+            <td style="text-align:center;">${actionsHtml}</td>
         </tr>`;
     }).join('');
     lucide.createIcons();
@@ -555,20 +727,33 @@ async function loadOrbitcardUsage(showToast = false, refreshBalances = false, pa
         orbitcardUsageList = Array.isArray(data.cards) ? data.cards : [];
         orbitcardUsageState.total = Number(data.total || 0);
         orbitcardUsageState.page = Number(data.page || orbitcardUsageState.page);
+        orbitcardUsageState.summary = data.summary || null;
         if (typeof data.auto_create_card === 'boolean') {
             orbitcardStrategyAutoCreate = data.auto_create_card;
         }
         if (Number.isFinite(Number(data.plus_unit_price))) {
             orbitcardStrategyPlusUnitPrice = Number(data.plus_unit_price);
         }
+        if (data.reuse_limits && typeof data.reuse_limits === 'object') {
+            orbitcardStrategyReuseLimits = { ...orbitcardStrategyReuseLimits, ...data.reuse_limits };
+        }
+        if (data.safety_margins && typeof data.safety_margins === 'object') {
+            orbitcardStrategySafetyMargins = { ...orbitcardStrategySafetyMargins, ...data.safety_margins };
+        }
+        const modePill = document.getElementById('orbitcard_mode_pill');
         const usageHint = document.getElementById('orbitcard_usage_hint');
-        if (usageHint && typeof data.auto_create_card === 'boolean') {
-            const plusLimit = Number(data.reuse_limits?.plus || orbitcardStrategyReuseLimits.plus || 4);
-            const plusMargin = Number(data.safety_margins?.plus ?? orbitcardStrategySafetyMargins.plus ?? 1);
-            const modeText = data.auto_create_card
-                ? '当前已开启自动开卡（本地无复用卡时将自动调用卡台开卡）。'
-                : '当前已关闭自动开卡（仅使用卡台已有卡片；下单缺卡时自动同步新卡，仍无卡则退回 CDK 并推送缺卡告警）。';
-            usageHint.textContent = `${modeText} 同步卡台卡片时，未绑定套餐的 ACTIVE 非 4002 新卡将按余额自动推算可充 Plus 次数（兜底单价 ${orbitcardStrategyPlusUnitPrice} USD、安全余量 ${plusMargin} USD、单卡上限 ${plusLimit} 次），绝不覆盖已绑定或 Pro 卡片。`;
+        if (typeof data.auto_create_card === 'boolean') {
+            const plusLimit = Number(orbitcardStrategyReuseLimits.plus || 4);
+            const plusMargin = Number(orbitcardStrategySafetyMargins.plus ?? 1);
+            if (modePill) {
+                modePill.textContent = data.auto_create_card ? '自动开卡已开启' : '手动开卡模式';
+                modePill.className = `orbitcard-mode-pill ${data.auto_create_card ? 'is-auto' : 'is-manual'}`;
+            }
+            if (usageHint) {
+                usageHint.textContent = data.auto_create_card
+                    ? `缺卡自动开新卡 · 同步未绑定 ACTIVE 卡按余额推算 Plus（单价 ${orbitcardStrategyPlusUnitPrice} USD · 余量 ${plusMargin} USD · 上限 ${plusLimit} 次）`
+                    : `仅用卡台已有卡（缺卡自动同步，仍无卡退回 CDK 并告警）· 自动推算 Plus：单价 ${orbitcardStrategyPlusUnitPrice} USD · 余量 ${plusMargin} USD · 上限 ${plusLimit} 次`;
+            }
         }
         renderOrbitcardUsageTable();
         renderOrbitcardUsagePagination();
@@ -576,7 +761,7 @@ async function loadOrbitcardUsage(showToast = false, refreshBalances = false, pa
     } catch (error) {
         if (requestId !== orbitcardUsageRequestId) return;
         console.error('loadOrbitcardUsage failed', error);
-        tbody.innerHTML = `<tr><td colspan="11" style="text-align:center; color:var(--error); padding:36px 0;">${escapeHtml(error.message || '加载失败')}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--error); padding:36px 0;">${escapeHtml(error.message || '加载失败')}</td></tr>`;
         const pagination = document.getElementById('orbitcard_usage_pagination');
         if (pagination) pagination.innerHTML = '';
         if (showToast) showMessage(error.message || '加载 Orbitcard 记录失败', 'error');
