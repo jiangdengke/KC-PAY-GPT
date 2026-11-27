@@ -16,6 +16,7 @@ const {
 const { createAdminGuards } = require('./middleware/admin-guard');
 const { createTaskHub } = require('./services/task-hub');
 const { createGptApiWorker } = require('./services/gpt-api-worker');
+const { createOrbitcardAutoSync } = require('./services/orbitcard-sync');
 const { createPublicRouter } = require('./routes/public');
 const { createExternalRouter } = require('./routes/external');
 const { createAdminAuthRouters } = require('./routes/admin-auth');
@@ -75,6 +76,11 @@ function createApp({
 
     const security = createSecurityManager({ store, ensureStoreReady, dataDir });
     const taskHub = createTaskHub({ store });
+    const orbitcardAutoSync = createOrbitcardAutoSync({
+        store,
+        ensureStoreReady,
+        intervalMs: config.defaults.orbitcardAutoSyncIntervalMs
+    });
     const guards = createAdminGuards({ store, ensureStoreReady, security, cfAccessConfig });
 
     const runGptApiWorker = createGptApiWorker({
@@ -188,7 +194,8 @@ function createApp({
         store,
         ensureStoreReady,
         taskHub,
-        requireSecondaryAuth: guards.requireSecondaryAuth
+        requireSecondaryAuth: guards.requireSecondaryAuth,
+        orbitcardAutoSync
     }));
     app.use('/api/admin', createAdminAssetsRouter({
         store,
@@ -225,7 +232,8 @@ function createApp({
         store,
         ensureStoreReady,
         security,
-        taskHub
+        taskHub,
+        orbitcardAutoSync
     };
 }
 

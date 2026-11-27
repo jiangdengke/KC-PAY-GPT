@@ -32,6 +32,14 @@ function loadEnvFile(filePath = path.join(ROOT_DIR, '.env')) {
 
 loadEnvFile();
 
+const rawOrbitcardAutoSyncMs = process.env.ORBITCARD_AUTO_SYNC_INTERVAL_MS;
+const parsedOrbitcardAutoSyncMs = rawOrbitcardAutoSyncMs === undefined || rawOrbitcardAutoSyncMs === ''
+    ? 3 * 60 * 1000
+    : Number(rawOrbitcardAutoSyncMs);
+const orbitcardAutoSyncIntervalMs = Number.isFinite(parsedOrbitcardAutoSyncMs)
+    ? (parsedOrbitcardAutoSyncMs <= 0 ? 0 : Math.max(30 * 1000, Math.floor(parsedOrbitcardAutoSyncMs)))
+    : 3 * 60 * 1000;
+
 const config = {
     rootDir: ROOT_DIR,
     publicDir: path.join(ROOT_DIR, 'public'),
@@ -60,7 +68,8 @@ const config = {
         gptApiBaseUrl: 'https://recharge.desolate.run/api/v1/open',
         gptApiPlanKey: 'chatgptplusplan',
         orbitcardBaseUrl: 'https://orbitcard.cc',
-        orbitcardApiSecret: String(process.env.ORBITCARD_API_SECRET || '').trim()
+        orbitcardApiSecret: String(process.env.ORBITCARD_API_SECRET || '').trim(),
+        orbitcardAutoSyncIntervalMs
     },
     cfAccess: {
         teamDomain: process.env.CF_ACCESS_TEAM_DOMAIN || '',

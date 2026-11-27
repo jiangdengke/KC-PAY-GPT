@@ -1,7 +1,12 @@
 'use strict';
 
 const orbitcard = require('../src/services/orbitcard-client');
-const { syncAndAutoAssignOrbitcardCards } = require('../src/services/orbitcard-sync');
+const {
+    DEFAULT_ORBITCARD_AUTO_SYNC_INTERVAL_MS,
+    MIN_ORBITCARD_AUTO_SYNC_INTERVAL_MS,
+    syncAndAutoAssignOrbitcardCards,
+    createOrbitcardAutoSync
+} = require('../src/services/orbitcard-sync');
 
 const SAMPLE_CATALOG = [
     {
@@ -204,5 +209,188 @@ describe('syncAndAutoAssignOrbitcardCards', () => {
             autoPlanType: 'plus',
             autoMaxUsageCount: 3
         });
+    });
+
+    it('skips getProductCode when all active cards are already bound', async () => {
+        const store = {
+            getOrbitcardCardMetaByIds: async () => ([
+                { cardId: 90, status: 'ACTIVE', planType: 'plus', usageCount: 1, maxUsageCount: 2 }
+            ]),
+            syncOrbitcardCards: async (cards) => ({
+                total: cards.length,
+                inserted: 0,
+                updated: cards.length,
+                autoAssigned: 0,
+                autoAssignedCards: []
+            })
+        };
+        const mockOrbitcard = {
+            ...orbitcard,
+            getCardList: vi.fn(async () => ({
+                success: true,
+                data: [{ cardId: 90, status: 'ACTIVE', balance: 21, currency: 'USD', last4: '9090' }]
+            })),
+            getProductCode: vi.fn(async () => ({ success: true, data: SAMPLE_CATALOG })),
+            getCardDetail: vi.fn(),
+            getCardSummary: vi.fn()
+        };
+
+        const result = await syncAndAutoAssignOrbitcardCards({
+            store,
+            orbitcard: mockOrbitcard,
+            cfg: { orbitcard_base_url: 'https://orbitcard.cc', orbitcard_api_key: 'k', orbitcard_api_secret: 's' },
+            fetchDetails: false,
+            markMissing: false
+        });
+
+        expect(result.success).toBe(true);
+        expect(mockOrbitcard.getCardList).toHaveBeenCalledWith(expect.any(Object), { status: 'ACTIVE' });
+        expect(mockOrbitcard.getProductCode).not.toHaveBeenCalled();
+        expect(mockOrbitcard.getCardDetail).not.toHaveBeenCalled();
+        expect(mockOrbitcard.getCardSummary).not.toHaveBeenCalled();
+    });
+});
+
+describe('createOrbitcardAutoSync', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('skips upstream calls when card_source is not orbitcard or credentials are missing', async () => {
+        const mockOrbitcard = {
+            ...orbitcard,
+            getCardList: vi.fn()
+        };
+        const store = {
+            getGptApiConfig: vi.fn()
+                .mockResolvedValueOnce({ card_source: 'local', orbitcard_api_key: 'k', orbitcard_api_secret: 's' })
+                .mockResolvedValueOnce({ card_source: 'orbitcard', orbitcard_api_key: '', orbitcard_api_secret: '' })
+        };
+
+        const scheduler = createOrbitcardAutoSync({
+            store,
+            orbitcard: mockOrbitcard,
+            logger: { log: vi.fn(), warn: vi.fn() }
+        });
+
+        expect(await scheduler.runOnce()).toEqual({ skipped: true, reason: 'card_source_not_orbitcard' });
+        expect(await scheduler.runOnce()).toEqual({ skipped: true, reason: 'missing_credentials' });
+        expect(mockOrbitcard.getCardList).not.toHaveBeenCalled();
+    });
+
+    it('runs lightweight sync on startup delay and 3-minute interval without calling sensitive getCardDetail', async () => {
+        vi.useFakeTimers();
+
+        const store = {
+            getGptApiConfig: vi.fn(async () => ({
+                card_source: 'orbitcard',
+                orbitcard_base_url: 'https://orbitcard.cc',
+                orbitcard_api_key: 'k',
+                orbitcard_api_secret: 's',
+                orbitcard_reuse_limits: { plus: 2 },
+                orbitcard_safety_margins: { plus: 1 },
+                orbitcard_plus_unit_price: 20
+            })),
+            getOrbitcardCardMetaByIds: vi.fn(async () => []),
+            syncOrbitcardCards: vi.fn(async (cards) => ({
+                total: cards.length,
+                inserted: cards.length,
+                updated: 0,
+                autoAssigned: cards.filter((c) => c.autoPlanType).length,
+                autoAssignedCards: []
+            })),
+            markMissingOrbitcardCards: vi.fn(async () => 0)
+        };
+
+        const mockOrbitcard = {
+            ...orbitcard,
+            getCardList: vi.fn(async () => ({
+                success: true,
+                data: [{ cardId: 700, status: 'ACTIVE', balance: 45, currency: 'USD', last4: '7000' }]
+            })),
+            getProductCode: vi.fn(async () => ({ success: true, data: SAMPLE_CATALOG })),
+            getCardDetail: vi.fn(),
+            getCardSummary: vi.fn()
+        };
+
+        const logger = { log: vi.fn(), warn: vi.fn() };
+        const scheduler = createOrbitcardAutoSync({
+            store,
+            orbitcard: mockOrbitcard,
+            intervalMs: DEFAULT_ORBITCARD_AUTO_SYNC_INTERVAL_MS,
+            initialDelayMs: 15_000,
+            logger
+        });
+
+        expect(scheduler.start()).toBe(true);
+        expect(scheduler.getStatus()).toMatchObject({
+            enabled: true,
+            started: true,
+            intervalMs: 180_000,
+            intervalSeconds: 180
+        });
+
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(mockOrbitcard.getCardList).toHaveBeenCalledTimes(1);
+        expect(mockOrbitcard.getCardList).toHaveBeenCalledWith(expect.any(Object), { status: 'ACTIVE' });
+        expect(mockOrbitcard.getCardDetail).not.toHaveBeenCalled();
+        expect(store.markMissingOrbitcardCards).not.toHaveBeenCalled();
+        expect(scheduler.getStatus().lastResult).toEqual({ total: 1, inserted: 1, updated: 0, autoAssigned: 1 });
+        expect(scheduler.getStatus().lastError).toBe('');
+
+        await vi.advanceTimersByTimeAsync(180_000);
+        expect(mockOrbitcard.getCardList).toHaveBeenCalledTimes(2);
+
+        scheduler.stop();
+        await vi.advanceTimersByTimeAsync(360_000);
+        expect(mockOrbitcard.getCardList).toHaveBeenCalledTimes(2);
+    });
+
+    it('prevents overlapping runs, clamps short intervals, supports disable=0, and recovers from upstream failure', async () => {
+        const disabled = createOrbitcardAutoSync({ store: {}, intervalMs: 0, logger: { log: vi.fn(), warn: vi.fn() } });
+        expect(disabled.start()).toBe(false);
+        expect(disabled.getStatus().enabled).toBe(false);
+
+        const clamped = createOrbitcardAutoSync({ store: {}, intervalMs: 5_000, logger: { log: vi.fn(), warn: vi.fn() } });
+        expect(clamped.getStatus().intervalMs).toBe(MIN_ORBITCARD_AUTO_SYNC_INTERVAL_MS);
+
+        let releaseFirstCall;
+        const firstCallGate = new Promise((resolve) => { releaseFirstCall = resolve; });
+        const mockOrbitcard = {
+            ...orbitcard,
+            getCardList: vi.fn()
+                .mockImplementationOnce(async () => {
+                    await firstCallGate;
+                    return { success: false, error: 'upstream 502' };
+                })
+                .mockResolvedValueOnce({ success: true, data: [] })
+        };
+        const store = {
+            getGptApiConfig: vi.fn(async () => ({
+                card_source: 'orbitcard',
+                orbitcard_base_url: 'https://orbitcard.cc',
+                orbitcard_api_key: 'k',
+                orbitcard_api_secret: 's'
+            })),
+            getOrbitcardCardMetaByIds: vi.fn(async () => []),
+            syncOrbitcardCards: vi.fn(async () => ({ total: 0, inserted: 0, updated: 0, autoAssigned: 0, autoAssignedCards: [] }))
+        };
+
+        const logger = { log: vi.fn(), warn: vi.fn() };
+        const scheduler = createOrbitcardAutoSync({ store, orbitcard: mockOrbitcard, logger });
+
+        const p1 = scheduler.runOnce({ trigger: 'test1' });
+        const p2 = scheduler.runOnce({ trigger: 'test2' });
+        expect(await p2).toEqual({ skipped: true, reason: 'in_progress' });
+
+        releaseFirstCall();
+        const r1 = await p1;
+        expect(r1).toMatchObject({ skipped: false, success: false });
+        expect(scheduler.getStatus().lastError).toContain('upstream 502');
+        expect(logger.warn).toHaveBeenCalled();
+
+        const r3 = await scheduler.runOnce({ trigger: 'test3' });
+        expect(r3).toMatchObject({ skipped: false, success: true });
+        expect(scheduler.getStatus().lastError).toBe('');
     });
 });

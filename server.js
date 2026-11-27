@@ -5,7 +5,7 @@ const WebSocket = require('ws');
 const { config } = require('./src/config/env');
 const { createApp } = require('./src/app');
 
-const { app, store, ensureStoreReady, security, taskHub } = createApp();
+const { app, store, ensureStoreReady, security, taskHub, orbitcardAutoSync } = createApp();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, maxPayload: 64 * 1024 });
 
@@ -13,6 +13,7 @@ taskHub.attachWebSocketServer(wss, { ensureStoreReady, security });
 
 function handleShutdown(signal) {
     console.log(`[Server] 收到 ${signal}，正在清理并退出...`);
+    orbitcardAutoSync.stop();
     security.stopBackgroundTasks();
     security.markCleanShutdown();
     server.close(() => {
@@ -53,6 +54,7 @@ async function start() {
     }, 5 * 60 * 1000).unref();
 
     await security.startBackgroundTasks();
+    orbitcardAutoSync.start();
 
     server.listen(config.port, () => {
         console.log(`🚀 KC-PAY-GPT 服务已启动: http://0.0.0.0:${config.port}`);

@@ -14,7 +14,7 @@ const GPT_API_SECRET_TARGETS = [
     { urlField: 'orbitcard_base_url', secretFields: ['orbitcard_api_key', 'orbitcard_api_secret'], label: 'Orbitcard 地址' }
 ];
 
-function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSecondaryAuth }) {
+function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSecondaryAuth, orbitcardAutoSync = null }) {
     const router = forwardAsyncErrors(express.Router());
 
     router.get('/gpt-api', async (req, res) => {
@@ -204,6 +204,7 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
                 success: true,
                 plan_type: planType,
                 auto_create_card: Boolean(cfg.orbitcard_auto_create_card),
+                auto_sync: orbitcardAutoSync ? orbitcardAutoSync.getStatus() : null,
                 plus_unit_price: cfg.orbitcard_plus_unit_price ?? 20,
                 selected_product_code: cfg.orbitcard_product_code || '',
                 fetched_at: new Date().toISOString(),
@@ -387,6 +388,7 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
                 page,
                 pageSize,
                 auto_create_card: Boolean(cfg.orbitcard_auto_create_card),
+                auto_sync: orbitcardAutoSync ? orbitcardAutoSync.getStatus() : null,
                 plus_unit_price: cfg.orbitcard_plus_unit_price ?? 20,
                 reuse_limits: cfg.orbitcard_reuse_limits,
                 safety_margins: cfg.orbitcard_safety_margins

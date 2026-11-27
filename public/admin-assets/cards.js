@@ -801,9 +801,26 @@ async function loadOrbitcardUsage(showToast = false, refreshBalances = false, pa
                 modePill.className = `orbitcard-mode-pill ${data.auto_create_card ? 'is-auto' : 'is-manual'}`;
             }
             if (usageHint) {
+                const autoSync = data.auto_sync;
+                let autoSyncNote = '';
+                if (autoSync?.enabled && autoSync.intervalSeconds > 0) {
+                    const intervalLabel = autoSync.intervalSeconds % 60 === 0
+                        ? `每 ${autoSync.intervalSeconds / 60} 分钟`
+                        : `每 ${autoSync.intervalSeconds} 秒`;
+                    let lastSyncLabel = '';
+                    if (autoSync.lastSuccessAt) {
+                        const dt = new Date(autoSync.lastSuccessAt);
+                        if (!Number.isNaN(dt.getTime())) {
+                            const hh = String(dt.getHours()).padStart(2, '0');
+                            const mm = String(dt.getMinutes()).padStart(2, '0');
+                            lastSyncLabel = `（上次 ${hh}:${mm}）`;
+                        }
+                    }
+                    autoSyncNote = ` · 后台${intervalLabel}自动轻量同步${lastSyncLabel}`;
+                }
                 usageHint.textContent = data.auto_create_card
-                    ? `缺卡自动开新卡 · 同步未绑定 ACTIVE 卡按余额推算 Plus（单价 ${orbitcardStrategyPlusUnitPrice} USD · 余量 ${plusMargin} USD · 上限 ${plusLimit} 次）`
-                    : `仅用卡台已有卡（缺卡自动同步，仍无卡退回 CDK 并告警）· 自动推算 Plus：单价 ${orbitcardStrategyPlusUnitPrice} USD · 余量 ${plusMargin} USD · 上限 ${plusLimit} 次`;
+                    ? `缺卡自动开新卡${autoSyncNote} · 自动推算 Plus：单价 ${orbitcardStrategyPlusUnitPrice} USD · 余量 ${plusMargin} USD · 上限 ${plusLimit} 次`
+                    : `仅用卡台已有卡（缺卡实时同步，仍无卡退回 CDK 并告警）${autoSyncNote} · 自动推算 Plus：单价 ${orbitcardStrategyPlusUnitPrice} USD · 余量 ${plusMargin} USD · 上限 ${plusLimit} 次`;
             }
         }
         renderOrbitcardUsageTable();
