@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const QRCode = require('qrcode');
 const adminAuth = require('../security/admin-auth');
 const ipBan = require('../security/ip-ban');
 const { buildAdminLoginUrl, buildAdminPanelUrl } = require('../security/admin-paths');
@@ -423,11 +424,16 @@ function createAdminAuthRouters({
                 await store.saveAdminTotpConfig({ secret, enabled: false });
             }
             const otpauthUrl = adminAuth.getTotpUri(authConfig.email, secret);
+            const qrCodeUrl = await QRCode.toDataURL(otpauthUrl, {
+                width: 220,
+                margin: 2,
+                errorCorrectionLevel: 'M'
+            });
             return res.json({
                 success: true,
                 secret,
                 otpauthUrl,
-                qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(otpauthUrl)}`,
+                qrCodeUrl,
                 message: '请使用 Google Authenticator 扫码后输入验证码确认启用'
             });
         } catch (error) {

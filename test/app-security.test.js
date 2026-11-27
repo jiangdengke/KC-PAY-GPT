@@ -198,6 +198,9 @@ describe('Hardened security without Cloudflare Access', () => {
     let wsUrl;
     let securityRef;
     let passwordVersion = 2;
+    let totpSecret = '';
+    let totpEnabled = false;
+    let login2faMode = 'either';
     const originalSecret = process.env.ADMIN_TOKEN_SECRET;
 
     beforeAll(async () => {
@@ -214,11 +217,19 @@ describe('Hardened security without Cloudflare Access', () => {
                 passwordVersion,
                 secondaryPasswordHash: adminAuth.createPasswordHash('sec1234'),
                 secondaryPasswordVersion: 1,
-                totpEnabled: false,
-                totpSecret: '',
-                login2faMode: 'either',
+                totpEnabled,
+                totpSecret,
+                login2faMode,
                 notifyAdminLogin: false
             }),
+            saveAdminTotpConfig: async ({ secret, enabled }) => {
+                totpSecret = String(secret || '');
+                totpEnabled = Boolean(enabled);
+            },
+            saveAdmin2faLoginMode: async (mode) => {
+                login2faMode = mode;
+                return mode;
+            },
             getTelegramConfig: async () => ({
                 bot_token: '123456:TESTTOKEN',
                 admin_chat_id: '999999'
@@ -375,5 +386,45 @@ describe('Hardened security without Cloudflare Access', () => {
             ws.on('close', (code) => resolve(code));
         });
         expect(torCode).toBe(1008);
+    });
+
+    it('generates TOTP QR code locally as data URI (never third-party) and enforces TOTP-only mode when enabled', async () => {
+        const validToken = adminAuth.issueAdminToken(passwordVersion, 'owner@example.com').token;
+        const setupRes = await fetch(`${baseUrl}/api/admin/2fa/setup`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${validToken}` }
+        });
+        expect(setupRes.status).toBe(200);
+        const setupBody = await setupRes.json();
+        expect(setupBody.success).toBe(true);
+        expect(setupBody.secret).toMatch(/^[A-Z2-7]{32}$/);
+        expect(setupBody.qrCodeUrl).toMatch(/^data:image\/png;base64,/);
+        expect(setupBody.qrCodeUrl).not.toContain('qrserver.com');
+
+        // Enable TOTP-only mode and confirm TOTP active
+        login2faMode = 'totp';
+        totpEnabled = true;
+
+        const loginRes = await fetch(`${baseUrl}/api/admin/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Real-IP': '203.0.113.55' },
+            body: JSON.stringify({ email: 'owner@example.com', password: 'StrongPass!2026' })
+        });
+        expect(loginRes.status).toBe(200);
+        const loginBody = await loginRes.json();
+        expect(loginBody.requires2fa).toBe(true);
+        expect(loginBody.methods).toEqual(['totp']);
+        expect(loginBody.defaultMethod).toBe('totp');
+
+        // Telegram login code sending must be rejected once TOTP-only mode is active
+        const tgSendRes = await fetch(`${baseUrl}/api/admin/login/send-tg-code`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Real-IP': '203.0.113.55' },
+            body: JSON.stringify({ challengeToken: loginBody.challengeToken })
+        });
+        expect(tgSendRes.status).toBe(400);
+
+        totpEnabled = false;
+        login2faMode = 'either';
     });
 });

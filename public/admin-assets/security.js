@@ -112,8 +112,13 @@ async function setupAdmin2fa() {
         document.getElementById('totp_setup_box').style.display = 'block';
         const qrImg = document.getElementById('totp_qr_img');
         if (qrImg) {
-            qrImg.src = data.qrCodeUrl || `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(data.otpauthUrl || '')}`;
-            qrImg.style.display = 'block';
+            if (data.qrCodeUrl) {
+                qrImg.src = data.qrCodeUrl;
+                qrImg.style.display = 'block';
+            } else {
+                qrImg.removeAttribute('src');
+                qrImg.style.display = 'none';
+            }
         }
         document.getElementById('totp_secret_text').innerHTML = `
             <div style="margin-bottom:6px;">请用 Google Authenticator 扫描上方二维码</div>
