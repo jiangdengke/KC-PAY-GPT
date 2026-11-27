@@ -156,7 +156,7 @@ function createApp({
     app.use(express.static(publicDir, { dotfiles: 'ignore' }));
 
     // External webhook (X-API-Key)
-    app.use('/api/external', createExternalRouter({ store, ensureStoreReady }));
+    app.use('/api/external', createExternalRouter({ store, ensureStoreReady, security }));
 
     // Public customer routes
     const { router: publicRouter, handleActivationRequest } = createPublicRouter({

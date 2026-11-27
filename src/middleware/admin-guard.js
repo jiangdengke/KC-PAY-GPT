@@ -42,11 +42,15 @@ function createAdminGuards({ store, ensureStoreReady, security, cfAccessConfig =
             const token = extractBearerToken(req);
             const payload = adminAuth.verifyAdminToken(token);
             if (!payload) {
+                if (token) {
+                    security?.noteInvalidAdminToken?.(adminAuth.resolveClientIp(req), req.originalUrl || req.path);
+                }
                 return res.status(401).json({ success: false, message: '未登录或登录已过期，请重新登录' });
             }
 
             const authConfig = await store.getAdminAuthConfig();
             if (Number(payload.pv || 0) !== Number(authConfig.passwordVersion || 1)) {
+                security?.noteInvalidAdminToken?.(adminAuth.resolveClientIp(req), req.originalUrl || req.path);
                 return res.status(401).json({ success: false, message: '密码已变更，请重新登录' });
             }
 

@@ -13,6 +13,8 @@ const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_LOCK_MS = 30 * 60 * 1000;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const TG_CODE_MAX_ATTEMPTS = 5;
+const TG_CODE_RESEND_COOLDOWN_MS = 30 * 1000;
+const TG_CODE_MAX_SENDS_PER_CHALLENGE = 3;
 // 全站登录失败上限：换 IP 也绕不过去；超过后所有来源暂停登录一个窗口期
 const LOGIN_GLOBAL_MAX_ATTEMPTS = 100;
 const LOGIN_GLOBAL_KEY = '*';
@@ -162,7 +164,11 @@ function verifySignedToken(token, { expectedSub, secret = resolveAdminTokenSecre
     if (!token || typeof token !== 'string') {
         return null;
     }
-    const [encodedPayload, signature] = token.split('.');
+    const parts = token.split('.');
+    if (parts.length !== 2) {
+        return null;
+    }
+    const [encodedPayload, signature] = parts;
     if (!encodedPayload || !signature) {
         return null;
     }
@@ -172,7 +178,8 @@ function verifySignedToken(token, { expectedSub, secret = resolveAdminTokenSecre
     }
     try {
         const payload = JSON.parse(decodeBase64Url(encodedPayload));
-        if (!payload || !payload.exp || Date.now() >= Number(payload.exp)) {
+        const exp = Number(payload?.exp);
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Number.isFinite(exp) || Date.now() >= exp) {
             return null;
         }
         if (expectedSub && payload.sub !== expectedSub) {
@@ -354,17 +361,23 @@ function restoreLoginFailures(rows = []) {
  * 例如一次查 100 个码就消耗 100。返回 { allowed, retryAfterSec }。
  */
 function consumeRequestQuota(bucket, ip, { windowMs, max, cost = 1 }) {
+    const maxLimit = Number(max);
+    const windowDuration = Number(windowMs);
+    if (!Number.isFinite(maxLimit) || maxLimit <= 0 || !Number.isFinite(windowDuration) || windowDuration <= 0) {
+        throw new TypeError(`consumeRequestQuota(${bucket}) requires positive finite windowMs and max`);
+    }
+    const normalizedCost = Math.max(1, Number(cost) || 1);
     const key = `${bucket}|${toRateLimitKey(ip)}`;
     const now = Date.now();
     let entry = requestQuotas.get(key);
     if (!entry || now >= entry.resetAt) {
-        entry = { used: 0, resetAt: now + windowMs };
+        entry = { used: 0, resetAt: now + windowDuration };
     }
-    if (entry.used + cost > max) {
+    if (entry.used + normalizedCost > maxLimit) {
         requestQuotas.set(key, entry);
         return { allowed: false, retryAfterSec: Math.max(1, Math.ceil((entry.resetAt - now) / 1000)) };
     }
-    entry.used += cost;
+    entry.used += normalizedCost;
     requestQuotas.set(key, entry);
     if (requestQuotas.size > MAX_TRACKED_QUOTA_KEYS) {
         for (const [quotaKey, quota] of requestQuotas) {
@@ -419,6 +432,45 @@ function markChallengeUsed(challenge) {
     const state = challengeStates.get(cid) || { attempts: 0, exp: Number(challenge.exp) || Date.now() + CHALLENGE_TTL_MS };
     state.used = true;
     challengeStates.set(cid, state);
+}
+
+function consumeTelegramCodeSendQuota(challenge, now = Date.now()) {
+    const cid = String(challenge?.cid || '').trim();
+    if (!cid) {
+        return { ok: false, reason: 'invalid', retryAfterSec: 0 };
+    }
+    for (const [key, state] of challengeStates) {
+        if (state.exp <= now) challengeStates.delete(key);
+    }
+    const state = challengeStates.get(cid) || {
+        attempts: 0,
+        used: false,
+        tgSends: 0,
+        lastTgSendAt: 0,
+        exp: Number(challenge.exp) || now + CHALLENGE_TTL_MS
+    };
+    if (state.used) {
+        return { ok: false, reason: 'used', retryAfterSec: 0 };
+    }
+    if (state.attempts >= CHALLENGE_MAX_ATTEMPTS) {
+        return { ok: false, reason: 'too_many_attempts', retryAfterSec: 0 };
+    }
+    const sends = Number(state.tgSends || 0);
+    if (sends >= TG_CODE_MAX_SENDS_PER_CHALLENGE) {
+        return { ok: false, reason: 'too_many_sends', retryAfterSec: Math.max(1, Math.ceil((state.exp - now) / 1000)) };
+    }
+    const lastSendAt = Number(state.lastTgSendAt || 0);
+    if (lastSendAt > 0 && now - lastSendAt < TG_CODE_RESEND_COOLDOWN_MS) {
+        return {
+            ok: false,
+            reason: 'cooldown',
+            retryAfterSec: Math.max(1, Math.ceil((TG_CODE_RESEND_COOLDOWN_MS - (now - lastSendAt)) / 1000))
+        };
+    }
+    state.tgSends = sends + 1;
+    state.lastTgSendAt = now;
+    challengeStates.set(cid, state);
+    return { ok: true, retryAfterSec: 0 };
 }
 
 function clearLoginAttempts(key) {
@@ -504,9 +556,13 @@ function getTotpUri(email, secret, issuer = 'PlusPapay') {
 function storeTelegramLoginCode(challengeId, code) {
     const key = String(challengeId || '').trim();
     if (!key) return;
+    const now = Date.now();
+    for (const [existingKey, existing] of tgLoginCodes) {
+        if (existing.exp <= now) tgLoginCodes.delete(existingKey);
+    }
     tgLoginCodes.set(key, {
         code: String(code),
-        exp: Date.now() + TG_CODE_TTL_MS,
+        exp: now + TG_CODE_TTL_MS,
         attempts: 0
     });
 }
@@ -622,6 +678,7 @@ module.exports = {
     clearLoginAttempts,
     consumeChallengeAttempt,
     markChallengeUsed,
+    consumeTelegramCodeSendQuota,
     consumeRequestQuota,
     safeJsonReviver,
     MIN_IMPORTED_CDK_LENGTH,

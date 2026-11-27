@@ -2,8 +2,10 @@
 
 const crypto = require('crypto');
 const http = require('http');
+const WebSocket = require('ws');
 const { createApp } = require('../src/app');
 const adminAuth = require('../src/security/admin-auth');
+const ipBan = require('../src/security/ip-ban');
 
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'app-sec-key-1', alg: 'RS256' };
@@ -186,5 +188,192 @@ describe('Express app security boundaries', () => {
         expect(missingCdkRes.status).toBe(403);
         const missingBody = await missingCdkRes.json();
         expect(missingBody.success).toBe(false);
+    });
+});
+
+describe('Hardened security without Cloudflare Access', () => {
+    let server;
+    let wss;
+    let baseUrl;
+    let wsUrl;
+    let securityRef;
+    let passwordVersion = 2;
+    const originalSecret = process.env.ADMIN_TOKEN_SECRET;
+
+    beforeAll(async () => {
+        process.env.ADMIN_TOKEN_SECRET = 'e'.repeat(64);
+        const store = {
+            ensureReady: async () => true,
+            getAdminPaths: async () => ({
+                loginPath: 'custom-login-x',
+                panelPath: 'custom-panel-x'
+            }),
+            getAdminAuthConfig: async () => ({
+                email: 'owner@example.com',
+                passwordHash: adminAuth.createPasswordHash('StrongPass!2026'),
+                passwordVersion,
+                secondaryPasswordHash: adminAuth.createPasswordHash('sec1234'),
+                secondaryPasswordVersion: 1,
+                totpEnabled: false,
+                totpSecret: '',
+                login2faMode: 'either',
+                notifyAdminLogin: false
+            }),
+            getTelegramConfig: async () => ({
+                bot_token: '123456:TESTTOKEN',
+                admin_chat_id: '999999'
+            }),
+            getAppConfigValue: async (key, fallback = '') => (key === 'external_card_api_key' ? 'ext-secret-key-1234567890' : fallback),
+            listActiveIpBanRules: async () => [],
+            listRecentAdminLoginIps: async () => [],
+            saveIpBan: async () => {},
+            insertAdminLoginLog: async () => {},
+            verifyCdkDetails: async () => null,
+            getTaskStatus: async () => null
+        };
+
+        const { app, ensureStoreReady, security, taskHub } = createApp({
+            store,
+            cfAccessConfig: { teamDomain: '', aud: '' }
+        });
+        securityRef = security;
+        security.ipBanState.matcher = ipBan.createBanMatcher([
+            { id: 77, cidr: '198.51.100.77/32', expires_at: null }
+        ]);
+
+        server = http.createServer(app);
+        wss = new WebSocket.Server({ server, maxPayload: 64 * 1024 });
+        taskHub.attachWebSocketServer(wss, { ensureStoreReady, security });
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const { port } = server.address();
+        baseUrl = `http://127.0.0.1:${port}`;
+        wsUrl = `ws://127.0.0.1:${port}`;
+    });
+
+    afterAll(async () => {
+        if (wss) {
+            await new Promise((resolve) => wss.close(resolve));
+        }
+        if (server) {
+            await new Promise((resolve) => server.close(resolve));
+        }
+        if (originalSecret === undefined) {
+            delete process.env.ADMIN_TOKEN_SECRET;
+        } else {
+            process.env.ADMIN_TOKEN_SECRET = originalSecret;
+        }
+    });
+
+    it('rejects every forged, tampered, stale-pv, or challenge-replayed admin Bearer token with 401 when CF Access is off', async () => {
+        const legacyAppSecret = crypto.createHash('sha256').update('web_redeem:/app:admin-token-secret').digest('hex');
+        const forgedLegacy = adminAuth.issueSignedToken({ sub: 'admin', permissions: ['admin'], pv: 2 }, 60_000, legacyAppSecret).token;
+        const forgedWrongSecret = adminAuth.issueSignedToken({ sub: 'admin', permissions: ['admin'], pv: 2 }, 60_000, 'f'.repeat(64)).token;
+        const stalePvToken = adminAuth.issueAdminToken(1, 'owner@example.com').token;
+        const { token: challengeToken } = adminAuth.issueLoginChallenge({
+            email: 'owner@example.com',
+            passwordVersion: 2,
+            ip: '198.51.100.5',
+            fingerprint: 'fp'
+        });
+        const validToken = adminAuth.issueAdminToken(2, 'owner@example.com').token;
+        const extraDotToken = `${validToken}.tamper`;
+
+        const badTokens = [
+            '',
+            'not-a-token',
+            forgedLegacy,
+            forgedWrongSecret,
+            stalePvToken,
+            challengeToken,
+            extraDotToken
+        ];
+
+        for (const token of badTokens) {
+            const headers = token ? { Authorization: `Bearer ${token}` } : {};
+            const res = await fetch(`${baseUrl}/api/admin/data`, { headers });
+            expect(res.status, `expected 401 for bad token`).toBe(401);
+        }
+
+        // Valid token with matching pv succeeds
+        const okRes = await fetch(`${baseUrl}/api/admin/session`, {
+            headers: { Authorization: `Bearer ${validToken}` }
+        });
+        expect(okRes.status).toBe(200);
+    });
+
+    it('rejects 2FA verify and send-tg-code when passwordVersion changed after challenge was issued', async () => {
+        passwordVersion = 2;
+        const { token: oldChallenge } = adminAuth.issueLoginChallenge({
+            email: 'owner@example.com',
+            passwordVersion: 2,
+            ip: '198.51.100.8',
+            fingerprint: 'fp'
+        });
+
+        // Password rotates to version 3
+        passwordVersion = 3;
+
+        const verifyRes = await fetch(`${baseUrl}/api/admin/login/verify-2fa`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Real-IP': '198.51.100.8' },
+            body: JSON.stringify({ challengeToken: oldChallenge, method: 'telegram', code: '123456' })
+        });
+        expect(verifyRes.status).toBe(401);
+
+        const sendRes = await fetch(`${baseUrl}/api/admin/login/send-tg-code`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Real-IP': '198.51.100.8' },
+            body: JSON.stringify({ challengeToken: oldChallenge })
+        });
+        expect(sendRes.status).toBe(401);
+
+        passwordVersion = 2;
+    });
+
+    it('actually enforces public CDK lookup quota (returns 429 with Retry-After) and external cards quota', async () => {
+        const ip = '203.0.113.199';
+        const batch = Array.from({ length: 100 }, (_, i) => `KC-QUOTATEST000${String(i).padStart(3, '0')}`);
+
+        // 6 batches x 100 = 600 quota units (exact limit)
+        for (let i = 0; i < 6; i += 1) {
+            const res = await fetch(`${baseUrl}/api/cdk/query-batch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Real-IP': ip },
+                body: JSON.stringify({ cdks: batch })
+            });
+            expect(res.status).toBe(200);
+        }
+
+        // 601st lookup must be throttled with 429 + Retry-After
+        const throttled = await fetch(`${baseUrl}/api/verify-cdk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Real-IP': ip },
+            body: JSON.stringify({ cdk: 'KC-QUOTATEST999999' })
+        });
+        expect(throttled.status).toBe(429);
+        expect(Number(throttled.headers.get('retry-after'))).toBeGreaterThan(0);
+
+        // External card push rejects bad API key and enforces quota
+        const badKey = await fetch(`${baseUrl}/api/external/cards/push`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Real-IP': '203.0.113.200', 'X-API-Key': 'wrong-key' },
+            body: JSON.stringify({ cards: [] })
+        });
+        expect(badKey.status).toBe(401);
+    });
+
+    it('closes WebSocket connections from banned IPs and Tor exit nodes with 1008', async () => {
+        const bannedCode = await new Promise((resolve) => {
+            const ws = new WebSocket(wsUrl, { headers: { 'X-Real-IP': '198.51.100.77' } });
+            ws.on('close', (code) => resolve(code));
+        });
+        expect(bannedCode).toBe(1008);
+
+        securityRef.torExitState.ips.add('185.220.101.99');
+        const torCode = await new Promise((resolve) => {
+            const ws = new WebSocket(wsUrl, { headers: { 'X-Real-IP': '185.220.101.99' } });
+            ws.on('close', (code) => resolve(code));
+        });
+        expect(torCode).toBe(1008);
     });
 });

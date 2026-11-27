@@ -4,10 +4,13 @@ const express = require('express');
 const adminAuth = require('../security/admin-auth');
 const { forwardAsyncErrors } = require('../middleware/async-handler');
 
-function createExternalRouter({ store, ensureStoreReady }) {
+function createExternalRouter({ store, ensureStoreReady, security }) {
     const router = forwardAsyncErrors(express.Router());
 
     router.post('/cards/push', async (req, res) => {
+        if (security && !security.enforcePublicCdkQuota(req, res, 'external_cards')) {
+            return;
+        }
         try {
             await ensureStoreReady();
             const providedKey = String(req.headers['x-api-key'] || '').trim();
@@ -16,6 +19,7 @@ function createExternalRouter({ store, ensureStoreReady }) {
             }
             const storedKey = await store.getAppConfigValue('external_card_api_key', '');
             if (!storedKey || !adminAuth.safeEqualString(providedKey, storedKey)) {
+                security?.noteInvalidExternalKey?.(security.getClientIp(req));
                 return res.status(401).json({ success: false, error: '无效的 API Key' });
             }
 

@@ -7,9 +7,9 @@ const { createApp } = require('./src/app');
 
 const { app, store, ensureStoreReady, security, taskHub } = createApp();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocket.Server({ server, maxPayload: 64 * 1024 });
 
-taskHub.attachWebSocketServer(wss, { ensureStoreReady });
+taskHub.attachWebSocketServer(wss, { ensureStoreReady, security });
 
 function handleShutdown(signal) {
     console.log(`[Server] 收到 ${signal}，正在清理并退出...`);

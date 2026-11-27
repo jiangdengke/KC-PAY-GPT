@@ -13,8 +13,10 @@ const {
 } = require('../services/telegram-notify');
 
 const PUBLIC_CDK_QUOTAS = {
-    lookup: { limit: 60, windowMs: 10 * 60 * 1000 },
-    activation: { limit: 15, windowMs: 10 * 60 * 1000 }
+    lookup: { max: 600, windowMs: 10 * 60 * 1000 },
+    activation: { max: 30, windowMs: 10 * 60 * 1000 },
+    subscription: { max: 30, windowMs: 10 * 60 * 1000 },
+    external_cards: { max: 60, windowMs: 10 * 60 * 1000 }
 };
 
 const IP_BAN_DURATION_DAYS = {
@@ -26,7 +28,7 @@ const IP_BAN_DURATION_DAYS = {
 
 const AUTO_BAN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 const AUTO_BAN_WINDOW_MS = 24 * 60 * 60 * 1000;
-const AUTO_BAN_THRESHOLDS = { wrong_email: 3, wrong_password: 10, throttled: 5 };
+const AUTO_BAN_THRESHOLDS = { wrong_email: 3, wrong_password: 10, throttled: 5, invalid_token: 20 };
 const MAX_AUTO_BAN_KEYS = 20000;
 
 const TOR_EXIT_URLS = [
@@ -58,6 +60,8 @@ function createSecurityManager({ store, ensureStoreReady, dataDir }) {
     const autoBanCounters = new Map();
     const alertWindows = new Map();
     const rejectedLoginBursts = [];
+    const invalidTokenBursts = [];
+    const invalidExternalKeyBursts = [];
     const timers = [];
 
     function getClientIp(req) {
@@ -109,6 +113,44 @@ function createSecurityManager({ store, ensureStoreReady, dataDir }) {
             const uniqueIps = new Set(rejectedLoginBursts.map((item) => item.ip)).size;
             alertSecurity('login-burst', '🚨 检测到后台登录失败激增', [
                 `近 5 分钟已拒绝 ${rejectedLoginBursts.length} 次后台登录请求`,
+                `涉及来源数: ${uniqueIps}`,
+                `最新来源: ${ip || 'unknown'}`
+            ], { windowMs: 30 * 60 * 1000, max: 1 });
+        }
+    }
+
+    function noteInvalidAdminToken(ip, reqPath = '') {
+        const now = Date.now();
+        invalidTokenBursts.push({ ip, at: now });
+        const cutoff = now - 5 * 60 * 1000;
+        while (invalidTokenBursts.length && invalidTokenBursts[0].at < cutoff) {
+            invalidTokenBursts.shift();
+        }
+        if (invalidTokenBursts.length >= 15) {
+            const uniqueIps = new Set(invalidTokenBursts.map((item) => item.ip)).size;
+            alertSecurity('invalid-admin-token-burst', '🚨 检测到疑似伪造或爆破管理员令牌', [
+                `近 5 分钟已拦截 ${invalidTokenBursts.length} 次无效 Bearer 令牌请求`,
+                `涉及来源数: ${uniqueIps}`,
+                `最新来源: ${ip || 'unknown'}`,
+                reqPath ? `目标路径: ${String(reqPath).slice(0, 100)}` : ''
+            ].filter(Boolean), { windowMs: 30 * 60 * 1000, max: 1 });
+        }
+        noteAutoBanSignal(ip, 'invalid_token', String(reqPath || '').slice(0, 80)).catch((error) => {
+            console.warn(`[IPBan] 自动封禁失败: ${error.message}`);
+        });
+    }
+
+    function noteInvalidExternalKey(ip) {
+        const now = Date.now();
+        invalidExternalKeyBursts.push({ ip, at: now });
+        const cutoff = now - 5 * 60 * 1000;
+        while (invalidExternalKeyBursts.length && invalidExternalKeyBursts[0].at < cutoff) {
+            invalidExternalKeyBursts.shift();
+        }
+        if (invalidExternalKeyBursts.length >= 15) {
+            const uniqueIps = new Set(invalidExternalKeyBursts.map((item) => item.ip)).size;
+            alertSecurity('invalid-external-key-burst', '🚨 检测到外部推卡 API Key 试探激增', [
+                `近 5 分钟已拒绝 ${invalidExternalKeyBursts.length} 次无效 X-API-Key 请求`,
                 `涉及来源数: ${uniqueIps}`,
                 `最新来源: ${ip || 'unknown'}`
             ], { windowMs: 30 * 60 * 1000, max: 1 });
@@ -256,7 +298,8 @@ function createSecurityManager({ store, ensureStoreReady, dataDir }) {
         const reasonLabels = {
             wrong_email: `自动封禁：24h 内 ${threshold} 次使用不存在的管理员邮箱尝试登录`,
             wrong_password: `自动封禁：24h 内 ${threshold} 次管理员登录失败`,
-            throttled: `自动封禁：触发登录限流后仍持续尝试 ${threshold} 次`
+            throttled: `自动封禁：触发登录限流后仍持续尝试 ${threshold} 次`,
+            invalid_token: `自动封禁：24h 内 ${threshold} 次携带无效管理员令牌访问后台`
         };
         const reason = detail ? `${reasonLabels[signal]}（${detail}）` : reasonLabels[signal];
         await store.saveIpBan({ cidr, reason, source: 'auto', expiresAt });
@@ -275,21 +318,25 @@ function createSecurityManager({ store, ensureStoreReady, dataDir }) {
         return noteAutoBanSignal(ip, 'throttled', reason || 'rate_limited');
     }
 
-    function ipBanMiddleware(req, res, next) {
+    function isIpBlocked(req) {
         const ip = getClientIp(req);
         const normalizedIp = stripZone(ip);
         if (normalizedIp && net.isIP(normalizedIp) && torExitState.ips.has(normalizedIp)) {
             torExitState.hits += 1;
-            if (req.path.startsWith('/api/')) {
-                return res.status(403).json({ success: false, message: '拒绝访问' });
-            }
-            return res.status(403).type('text/plain').send('Forbidden');
+            return true;
         }
         const matched = ipBanState.matcher.match(ip);
         if (!matched) {
-            return next();
+            return false;
         }
         ipBanPendingHits.set(matched.id, (ipBanPendingHits.get(matched.id) || 0) + 1);
+        return true;
+    }
+
+    function ipBanMiddleware(req, res, next) {
+        if (!isIpBlocked(req)) {
+            return next();
+        }
         if (req.path.startsWith('/api/')) {
             return res.status(403).json({ success: false, message: '拒绝访问' });
         }
@@ -394,11 +441,14 @@ function createSecurityManager({ store, ensureStoreReady, dataDir }) {
         alertSecurity,
         alertUnexpectedError,
         noteRejectedAdminLogin,
+        noteInvalidAdminToken,
+        noteInvalidExternalKey,
         markCleanShutdown,
         refreshIpBans,
         flushIpBanHits,
         noteAutoBanSignal,
         recordThrottledLoginAttempt,
+        isIpBlocked,
         ipBanMiddleware,
         enforcePublicCdkQuota,
         logAdminSecurityEvent,

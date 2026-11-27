@@ -240,6 +240,9 @@ function createPublicRouter({
     });
 
     router.post('/api/public/subscription/check', async (req, res) => {
+        if (!security.enforcePublicCdkQuota(req, res, 'subscription')) {
+            return;
+        }
         try {
             const rawSession = String(req.body?.session || req.body?.token || '').trim().replace(/^\uFEFF/, '');
             if (!rawSession) {

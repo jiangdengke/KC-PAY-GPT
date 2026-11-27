@@ -58,6 +58,29 @@ describe('admin token secret', () => {
         process.env.ADMIN_TOKEN_SECRET = 'b'.repeat(adminAuth.MIN_ADMIN_TOKEN_SECRET_LENGTH);
         expect(adminAuth.verifyAdminToken(token)).toBeNull();
     });
+
+    it('rejects malformed tokens, extra dot segments, alg:none, tampered payloads, and replayed challenges', () => {
+        process.env.ADMIN_TOKEN_SECRET = 'd'.repeat(adminAuth.MIN_ADMIN_TOKEN_SECRET_LENGTH);
+        const { token } = adminAuth.issueAdminToken(2, 'admin@example.com');
+        const [encodedPayload, signature] = token.split('.');
+
+        // Extra dot segment appended
+        expect(adminAuth.verifyAdminToken(`${token}.extra`)).toBeNull();
+        // Tampered payload with original signature
+        const tamperedPayload = Buffer.from(JSON.stringify({ sub: 'admin', permissions: ['admin'], pv: 99, exp: Date.now() + 60000 })).toString('base64url');
+        expect(adminAuth.verifyAdminToken(`${tamperedPayload}.${signature}`)).toBeNull();
+        // Standard JWT alg:none style 3-part token
+        const algNone = `${Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')}.${encodedPayload}.`;
+        expect(adminAuth.verifyAdminToken(algNone)).toBeNull();
+        // Login challenge token cannot be replayed as an admin Bearer token
+        const { token: challengeToken } = adminAuth.issueLoginChallenge({
+            email: 'admin@example.com',
+            passwordVersion: 2,
+            ip: '198.51.100.1',
+            fingerprint: 'fp'
+        });
+        expect(adminAuth.verifyAdminToken(challengeToken)).toBeNull();
+    });
 });
 
 describe('findSavedSecretRedirect', () => {
@@ -167,6 +190,18 @@ describe('2FA challenge attempts', () => {
             expect(adminAuth.generateTelegramLoginCode()).toMatch(/^[1-9]\d{5}$/);
         }
     });
+
+    it('enforces resend cooldown and max send cap per challenge for Telegram login codes', () => {
+        const auth = freshAdminAuth();
+        const base = Date.now();
+        const challenge = { cid: 'challenge-tg-1', exp: base + 5 * 60 * 1000 };
+
+        expect(auth.consumeTelegramCodeSendQuota(challenge, base)).toMatchObject({ ok: true });
+        expect(auth.consumeTelegramCodeSendQuota(challenge, base + 5_000)).toMatchObject({ ok: false, reason: 'cooldown' });
+        expect(auth.consumeTelegramCodeSendQuota(challenge, base + 31_000)).toMatchObject({ ok: true });
+        expect(auth.consumeTelegramCodeSendQuota(challenge, base + 62_000)).toMatchObject({ ok: true });
+        expect(auth.consumeTelegramCodeSendQuota(challenge, base + 95_000)).toMatchObject({ ok: false, reason: 'too_many_sends' });
+    });
 });
 
 describe('public request quotas', () => {
@@ -189,6 +224,13 @@ describe('public request quotas', () => {
         expect(auth.consumeRequestQuota('activation', '2605:a140:2361:126::1', limits).allowed).toBe(true);
         expect(auth.consumeRequestQuota('activation', '2605:a140:2361:126::2', limits).allowed).toBe(true);
         expect(auth.consumeRequestQuota('activation', '2605:a140:2361:126:abcd::9', limits).allowed).toBe(false);
+    });
+
+    it('throws when max or windowMs is missing or non-positive (prevents silent quota bypass)', () => {
+        const auth = freshAdminAuth();
+        expect(() => auth.consumeRequestQuota('lookup', '198.51.100.1', { limit: 60, windowMs: 60_000 })).toThrow(TypeError);
+        expect(() => auth.consumeRequestQuota('lookup', '198.51.100.1', { max: 0, windowMs: 60_000 })).toThrow(TypeError);
+        expect(() => auth.consumeRequestQuota('lookup', '198.51.100.1', { max: 10, windowMs: 0 })).toThrow(TypeError);
     });
 });
 

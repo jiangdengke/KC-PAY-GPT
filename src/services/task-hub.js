@@ -1,6 +1,7 @@
 'use strict';
 
 const WebSocket = require('ws');
+const adminAuth = require('../security/admin-auth');
 const runtimeLog = require('../utils/runtime-log');
 const { sanitizeCustomerTaskMessage } = require('../utils/task-messages');
 
@@ -99,20 +100,25 @@ function createTaskHub({ store }) {
         logger(`[Task ${jobKey}] ${message}`);
     }
 
-    function attachWebSocketServer(wss, { ensureStoreReady }) {
-        wss.on('connection', (ws) => {
+    function attachWebSocketServer(wss, { ensureStoreReady, security } = {}) {
+        wss.on('connection', (ws, req) => {
             let subscribedJobKey = null;
 
             ws.on('error', (error) => {
                 console.warn(`[WS] 连接异常: ${error?.message || error}`);
             });
 
+            if (security?.isIpBlocked?.(req)) {
+                ws.close(1008, 'Forbidden');
+                return;
+            }
+
             ws.on('message', async (message) => {
                 try {
-                    const data = JSON.parse(message.toString());
-                    if (data.type === 'subscribe' && data.jobKey) {
-                        const nextJobKey = String(data.jobKey).trim();
-                        if (!nextJobKey) return;
+                    const data = JSON.parse(message.toString(), adminAuth.safeJsonReviver);
+                    if (data?.type === 'subscribe' && typeof data.jobKey === 'string') {
+                        const nextJobKey = data.jobKey.trim();
+                        if (!nextJobKey || nextJobKey.length > 128) return;
                         if (subscribedJobKey && subscribedJobKey !== nextJobKey) {
                             unsubscribeTaskClient(subscribedJobKey, ws);
                         }

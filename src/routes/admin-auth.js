@@ -151,16 +151,52 @@ function createAdminAuthRouters({
 
     publicAuthRouter.post('/login/send-tg-code', async (req, res) => {
         const challengeToken = String(req.body?.challengeToken || '').trim();
+        const clientMeta = adminAuth.getClientMeta(req);
         const challenge = adminAuth.verifyLoginChallenge(challengeToken);
         if (!challenge) {
             return res.status(401).json({ success: false, message: '登录会话已过期，请重新登录' });
         }
 
+        const rate = adminAuth.checkLoginRateLimit(clientMeta.ip, '2fa');
+        if (!rate.allowed) {
+            security.noteRejectedAdminLogin(clientMeta.ip);
+            security.recordThrottledLoginAttempt(clientMeta.ip, rate.reason).catch((error) => {
+                console.warn(`[IPBan] 自动封禁失败: ${error.message}`);
+            });
+            return res.status(429).json({
+                success: false,
+                message: `操作过于频繁，请 ${rate.retryAfterSec} 秒后再试`
+            });
+        }
+
         try {
             await ensureStoreReady();
+            const authConfig = await store.getAdminAuthConfig();
+            if (Number(challenge.pv || 0) !== Number(authConfig.passwordVersion || 1)) {
+                return res.status(401).json({ success: false, message: '密码已变更，请重新登录' });
+            }
+            const telegramSettings = await store.getTelegramConfig();
+            const methods = adminAuth.resolveLogin2faMethods(authConfig, telegramSettings);
+            if (!methods.includes('telegram')) {
+                return res.status(400).json({ success: false, message: '未启用 Telegram 验证码登录' });
+            }
+
+            const sendQuota = adminAuth.consumeTelegramCodeSendQuota(challenge);
+            if (!sendQuota.ok) {
+                if (sendQuota.reason === 'cooldown' || sendQuota.reason === 'too_many_sends') {
+                    res.setHeader('Retry-After', String(sendQuota.retryAfterSec || 30));
+                    return res.status(429).json({
+                        success: false,
+                        message: sendQuota.reason === 'cooldown'
+                            ? `验证码发送过于频繁，请 ${sendQuota.retryAfterSec} 秒后再试`
+                            : '本次登录验证码发送次数已达上限，请重新登录'
+                    });
+                }
+                return res.status(401).json({ success: false, message: '登录会话已失效，请重新登录' });
+            }
+
             const code = adminAuth.generateTelegramLoginCode();
             adminAuth.storeTelegramLoginCode(challenge.cid, code);
-            const clientMeta = adminAuth.getClientMeta(req);
             const sendResult = await sendTelegramLoginCode(store, code, {
                 email: challenge.email,
                 ip: clientMeta.ip || challenge.ip
@@ -211,6 +247,9 @@ function createAdminAuthRouters({
         try {
             await ensureStoreReady();
             const authConfig = await store.getAdminAuthConfig();
+            if (Number(challenge.pv || 0) !== Number(authConfig.passwordVersion || 1)) {
+                return res.status(401).json({ success: false, message: '密码已变更，请重新登录' });
+            }
             const telegramSettings = await store.getTelegramConfig();
             const methods = adminAuth.resolveLogin2faMethods(authConfig, telegramSettings);
             if (!methods.includes(method)) {

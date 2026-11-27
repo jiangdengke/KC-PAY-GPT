@@ -126,7 +126,7 @@ async function authFetch(url, options = {}) {
     try {
         response = await fetch(url, { ...options, headers });
     } catch (_) {
-        throw new Error('网络错误或 Cloudflare 验证已过期，请刷新页面');
+        throw new Error('网络连接异常，请刷新页面后重试');
     }
     if (response.status === 401) {
         redirectToLogin();
