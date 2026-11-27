@@ -1175,6 +1175,17 @@ button:has(> .btn-text[style*="none"]) > .icon {
     mask: var(--icon-circle-alert) center / contain no-repeat;
 }
 
+.status-info {
+    border-color: var(--primary-border, rgba(59, 130, 246, 0.3));
+    background: var(--primary-soft, rgba(59, 130, 246, 0.1));
+    color: var(--primary-text, var(--text-main));
+}
+
+.status-info::before {
+    -webkit-mask: var(--icon-info, var(--icon-circle-check)) center / contain no-repeat;
+    mask: var(--icon-info, var(--icon-circle-check)) center / contain no-repeat;
+}
+
 /* 单个查询结果自带卡片，不再套一层提示框 */
 .status-message:has(.query-result-card) {
     padding: 0;
@@ -1296,6 +1307,11 @@ button:has(> .btn-text[style*="none"]) > .icon {
 }
 
 .batch-query-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
     padding: 12px 16px;
     border-bottom: 1px solid var(--divider);
     background: var(--surface-soft);
@@ -1304,12 +1320,31 @@ button:has(> .btn-text[style*="none"]) > .icon {
     font-weight: 600;
 }
 
+.batch-copy-btn {
+    height: 28px;
+    padding: 0 11px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-main);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.15s, background-color 0.15s;
+}
+
+.batch-copy-btn:hover {
+    border-color: var(--primary-border);
+    color: var(--primary-text);
+    background: var(--surface-soft);
+}
+
 .batch-query-row {
     display: grid;
-    grid-template-columns: minmax(150px, 1.35fr) minmax(58px, 0.6fr) minmax(100px, 1fr) minmax(170px, 1.35fr) minmax(130px, 1fr);
+    grid-template-columns: minmax(132px, 1.3fr) auto minmax(76px, 0.85fr) minmax(120px, 1.25fr) minmax(105px, 0.95fr);
     align-items: center;
-    gap: 12px;
-    padding: 11px 16px;
+    gap: 10px;
+    padding: 11px 14px;
     border-bottom: 1px solid var(--divider);
     font-size: 13px;
     transition: background-color 0.15s;
@@ -1479,8 +1514,20 @@ button:has(> .btn-text[style*="none"]) > .icon {
     margin: 10px 0 16px;
 }
 
-.subscription-query-actions button {
-    width: 100%;
+.subscription-query-actions {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+}
+
+.subscription-query-actions .btn-primary {
+    flex: 1;
+}
+
+.subscription-clear-btn {
+    flex: 0 0 auto;
+    min-width: 84px;
+    padding: 0 18px;
 }
 
 .subscription-result {
@@ -1506,6 +1553,7 @@ button:has(> .btn-text[style*="none"]) > .icon {
 .subscription-actions {
     display: flex;
     flex-wrap: wrap;
+    align-items: stretch;
     gap: 10px;
 }
 
@@ -1514,7 +1562,12 @@ button:has(> .btn-text[style*="none"]) > .icon {
 }
 
 .action-link-btn {
-    width: 100%;
+    flex: 1 1 220px;
+}
+
+.subscription-billing-actions .btn-secondary {
+    flex: 0 0 auto;
+    min-width: 128px;
 }
 
 .subscription-card .guide-steps {
@@ -1922,6 +1975,16 @@ button:has(> .btn-text[style*="none"]) > .icon {
 
     .batch-query-time {
         text-align: right;
+    }
+
+    .subscription-billing-actions {
+        flex-direction: column;
+    }
+
+    .subscription-billing-actions .action-link-btn,
+    .subscription-billing-actions .btn-secondary {
+        width: 100%;
+        flex: none;
     }
 
     .login-page .card {

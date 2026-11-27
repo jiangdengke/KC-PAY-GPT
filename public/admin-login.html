@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/style.css?v=20261014-front-refresh">
+    <link rel="stylesheet" href="/style.css?v=20261127-front-polish">
 </head>
 <body class="login-page">
     <svg class="icon-sprite" aria-hidden="true" focusable="false">
@@ -50,7 +50,7 @@
             </div>
 
             <div id="message" class="message"></div>
-            <div class="hint"><svg class="icon" aria-hidden="true"><use href="#i-lock-keyhole"></use></svg><span>登录失败 5 次将锁定 30 分钟。可在后台「系统配置 → 安全设置」切换验证方式。</span></div>
+            <div class="hint"><svg class="icon" aria-hidden="true"><use href="#i-lock-keyhole"></use></svg><span>登录失败 5 次将锁定 30 分钟。可在后台「系统配置 → 账号与安全」切换验证方式。</span></div>
         </main>
     </div>
 
@@ -97,7 +97,11 @@
 
         function showStep(name) {
             document.querySelectorAll('.step').forEach((el) => el.classList.remove('active'));
-            document.getElementById(name === '2fa' ? 'step2fa' : 'stepLogin').classList.add('active');
+            const is2fa = name === '2fa';
+            document.getElementById(is2fa ? 'step2fa' : 'stepLogin').classList.add('active');
+            setTimeout(() => {
+                document.getElementById(is2fa ? 'code' : 'email')?.focus();
+            }, 40);
         }
 
         function updateMethodUi() {
@@ -291,6 +295,7 @@
         document.getElementById('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
         document.getElementById('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') verify2fa(); });
 
+        document.getElementById('email')?.focus();
         verifyExistingToken();
     </script>
 </body>

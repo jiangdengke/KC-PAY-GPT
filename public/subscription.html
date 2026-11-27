@@ -7,12 +7,12 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f5f7fb" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0a0e1a" media="(prefers-color-scheme: dark)">
-    <title>发票助手 | AI 自助充值中心</title>
+    <title>订阅查询与发票助手 | KC ChatGPT</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/style.css?v=20261014-front-refresh">
+    <link rel="stylesheet" href="/style.css?v=20261127-front-polish">
 </head>
 
 <body class="recharge-page subscription-page">
@@ -27,14 +27,14 @@
     <div class="page-shell">
         <header class="site-hero compact-hero">
             <a href="/" class="back-home-link"><svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg>返回充值中心</a>
-            <h1>发票助手</h1>
-            <p class="hero-subtitle">粘贴 Session 即可查询当前订阅状态，并跳转 OpenAI 官方账单页面下载发票。</p>
+            <h1>订阅查询与发票助手</h1>
+            <p class="hero-subtitle">粘贴 Session 即可查询当前套餐、到期时间与自动续费状态，并一键打开 OpenAI 官方账单下载发票。</p>
         </header>
 
         <main class="recharge-card subscription-card">
             <div class="notice-banner">
                 <svg class="icon" aria-hidden="true"><use href="#i-receipt"></use></svg>
-                <p>发票由 OpenAI 官方账单系统出具。本工具仅查询订阅信息与提供操作指引，不代开发票。</p>
+                <p>发票由 OpenAI 官方账单系统出具。本工具仅实时查询订阅状态与提供下载指引，不会保存您的 Session。</p>
             </div>
 
             <section class="subscription-query-section">
@@ -43,15 +43,16 @@
                     <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener"
                         class="get-token-btn-floating">获取 Session<svg class="icon" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg></a>
                     <textarea id="sessionInput"
-                        placeholder="打开上方链接，全选复制完整 JSON 粘贴到此处（保留 user、expires、accessToken 等全部字段）"
+                        placeholder="点击右下角「获取 Session」按钮，全选复制完整 JSON 粘贴到此处（保留 user、expires、accessToken 等全部字段）"
                         rows="5"></textarea>
                 </div>
-                <p class="field-hint subscription-field-hint">Session 仅用于本次查询，不会被保存。查询完成后可在下方打开官方账单页面。</p>
+                <p class="field-hint subscription-field-hint">支持粘贴后即时校验格式（按 Ctrl/⌘ + Enter 可直接查询）；Session 仅用于本次查询，不会被保存。</p>
                 <div class="subscription-query-actions">
                     <button type="button" id="checkBtn" class="btn-primary btn-lg">
                         <span class="btn-text">查询订阅</span>
                         <div class="loader"></div>
                     </button>
+                    <button type="button" id="clearBtn" class="btn-secondary subscription-clear-btn">清空</button>
                 </div>
             </section>
 
@@ -69,6 +70,7 @@
                         <svg class="icon" aria-hidden="true"><use href="#i-external-link"></use></svg>
                         打开 OpenAI 账单页面
                     </a>
+                    <button type="button" id="copyResultBtn" class="btn-secondary">复制订阅摘要</button>
                 </div>
             </section>
 
@@ -123,11 +125,20 @@
     <script>
         const sessionInput = document.getElementById('sessionInput');
         const checkBtn = document.getElementById('checkBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const copyResultBtn = document.getElementById('copyResultBtn');
         const statusMessage = document.getElementById('statusMessage');
         const resultSection = document.getElementById('resultSection');
         const resultCard = document.getElementById('resultCard');
         const activeBadge = document.getElementById('activeBadge');
         const billingLink = document.getElementById('billingLink');
+        let latestSummaryText = '';
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+            })[char]);
+        }
 
         function setLoading(loading) {
             const text = checkBtn.querySelector('.btn-text');
@@ -189,6 +200,7 @@
                 return { valid: false, message: 'accessToken 格式不正确', session: content };
             }
 
+            let email = session.user?.email || '';
             try {
                 const payload = decodeJwtPart(parts[1]);
                 const exp = Number(payload.exp || 0);
@@ -196,11 +208,14 @@
                 if (exp && exp <= now) {
                     return { valid: false, message: 'accessToken 已过期，请重新获取 Session', session: content };
                 }
+                if (!email) {
+                    email = payload['https://api.openai.com/profile']?.email || '';
+                }
             } catch (_) {
                 return { valid: false, message: 'accessToken 无法解析', session: content };
             }
 
-            return { valid: true, session: content };
+            return { valid: true, session: content, email };
         }
 
         async function readJsonResponse(response) {
@@ -230,14 +245,24 @@
             }
             const className = type === 'success'
                 ? 'status-success'
-                : (type === 'error' ? 'status-error' : 'status-success');
+                : (type === 'error' ? 'status-error' : 'status-info');
             statusMessage.className = `status-message ${className}`;
             statusMessage.style.display = 'block';
         }
 
         function renderRow(label, value, valueClass = '') {
-            const strongClass = valueClass ? ` class="${valueClass}"` : '';
-            return `<div class="query-row"><span>${label}</span><strong${strongClass}>${value}</strong></div>`;
+            const strongClass = valueClass ? ` class="${escapeHtml(valueClass)}"` : '';
+            return `<div class="query-row"><span>${escapeHtml(label)}</span><strong${strongClass}>${escapeHtml(value)}</strong></div>`;
+        }
+
+        function sanitizeBillingUrl(rawUrl) {
+            const fallback = 'https://chatgpt.com/account/manage';
+            try {
+                const parsed = new URL(String(rawUrl || fallback));
+                return parsed.protocol === 'https:' ? parsed.toString() : fallback;
+            } catch (_) {
+                return fallback;
+            }
         }
 
         function renderResult(data) {
@@ -258,8 +283,9 @@
                 ['查询时间', data.queriedAtDisplay || '—']
             ];
 
+            latestSummaryText = rows.map(([label, value]) => `${label}：${value}`).join('\n');
             resultCard.innerHTML = rows.map(([label, value]) => renderRow(label, value)).join('');
-            billingLink.href = data.billingPageUrl || 'https://chatgpt.com/account/manage';
+            billingLink.href = sanitizeBillingUrl(data.billingPageUrl);
             resultSection.style.display = 'block';
         }
 
@@ -299,6 +325,52 @@
                 setLoading(false);
             }
         }
+
+        function previewSessionValidation() {
+            const raw = sessionInput.value.trim();
+            if (!raw) {
+                showStatus('', 'info');
+                return;
+            }
+            const check = validateSessionInput(raw);
+            if (check.valid) {
+                showStatus(check.email ? `Session 格式有效：${check.email}` : 'Session 格式有效，可点击查询', 'success');
+            } else {
+                showStatus(check.message, 'error');
+            }
+        }
+
+        sessionInput.addEventListener('input', previewSessionValidation);
+        sessionInput.addEventListener('paste', () => {
+            setTimeout(previewSessionValidation, 0);
+        });
+        sessionInput.addEventListener('keydown', (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !checkBtn.disabled) {
+                e.preventDefault();
+                checkSubscription();
+            }
+        });
+
+        clearBtn?.addEventListener('click', () => {
+            sessionInput.value = '';
+            latestSummaryText = '';
+            resultSection.style.display = 'none';
+            showStatus('', 'info');
+            sessionInput.focus();
+        });
+
+        copyResultBtn?.addEventListener('click', async () => {
+            if (!latestSummaryText) return;
+            try {
+                await navigator.clipboard.writeText(latestSummaryText);
+                copyResultBtn.textContent = '已复制摘要';
+                setTimeout(() => {
+                    copyResultBtn.textContent = '复制订阅摘要';
+                }, 1800);
+            } catch (_) {
+                showStatus('复制失败，请手动选中复制', 'error');
+            }
+        });
 
         checkBtn.addEventListener('click', checkSubscription);
     </script>

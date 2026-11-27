@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/style.css?v=20261014-front-refresh">
+    <link rel="stylesheet" href="/style.css?v=20261127-front-polish">
 </head>
 
 <body class="recharge-page">
@@ -37,7 +37,7 @@
                 <span class="feature-badge"><svg class="icon" aria-hidden="true"><use href="#i-shield-check"></use></svg>官方结账</span>
                 <span class="feature-badge"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg>极速开通</span>
                 <span class="feature-badge"><svg class="icon" aria-hidden="true"><use href="#i-rotate-ccw"></use></svg>失败可回滚</span>
-                <a href="/subscription" class="feature-badge feature-link"><svg class="icon" aria-hidden="true"><use href="#i-receipt"></use></svg>发票助手<svg class="icon icon-trail" aria-hidden="true"><use href="#i-arrow-right"></use></svg></a>
+                <a href="/subscription" class="feature-badge feature-link"><svg class="icon" aria-hidden="true"><use href="#i-receipt"></use></svg>订阅与发票<svg class="icon icon-trail" aria-hidden="true"><use href="#i-arrow-right"></use></svg></a>
             </div>
         </header>
 
@@ -64,7 +64,7 @@
 
             <div class="notice-banner">
                 <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
-                <p>ChatGPT Plus 自助开通：提交后系统将自动打开官方 Checkout 页面并完成订阅开通，无需提供账号密码。一卡一充，3-5分钟开通完毕，如遇到卡住，请联系客服进行处理。</p>
+                <p>支持 ChatGPT Plus / Pro 自助开通：提交 Session 后系统自动完成官方订阅开通，全程无需提供账号密码。通常 1–3 分钟完成，开通失败卡密自动回滚；如遇卡住请联系客服处理。</p>
             </div>
 
             <nav class="tab-nav">
@@ -74,9 +74,9 @@
 
             <div id="redeemSection">
                 <div id="step1">
-                    <label class="field-label" for="cdkInput">输入您的 Plus 充值码</label>
+                    <label class="field-label" for="cdkInput">输入您的订阅激活码（CDK）</label>
                     <section class="input-group">
-                        <input type="text" id="cdkInput" placeholder="请输入卡密 / CDK" maxlength="32" autocomplete="off" spellcheck="false">
+                        <input type="text" id="cdkInput" placeholder="请输入卡密 / CDK（支持按回车提交）" maxlength="32" autocomplete="off" spellcheck="false">
                         <button id="redeemBtn" class="btn-primary"><span class="btn-text">兑换卡密</span>
                             <div class="loader"></div>
                         </button>
@@ -93,7 +93,7 @@
                         <div class="textarea-wrapper">
                             <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener"
                                 class="get-token-btn-floating">获取 Session<svg class="icon" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg></a>
-                            <textarea id="tokenInput" placeholder="打开上方链接，全选复制完整 JSON 粘贴到此处（保留 user、expires、accessToken 等全部字段）" rows="5"></textarea>
+                            <textarea id="tokenInput" placeholder="点击右下角「获取 Session」按钮，全选复制完整 JSON 粘贴到此处（保留 user、expires、accessToken 等全部字段）" rows="5"></textarea>
                         </div>
                         <button id="startBtn" class="btn-primary btn-lg"><span class="btn-text">确认并启动自动化开通</span>
                             <div class="loader"></div>
@@ -121,7 +121,7 @@
                 <section id="batchQueryPanel" style="display: none;">
                     <label class="field-label" for="batchQueryInput">批量输入卡密</label>
                     <textarea id="batchQueryInput" class="batch-query-input" rows="8"
-                        placeholder="每行输入一个卡密，也支持用空格、逗号或分号分隔\n最多查询 100 个"></textarea>
+                        placeholder="每行输入一个卡密，也支持用空格、逗号或分号分隔&#10;最多查询 100 个"></textarea>
                     <div class="batch-query-actions">
                         <span id="batchQueryCount" class="field-hint">已输入 0 个</span>
                         <button id="batchQueryBtn" type="button" class="btn-primary">
@@ -458,18 +458,38 @@
             return 'processing';
         }
 
+        let latestBatchUnusedCdks = [];
+
         function renderBatchQueryResults(data) {
             const summary = data?.summary || {};
             const results = Array.isArray(data?.results) ? data.results : [];
+            latestBatchUnusedCdks = results
+                .filter((item) => item.status === '未使用' && item.cdk)
+                .map((item) => item.cdk);
             const summaryText = `共 ${summary.total || results.length} 个：未使用 ${summary.unused || 0}，开通中 ${summary.processing || 0}，已使用 ${summary.used || 0}，未找到 ${summary.notFound || 0}`;
-            batchQueryResults.innerHTML = `<div class="batch-query-summary">${summaryText}</div>${results.map((item) => `
+            const copyBtnHtml = latestBatchUnusedCdks.length > 0
+                ? `<button type="button" class="batch-copy-btn" id="batchCopyUnusedBtn">复制未使用 (${latestBatchUnusedCdks.length})</button>`
+                : '';
+            batchQueryResults.innerHTML = `<div class="batch-query-summary"><span>${escapeHtml(summaryText)}</span>${copyBtnHtml}</div>${results.map((item) => `
                 <div class="batch-query-row">
                     <code>${escapeHtml(item.cdk)}</code>
                     <span class="status-${getBatchStatusClass(item.status)}">${escapeHtml(item.status)}</span>
                     <span class="batch-query-plan">${escapeHtml(item.planLabel || item.type || '-')}</span>
-                    <span class="batch-query-account">${escapeHtml(item.accountEmail || '-')}</span>
+                    <span class="batch-query-account" title="${escapeHtml(item.accountEmail || '')}">${escapeHtml(item.accountEmail || '-')}</span>
                     <span class="batch-query-time">${escapeHtml(item.usedAt || '')}</span>
                 </div>`).join('')}`;
+            const copyBtn = document.getElementById('batchCopyUnusedBtn');
+            copyBtn?.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(latestBatchUnusedCdks.join('\n'));
+                    copyBtn.textContent = `已复制 ${latestBatchUnusedCdks.length} 个`;
+                    setTimeout(() => {
+                        copyBtn.textContent = `复制未使用 (${latestBatchUnusedCdks.length})`;
+                    }, 1800);
+                } catch (_) {
+                    showStatus('复制失败，请手动选中复制', 'error');
+                }
+            });
             batchQueryResults.style.display = 'block';
         }
 
@@ -514,12 +534,12 @@
                         <div class="query-result-card">
                             <div class="query-row"><span>CDK 类型</span><strong>自助激活码</strong></div>
                             <div class="query-row"><span>充值套餐</span><strong>${escapeHtml(data.data.planLabel || data.data.planType || '-')}</strong></div>
-                            <div class="query-row"><span>当前状态</span><strong class="status-${statusClass}">${statusText}</strong></div>
+                            <div class="query-row"><span>当前状态</span><strong class="status-${statusClass}">${escapeHtml(statusText)}</strong></div>
                             ${data.data.accountEmail ? `<div class="query-row"><span>充值账号</span><strong>${escapeHtml(data.data.accountEmail)}</strong></div>` : ''}
-                            ${isUsed ? `<div class="query-row"><span>使用时间</span><strong>${data.data.usedAt || '-'}</strong></div>` : ''}
+                            ${isUsed ? `<div class="query-row"><span>使用时间</span><strong>${escapeHtml(data.data.usedAt || '-')}</strong></div>` : ''}
                         </div>
                     `;
-                    showStatus(resultHtml, isUsed ? 'error' : 'success');
+                    showStatus(resultHtml, isUsed ? 'error' : 'success', { allowHtml: true });
                 } else {
                     showStatus(data.message, 'error');
                 }
@@ -662,14 +682,14 @@
                     let infoDiv = document.getElementById('redeemCdkInfo');
                     if (infoDiv) {
                         infoDiv.style.display = 'block';
-                        infoDiv.innerHTML = `<span>已验证卡密</span><code>${cdk}</code>`;
+                        infoDiv.innerHTML = `<span>已验证卡密</span><code>${escapeHtml(cdk)}</code>`;
                     }
                     const planDiv = document.getElementById('redeemPlanInfo');
                     const planType = data.data?.plan_type || 'plus';
                     const planLabel = data.data?.plan_label || PLAN_LABELS[planType] || PLAN_LABELS.plus;
                     if (planDiv) {
                         planDiv.style.display = 'block';
-                        planDiv.innerHTML = `<span>套餐类型</span><strong>${planLabel}</strong>`;
+                        planDiv.innerHTML = `<span>套餐类型</span><strong>${escapeHtml(planLabel)}</strong>`;
                     }
                     statusMsg.style.display = 'none';
                 } else {
@@ -1033,11 +1053,34 @@
             taskProgressBar.classList.toggle('error', type === 'error');
         }
 
-        function showStatus(message, type) {
-            statusMsg.innerHTML = message;
+        function showStatus(message, type, options = {}) {
+            if (options.allowHtml) {
+                statusMsg.innerHTML = message;
+            } else {
+                statusMsg.textContent = String(message ?? '');
+            }
             statusMsg.className = `status-message ${type === 'success' ? 'status-success' : 'status-error'}`;
             statusMsg.style.display = 'block';
         }
+
+        cdkInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !redeemBtn.disabled) {
+                e.preventDefault();
+                redeemBtn.click();
+            }
+        });
+        queryInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !queryBtn.disabled) {
+                e.preventDefault();
+                queryBtn.click();
+            }
+        });
+        tokenInput.addEventListener('keydown', (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !startBtn.disabled) {
+                e.preventDefault();
+                startBtn.click();
+            }
+        });
 
         updateFlowUI(1, 'pending');
     </script>
