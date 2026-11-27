@@ -199,22 +199,6 @@ async function ensureActiveSchema() {
     await ensureColumn('task_logs', 'created_at', 'TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP');
     await ensureColumn('task_logs', 'updated_at', 'TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
 
-    await ensureColumn('proxy_assets', 'proxy_url', 'TEXT NOT NULL');
-    await ensureColumn('proxy_assets', 'proxy_url_hash', "CHAR(64) NOT NULL DEFAULT ''");
-    await ensureColumn('proxy_assets', 'label', "VARCHAR(128) NOT NULL DEFAULT ''");
-    await ensureColumn('proxy_assets', 'protocol', "VARCHAR(16) NOT NULL DEFAULT ''");
-    await ensureColumn('proxy_assets', 'host', "VARCHAR(255) NOT NULL DEFAULT ''");
-    await ensureColumn('proxy_assets', 'is_active', 'TINYINT(1) NOT NULL DEFAULT 1');
-    await ensureColumn('proxy_assets', 'last_check_at', 'TIMESTAMP NULL DEFAULT NULL');
-    await ensureColumn('proxy_assets', 'last_check_ok', 'TINYINT(1) NULL DEFAULT NULL');
-    await ensureColumn('proxy_assets', 'last_check_ip', "VARCHAR(64) NOT NULL DEFAULT ''");
-    await ensureColumn('proxy_assets', 'last_check_latency_ms', 'INT NULL DEFAULT NULL');
-    await ensureColumn('proxy_assets', 'last_check_error', "VARCHAR(512) NOT NULL DEFAULT ''");
-    await ensureColumn('proxy_assets', 'usage_count', 'INT NOT NULL DEFAULT 0');
-    await ensureColumn('proxy_assets', 'sort_order', 'INT NOT NULL DEFAULT 0');
-    await ensureColumn('proxy_assets', 'created_at', 'TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP');
-    await ensureColumn('proxy_assets', 'updated_at', 'TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
-
     await runQuery(`
         CREATE TABLE IF NOT EXISTS orbitcard_card_usage (
             card_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,

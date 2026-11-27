@@ -15,6 +15,7 @@ const BANNED_PATTERNS = [
     { label: 'legacy browser-pool', regex: /\bbrowser-pool(?:-client)?\b/i },
     { label: 'legacy pricing-checkout', regex: /\bpricing-checkout\b/i },
     { label: 'legacy tax-free-address', regex: /\btax-free-address\b/i },
+    { label: 'removed proxy-pool module', regex: /\bproxy-pool\b/i },
     { label: 'removed public admin-paths endpoint', regex: /\/api\/public\/admin-paths\b/ }
 ];
 

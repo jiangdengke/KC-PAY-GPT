@@ -34,7 +34,6 @@ function createHarness({
             country: 'US',
             currency: 'USD'
         }),
-        getActiveProxy: async () => null,
         reserveCard: async () => ({
             id: 7,
             card_number: '4111111111111111',
@@ -432,7 +431,6 @@ describe('runGptApiWorker failure notification wiring', () => {
                 country: 'US',
                 currency: 'USD'
             }),
-            getActiveProxy: async () => null,
             getOrbitcardCardMetaByIds: async (ids) => ids.map((id) => dbCards.get(id)).filter(Boolean),
             syncOrbitcardCards: async (cards) => {
                 let autoAssigned = 0;
@@ -571,7 +569,6 @@ describe('runGptApiWorker failure notification wiring', () => {
                 country: 'US',
                 currency: 'USD'
             }),
-            getActiveProxy: async () => null,
             getOrbitcardCardMetaByIds: async () => [],
             syncOrbitcardCards: async () => ({ total: 0, inserted: 0, updated: 0, autoAssigned: 0, autoAssignedCards: [] }),
             reserveOrbitcardCard: async () => null,

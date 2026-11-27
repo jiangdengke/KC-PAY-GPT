@@ -74,10 +74,6 @@
                 <i data-lucide="settings"></i>
                 <span>系统配置</span>
             </div>
-            <div class="nav-item" onclick="switchPage('proxies', this)">
-                <i data-lucide="globe"></i>
-                <span>代理池</span>
-            </div>
 
             <div class="nav-group" id="nav_group_business">
                 <div class="nav-item nav-group-toggle" onclick="toggleNavGroup('nav_group_business', event)">
@@ -537,74 +533,6 @@
                         <button class="btn btn-primary" style="margin-top: 10px;" onclick="confirmAdmin2fa()">确认启用</button>
                     </div>
                 </div>
-            </div>
-        </div>
-
-        <!-- 代理池 -->
-        <div id="proxies" class="page-view">
-            <div class="page-header">
-                <h1>代理池</h1>
-                <p>管理代充协议与订阅查询使用的可选代理池。一行一条 URL，支持 http(s) / socks5；用户名可含 <code>{session}</code> 占位符走 sticky session。池为空时默认使用平台代理或直连。</p>
-            </div>
-
-            <div class="panel" style="margin-bottom: 24px;">
-                <div class="panel-header">
-                    <h2 class="panel-title">添加代理</h2>
-                </div>
-                <p style="font-size: 13px; color: var(--text-dim); margin-bottom: 12px;">
-                    粘贴一条或多条代理 URL（一行一条），点保存后立即写入代理池并在下方列表显示。
-                </p>
-                <textarea id="proxy_add_input" rows="6" class="asset-input" style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; min-height: 130px; resize: vertical;"
-                    placeholder="一行一条，例如：
-http://user:pass@host:port
-socks5://user:pass@host:port
-http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
-                <div style="display:flex; gap:12px; margin-top: 14px; flex-wrap: wrap; align-items: center;">
-                    <button type="button" class="btn btn-primary" onclick="saveProxyPool()">
-                        <i data-lucide="plus"></i>
-                        保存到代理池
-                    </button>
-                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('proxy_add_input').value=''">
-                        清空输入
-                    </button>
-                    <span id="proxy_add_hint" style="font-size: 13px; color: var(--text-dim);"></span>
-                </div>
-            </div>
-
-            <div class="panel">
-                <div class="panel-header">
-                    <h2 class="panel-title">已保存代理</h2>
-                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                        <button type="button" class="btn btn-secondary" onclick="loadProxyPool().then(() => showMessage('代理列表已刷新', 'success')).catch((e) => showMessage(e.message, 'error'))">
-                            <i data-lucide="refresh-cw"></i>
-                            刷新
-                        </button>
-                        <button type="button" class="btn btn-success" onclick="testAllSavedProxies()">
-                            <i data-lucide="zap"></i>
-                            批量检测活跃
-                        </button>
-                    </div>
-                </div>
-
-                <div class="table-container">
-                    <table class="admin-action-table proxy-pool-table">
-                        <thead>
-                            <tr>
-                                <th width="72px" style="text-align:center">启用</th>
-                                <th width="96px" style="text-align:center">活跃检测</th>
-                                <th width="140px">出口 IP</th>
-                                <th width="88px" style="text-align:center">延迟</th>
-                                <th width="88px" style="text-align:center">协议</th>
-                                <th>代理地址</th>
-                                <th width="180px" style="text-align:center">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="proxy_pool_body">
-                            <tr><td colspan="7">加载中...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-                <p id="proxy_pool_summary" style="font-size: 13px; color: var(--text-dim); margin-top: 12px;"></p>
             </div>
         </div>
 
@@ -1226,7 +1154,6 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
     <script src="/admin/assets/core.js?v=20261127-refactor"></script>
     <script src="/admin/assets/security.js?v=20261127-refactor"></script>
     <script src="/admin/assets/config.js?v=20261127-refactor"></script>
-    <script src="/admin/assets/proxies.js?v=20261127-refactor"></script>
     <script src="/admin/assets/cards.js?v=20261127-refactor"></script>
     <script src="/admin/assets/cdks.js?v=20261127-refactor"></script>
     <script src="/admin/assets/sessions.js?v=20261127-refactor"></script>

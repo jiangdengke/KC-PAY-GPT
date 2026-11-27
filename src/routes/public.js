@@ -252,19 +252,12 @@ function createPublicRouter({
                 return res.status(400).json({ success: false, message: tokenCheck.message });
             }
 
-            let proxy = '';
-            try {
-                await ensureStoreReady();
-                proxy = await store.getActiveProxy();
-            } catch (_) { /* optional proxy */ }
-
             const timezoneOffsetMin = Number(req.body?.timezone_offset_min);
             const result = await querySubscriptionBySession(token, {
                 timezoneOffsetMin: Number.isFinite(timezoneOffsetMin)
                     ? timezoneOffsetMin
                     : -new Date().getTimezoneOffset(),
-                email: extractEmailFromSession(rawSession) || tokenCheck.email || '',
-                proxy
+                email: extractEmailFromSession(rawSession) || tokenCheck.email || ''
             });
 
             if (!result.ok) {

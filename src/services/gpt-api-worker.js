@@ -24,16 +24,6 @@ const LEGACY_GPT_API_PLAN_MAP = Object.freeze({ pro_5x: 'pro5x', pro_20x: 'pro20
 const GPT_API_TERMINAL_SUCCESS = new Set(['success', 'succeeded', 'completed', 'paid', 'active', '开通成功', '成功']);
 const GPT_API_TERMINAL_FAILED = new Set(['failed', 'declined', 'canceled', 'cancelled', 'error', 'expired', 'rejected', '失败', '取消']);
 
-function maskProxyForLog(proxyUrl) {
-    const raw = String(proxyUrl || '');
-    try {
-        const masked = raw.replace(/\/\/([^@/]+)@/, '//***:***@');
-        return masked || '(空)';
-    } catch (_) {
-        return '(已配置)';
-    }
-}
-
 function isSuccessGptApiStatus(rawStatus) {
     const s = String(rawStatus || '').toLowerCase().trim();
     return [...GPT_API_TERMINAL_SUCCESS].some((kw) => s.includes(kw.toLowerCase()));
@@ -170,11 +160,6 @@ function createGptApiWorker({
             logTask(jobKey, openProtocol
                 ? `Desolate Open Session 格式检查通过，套餐代码 ${apiPlanKey}`
                 : 'Session 本地格式／有效期检查通过；上游将于代充任务中验证登录状态');
-
-            const proxy = await store.getActiveProxy();
-            logTask(jobKey, proxy
-                ? `第三方 API 协议代理 ${maskProxyForLog(proxy)}`
-                : '第三方 API 使用平台启用代理池');
 
             // Session 检查通过后才创建／锁定卡源资产，避免无效 Session 占用卡片。
             let newCard = null;
@@ -385,7 +370,6 @@ function createGptApiWorker({
                 currency: cfg.currency,
                 paymentRegion: cfg.payment_region,
                 newCard,
-                proxy,
                 clientRef: `kc-cdk-${cdk}-${jobKey}`,
                 idempotencyKey
             });
@@ -810,6 +794,5 @@ module.exports = {
     sanitizeGptApiRaw,
     parseCardExpiry,
     isSuccessGptApiStatus,
-    isTerminalGptApiStatus,
-    maskProxyForLog
+    isTerminalGptApiStatus
 };

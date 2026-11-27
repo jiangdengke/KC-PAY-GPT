@@ -153,27 +153,6 @@ CREATE TABLE IF NOT EXISTS activation_manual_holds (
     KEY idx_activation_manual_hold_status (resolved_at, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS proxy_assets (
-    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    proxy_url TEXT NOT NULL COMMENT '完整代理 URL，支持 {session}',
-    proxy_url_hash CHAR(64) NOT NULL COMMENT 'URL SHA256，用于去重',
-    label VARCHAR(128) NOT NULL DEFAULT '' COMMENT '可选备注',
-    protocol VARCHAR(16) NOT NULL DEFAULT '' COMMENT 'http/socks5 等',
-    host VARCHAR(255) NOT NULL DEFAULT '' COMMENT '代理主机',
-    is_active TINYINT(1) NOT NULL DEFAULT 1 COMMENT '1=启用参与任务抽取',
-    last_check_at TIMESTAMP NULL DEFAULT NULL,
-    last_check_ok TINYINT(1) NULL DEFAULT NULL COMMENT '1=通过 0=失败 NULL=未测',
-    last_check_ip VARCHAR(64) NOT NULL DEFAULT '',
-    last_check_latency_ms INT NULL DEFAULT NULL,
-    last_check_error VARCHAR(512) NOT NULL DEFAULT '',
-    usage_count INT NOT NULL DEFAULT 0,
-    sort_order INT NOT NULL DEFAULT 0,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_proxy_url_hash (proxy_url_hash),
-    KEY idx_proxy_active (is_active, sort_order)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 CREATE TABLE IF NOT EXISTS admin_login_logs (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     event VARCHAR(32) NOT NULL COMMENT 'login_success/login_failed/2fa_failed/secondary_failed/secondary_success/password_changed/logout',

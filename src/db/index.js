@@ -7,12 +7,10 @@ const taskRepo = require('./task-repo');
 const orbitcardRepo = require('./orbitcard-repo');
 const securityRepo = require('./security-repo');
 const cardRepo = require('./card-repo');
-const proxyRepo = require('./proxy-repo');
 
 async function ensureReady() {
     await pool.ensureActiveSchema();
     await configRepo.ensureDefaultConfigs();
-    await proxyRepo.migrateLegacyProxyConfig();
     await taskRepo.cleanupStaleLegacyTasks();
 }
 
@@ -24,6 +22,5 @@ module.exports = {
     ...orbitcardRepo,
     ...securityRepo,
     ...cardRepo,
-    ...proxyRepo,
     ensureReady
 };

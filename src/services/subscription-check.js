@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const axios = require('axios');
 const { ProxyAgent } = require('proxy-agent');
 const { extractProfileFromToken, decodeJwtPart } = require('../utils/session-parser');
@@ -258,8 +259,14 @@ function isCloudflareBlock(status, data) {
     return /cloudflare|cf-ray|attention required|just a moment|cf_chl/i.test(text);
 }
 
+function expandProxySession(proxyUrl) {
+    const raw = String(proxyUrl || '').trim();
+    if (!raw || !raw.includes('{session}')) return raw;
+    return raw.replace(/\{session\}/g, crypto.randomBytes(6).toString('hex'));
+}
+
 function buildProxyAxiosOptions(proxyUrl) {
-    const normalized = String(proxyUrl || '').trim();
+    const normalized = expandProxySession(proxyUrl);
     if (!normalized) {
         return {};
     }
@@ -352,7 +359,7 @@ function mapCheckError(status, data) {
         if (isCloudflareBlock(status, body)) {
             return {
                 statusCode: 403,
-                error: 'OpenAI 风控拦截（Cloudflare），请稍后重试或在后台代理池配置住宅代理'
+                error: 'OpenAI 风控拦截（Cloudflare），请稍后重试或在 .env 中配置可选 PROXY 出口代理'
             };
         }
         return {

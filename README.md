@@ -11,7 +11,7 @@
 - **用户端兑换与订阅查询**：提交 CDK 与 Session 触发第三方代充，实时推送进度；`/subscription` 通过纯 HTTP + 代理接口查询/取消/恢复续费（零浏览器依赖）。
 - **套餐管理**：支持 `plus`、`pro100`、`pro200`、`pro500` 四档规范套餐；历史 `pro_5x` / `pro_20x` 仅保留兼容读取与展示。
 - **第三方代充（Desolate Open）**：完整支持幂等键、受控重试、多轮验证码交互、脱敏订单诊断与人工接管（Manual Hold）。
-- **Orbitcard 卡台与备用资产池**：支持多通道产品策略、卡片余额同步、卡片复用配额，以及本地备用银行卡池（含外部推卡接口）和代理池。
+- **Orbitcard 卡台与备用卡池**：支持自动开卡开关、多通道产品策略、余额同步与按余额推算 Plus 次数，以及本地备用银行卡池（含外部推卡接口）。
 - **纵深安全防护**：Cloudflare Access JWT 校验（覆盖后台入口页、`/admin/assets/*` 与 `/api/admin/*`）、异步 scrypt 密码哈希、IPv6 `/48` 登录限流、2FA（TOTP / Telegram）、自动 IP 封禁、Tor 出口拦截与 Telegram 安全告警。
 
 ## 快速开始（Docker）
@@ -102,7 +102,7 @@ git diff --check
 │   ├── middleware/                  # 异步错误捕获、安全头/JSON 净化、管理员与 CF Access 中间件
 │   ├── routes/                      # 公开路由、外部推卡、后台鉴权/代充/资产/任务/订阅路由
 │   ├── security/                    # 管理员鉴权、入口路径校验、CF Access、IP 封禁与告警管理
-│   ├── services/                    # Desolate 客户端/Worker、Orbitcard、订阅查询、代理池、Telegram、WS Hub
+│   ├── services/                    # Desolate 客户端/Worker、Orbitcard 同步/客户端、订阅查询、Telegram、WS Hub
 │   └── utils/                       # 运行日志、卡号校验、Session 解析、客户脱敏文案、系统监控
 ├── public/
 │   ├── index.html                   # 用户兑换页

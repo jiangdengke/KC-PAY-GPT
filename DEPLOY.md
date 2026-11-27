@@ -114,7 +114,7 @@ pm2 save
 
 ### Q: 订阅查询 `/subscription` 或续费管理失败
 
-检查后台「代理池」或 `.env` 中的 `PROXY` 配置，确保代理可访问 `https://chatgpt.com`；无代理时会自动尝试直连。
+默认直连 `https://chatgpt.com`；如果机房 IP 被 Cloudflare 拦截，可在 `.env` 中配置一条可选 `PROXY` 环境变量并重启应用容器。
 
 ### Q: 修改后台入口路径后无法访问
 

@@ -1,7 +1,7 @@
 /* global lucide, BUSINESS_PAGES, paginationState, getAdminToken, redirectToLogin, ensureAdminSession,
    updateAdminPathPreview, loadAdminSecurityStatus, loadIpBans, loadAdminLoginLogs,
    reloadSystemConfigFromServer, loadGptApiConfig, updateOrbitcardConfigVisibility, saveMaintenanceMode,
-   loadProxyPool, loadCardPoolList, loadOrbitcardUsage, loadOrbitcardProductStrategy,
+   loadCardPoolList, loadOrbitcardUsage, loadOrbitcardProductStrategy,
    loadCdkList, renderCDKTable, loadSessions, openSessionModal, copySessionByJobKey, exportSessionByJobKey,
    cancelAutoRenewByJobKey, loadData, loadTaskLogs, renderLogTable, deleteAdminTaskLog, openTaskLogModal,
    loadActivationManualHolds, startRuntimeLogStream, stopRuntimeLogStream, updateAdminDataRefreshButton,
@@ -73,7 +73,6 @@ function switchPage(pId, el) {
         loadOrbitcardUsage(false, false).catch(() => { });
         loadCardPoolList().catch(() => { });
     }
-    if (pId === 'proxies') loadProxyPool().catch(() => { });
     if (pId === 'config') {
         reloadSystemConfigFromServer().catch(() => { });
         loadAdminSecurityStatus().catch(() => { });

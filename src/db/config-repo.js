@@ -77,7 +77,6 @@ function normalizeCardPool(cardPool) {
 
 async function ensureDefaultConfigs() {
     const defaults = [
-        ['proxy', ''],
         ['admin_password_hash', createPasswordHash(config.admin.defaultPassword)],
         ['admin_password_version', '1'],
         ['admin_email', config.admin.defaultEmail],

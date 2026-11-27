@@ -31,7 +31,6 @@ src/
 │   ├── orbitcard-repo.js          # orbitcard_card_usage & orbitcard_card_recharges
 │   ├── security-repo.js           # admin_login_logs & ip_bans
 │   ├── card-repo.js               # Fallback card_assets pool
-│   ├── proxy-repo.js              # Fallback proxy_assets pool
 │   └── index.js                   # Store facade aggregating all repositories
 ├── middleware/
 │   ├── async-handler.js           # forwardAsyncErrors() router wrapper for Express 4
@@ -42,7 +41,7 @@ src/
 │   ├── external.js                # External card push API (/api/external/cards/push)
 │   ├── admin-auth.js              # Login, 2FA, session refresh, password/path config, IP bans
 │   ├── admin-gpt-api.js           # Desolate Open config/test/regions & Orbitcard APIs
-│   ├── admin-assets.js            # Cards, CDKs, proxies, Telegram & general config
+│   ├── admin-assets.js            # Cards and CDKs management routes
 │   ├── admin-tasks.js             # Overview, task logs, manual holds, sessions, runtime logs
 │   └── admin-subscription.js      # Subscription query/cancel/resume for admin console
 ├── security/
@@ -55,9 +54,9 @@ src/
 │   ├── gpt-api-client.js          # Desolate Open & legacy provider HTTP client
 │   ├── gpt-api-failure.js         # Diagnostic builder & sensitive-text redaction
 │   ├── gpt-api-worker.js          # DI factory (createGptApiWorker) for recharge execution & polling
-│   ├── orbitcard-client.js        # Orbitcard Open API client, multi-channel catalog & strategy
-│   ├── subscription-check.js      # Pure axios + ProxyAgent ChatGPT subscription check/cancel/resume
-│   ├── proxy-pool.js              # Proxy normalization, {session} expansion, connectivity probing
+│   ├── orbitcard-client.js        # Orbitcard Open API client, multi-channel catalog & Plus balance estimator
+│   ├── orbitcard-sync.js          # Shared Orbitcard card sync & unassigned Plus auto-assignment
+│   ├── subscription-check.js      # Pure axios + optional PROXY ChatGPT subscription check/cancel/resume
 │   ├── telegram-notify.js         # Telegram event formatting & delivery
 │   └── task-hub.js                # WebSocket subscription registry & sanitized customer broadcasts
 └── utils/

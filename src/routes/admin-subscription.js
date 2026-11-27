@@ -13,15 +13,6 @@ const { forwardAsyncErrors } = require('../middleware/async-handler');
 function createAdminSubscriptionRouter({ store, ensureStoreReady }) {
     const router = forwardAsyncErrors(express.Router());
 
-    async function getOptionalProxy() {
-        try {
-            await ensureStoreReady();
-            return await store.getActiveProxy();
-        } catch (_) {
-            return '';
-        }
-    }
-
     router.post('/subscription/cancel-auto-renew', async (req, res) => {
         try {
             const rawSession = String(req.body?.session || req.body?.token || '').trim().replace(/^\uFEFF/, '');
@@ -40,8 +31,7 @@ function createAdminSubscriptionRouter({ store, ensureStoreReady }) {
                 timezoneOffsetMin: Number.isFinite(timezoneOffsetMin)
                     ? timezoneOffsetMin
                     : -new Date().getTimezoneOffset(),
-                email: extractEmailFromSession(rawSession) || tokenCheck.email || '',
-                proxy: await getOptionalProxy()
+                email: extractEmailFromSession(rawSession) || tokenCheck.email || ''
             });
 
             if (!result.ok) {
@@ -75,8 +65,7 @@ function createAdminSubscriptionRouter({ store, ensureStoreReady }) {
                 timezoneOffsetMin: Number.isFinite(timezoneOffsetMin)
                     ? timezoneOffsetMin
                     : -new Date().getTimezoneOffset(),
-                email: extractEmailFromSession(rawSession) || tokenCheck.email || '',
-                proxy: await getOptionalProxy()
+                email: extractEmailFromSession(rawSession) || tokenCheck.email || ''
             });
 
             if (!result.ok) {
@@ -106,7 +95,6 @@ function createAdminSubscriptionRouter({ store, ensureStoreReady }) {
             const offset = Number.isFinite(timezoneOffsetMin)
                 ? timezoneOffsetMin
                 : -new Date().getTimezoneOffset();
-            const proxy = await getOptionalProxy();
             const concurrency = 3;
             const results = {};
             let cursor = 0;
@@ -128,8 +116,7 @@ function createAdminSubscriptionRouter({ store, ensureStoreReady }) {
 
                 const queryResult = await querySubscriptionBySession(token, {
                     timezoneOffsetMin: offset,
-                    email: extractEmailFromSession(rawSession) || tokenCheck.email || '',
-                    proxy
+                    email: extractEmailFromSession(rawSession) || tokenCheck.email || ''
                 });
                 if (!queryResult.ok) {
                     results[jobKey] = { ok: false, error: queryResult.error || '查询失败' };
