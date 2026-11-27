@@ -1,6 +1,7 @@
 /* global lucide, authFetch, showMessage, showAdminConfirm, escapeHtml, formatPlanLabel, getPlanColors,
    formatTimeShort, copyText, getPaginationItems, CANONICAL_PLAN_TYPES, PLAN_LABELS */
 /* exported toggleCardPoolImportBox, loadCardPoolList, deleteCardPoolItem, importCardPool,
+   toggleLocalCardSensitiveMask, copyLocalCardNumber,
    loadOrbitcardProductStrategy, saveOrbitcardProductStrategy, renderOrbitcardStrategyDetails,
    syncOrbitcardCards, applyOrbitcardUsageFilters, resetOrbitcardUsageFilters, loadOrbitcardUsage,
    setOrbitcardCardPlan, restoreOrbitcardCard, toggleOrbitcardSensitiveMask, selectOrbitcardQuickStatus,
@@ -8,6 +9,7 @@
 'use strict';
 
 let cardPoolList = [];
+let localCardShowSensitive = false;
 let orbitcardUsageList = [];
 let orbitcardShowSensitive = false;
 const orbitcardExpandedHistoryIds = new Set();
@@ -57,31 +59,67 @@ function formatBoundAddress(card) {
     return parts.length ? parts.join(', ') : '-';
 }
 
+function toggleLocalCardSensitiveMask() {
+    localCardShowSensitive = !localCardShowSensitive;
+    const btn = document.getElementById('local_card_mask_toggle_btn');
+    if (btn) {
+        btn.innerHTML = localCardShowSensitive
+            ? '<i data-lucide="eye-off"></i><span>隐藏明文</span>'
+            : '<i data-lucide="eye"></i><span>显示明文</span>';
+    }
+    renderCardPoolTable();
+}
+
+function copyLocalCardNumber(cardId) {
+    const card = cardPoolList.find((item) => Number(item.id) === Number(cardId));
+    if (!card?.card_number) {
+        showMessage('该卡未保存完整卡号', 'warning');
+        return;
+    }
+    copyText(card.card_number);
+}
+
 function renderCardPoolTable() {
     const tbody = document.getElementById('card_pool_list_body');
     if (!tbody) return;
     if (cardPoolList.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; color: var(--text-dim); padding: 40px 0;">暂无卡片，请使用批量导入添加</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-dim); padding: 40px 0;">暂无本地卡片，请使用右上角「批量导入」添加</td></tr>';
         lucide.createIcons();
         return;
     }
-    tbody.innerHTML = cardPoolList.map((card) => `
+    tbody.innerHTML = cardPoolList.map((card) => {
+        const displayNum = card.card_number
+            ? formatOrbitcardNumberDisplay(card.card_number, localCardShowSensitive)
+            : `•••• ${card.last4 || '****'}`;
+        const cvcDisplay = card.card_cvc ? (localCardShowSensitive ? card.card_cvc : '•••') : '-';
+        const holderLine = [card.card_holder, card.payment_holder_name]
+            .filter((v, idx, arr) => v && arr.indexOf(v) === idx)
+            .join(' / ') || '-';
+        return `
         <tr>
-            <td><code>${escapeHtml(card.card_number || card.last4 || '****')}</code></td>
-            <td><code>${escapeHtml(card.card_expiry || '-')}</code></td>
-            <td><code>${escapeHtml(card.card_cvc || '-')}</code></td>
-            <td>${escapeHtml(card.card_holder || '-')}</td>
-            <td>${escapeHtml(card.payment_holder_name || '-')}</td>
-            <td style="font-size:12px; color:var(--text-secondary); max-width:280px; word-break:break-word;">${escapeHtml(formatBoundAddress(card))}</td>
-            <td style="text-align:center">${getCardStatusBadge(card)}</td>
-            <td style="text-align:center">${Number(card.usage_count || 0)}</td>
-            <td style="text-align:center">${card.last_used_at ? formatTimeShort(card.last_used_at) : '-'}</td>
+            <td>
+                <div class="orbitcard-card-cell">
+                    ${card.card_number
+        ? `<button type="button" class="orbitcard-card-number-btn" onclick="copyLocalCardNumber(${Number(card.id)})" title="点击复制完整卡号">
+                            <code>${escapeHtml(displayNum)}</code>
+                            <i data-lucide="copy"></i>
+                        </button>`
+        : `<code>${escapeHtml(displayNum)}</code>`}
+                    <div class="orbitcard-card-sub">有效期 ${escapeHtml(card.card_expiry || '-')} · CVC ${escapeHtml(cvcDisplay)}</div>
+                </div>
+            </td>
+            <td style="font-size:13px; color:var(--text-secondary);">${escapeHtml(holderLine)}</td>
+            <td style="font-size:12px; color:var(--text-dim); max-width:260px; word-break:break-word;">${escapeHtml(formatBoundAddress(card))}</td>
+            <td style="text-align:center; white-space:nowrap;">${getCardStatusBadge(card)}</td>
+            <td style="text-align:center; font-variant-numeric:tabular-nums;">${Number(card.usage_count || 0)}</td>
+            <td style="text-align:center; white-space:nowrap; font-size:12.5px; color:var(--text-dim);">${card.last_used_at ? formatTimeShort(card.last_used_at) : '-'}</td>
             <td style="text-align:center">
-                <button class="btn-delete" onclick="deleteCardPoolItem(${card.id})" title="删除">
+                <button class="btn-delete" onclick="deleteCardPoolItem(${Number(card.id)})" title="删除">
                     <i data-lucide="trash-2"></i>
                 </button>
             </td>
-        </tr>`).join('');
+        </tr>`;
+    }).join('');
     lucide.createIcons();
 }
 

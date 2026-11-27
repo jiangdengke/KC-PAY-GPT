@@ -1,18 +1,22 @@
-/* global lucide, authFetch, readJsonResponse, showMessage, showAdminConfirm, escapeHtml,
-   renderStatus, formatPlanLabel, formatTimeShort, shortenJobKey, getPageItems, renderPagination,
-   startUptimeTicker, applySystemConfigFromData, updateMaintenanceModeUI, loadCardPoolList, loadCdkList */
+/* global lucide, authFetch, readJsonResponse, showMessage, showAdminConfirm, escapeHtml, copyText,
+   renderStatus, formatPlanLabel, getPlanColors, formatTimeShort, shortenJobKey, getPageItems, renderPagination,
+   paginationState, startUptimeTicker, applySystemConfigFromData, updateMaintenanceModeUI, loadCardPoolList, loadCdkList */
 /* exported adminDataRefreshPaused, loadData, loadTaskLogs, renderLogTable, deleteAdminTaskLog,
+   selectTaskLogQuickStatus, handleTaskLogSearch,
    openTaskLogModal, closeTaskLogModal, loadActivationManualHolds, resolveActivationManualHold,
    updateAdminDataRefreshButton, toggleAdminDataRefresh, startRuntimeLogStream, stopRuntimeLogStream,
-   refreshRuntimeLogsManual, clearRuntimeLogs */
+   refreshRuntimeLogsManual, clearRuntimeLogs, applyRuntimeLogFilter, copyRuntimeLogs */
 'use strict';
 
 const RUNTIME_LOG_TEXT_CAP = 1_200_000;
 let runtimeLogPollTimer = null;
 let runtimeLogAfter = 0;
 let runtimeLogText = '';
+let runtimeLogFilterKeyword = '';
 let adminDataRefreshPaused = false;
 let activationManualHolds = [];
+let taskLogStatusFilter = 'all';
+let taskLogSearchKeyword = '';
 
 // ─── 运行日志 ───────────────────────────────────────────────────────────────
 
@@ -32,18 +36,46 @@ function formatRuntimeLogLine(entry) {
     return `${formatRuntimeLogTs(entry.ts)}  ${job}  ${src}  ${entry.text}`;
 }
 
+function renderRuntimeLogView() {
+    const pre = document.getElementById('runtime_log_pre');
+    if (!pre) return;
+    const rawLines = runtimeLogText ? runtimeLogText.split('\n').filter((line) => line.length > 0) : [];
+    const keyword = runtimeLogFilterKeyword.trim().toLowerCase();
+    const visibleLines = keyword
+        ? rawLines.filter((line) => line.toLowerCase().includes(keyword))
+        : rawLines;
+    pre.textContent = visibleLines.length ? `${visibleLines.join('\n')}\n` : (keyword ? '无匹配日志' : '');
+    const countEl = document.getElementById('runtime_log_count');
+    if (countEl) {
+        countEl.textContent = keyword ? `${visibleLines.length} / ${rawLines.length} 行` : `${rawLines.length} 行`;
+    }
+    const autoscroll = document.getElementById('runtime_log_autoscroll');
+    const wrap = pre.parentElement;
+    if (autoscroll?.checked && wrap) wrap.scrollTop = wrap.scrollHeight;
+}
+
+function applyRuntimeLogFilter(value) {
+    runtimeLogFilterKeyword = String(value || '');
+    renderRuntimeLogView();
+}
+
+function copyRuntimeLogs() {
+    const pre = document.getElementById('runtime_log_pre');
+    const content = pre?.textContent?.trim() || '';
+    if (!content) {
+        showMessage('当前没有可复制的日志', 'warning');
+        return;
+    }
+    copyText(content);
+}
+
 function appendRuntimeLogEntries(entries) {
     if (!entries || entries.length === 0) return;
     runtimeLogText += `${entries.map(formatRuntimeLogLine).join('\n')}\n`;
     if (runtimeLogText.length > RUNTIME_LOG_TEXT_CAP) {
         runtimeLogText = runtimeLogText.slice(-Math.floor(RUNTIME_LOG_TEXT_CAP * 0.85));
     }
-    const pre = document.getElementById('runtime_log_pre');
-    if (!pre) return;
-    pre.textContent = runtimeLogText;
-    const autoscroll = document.getElementById('runtime_log_autoscroll');
-    const wrap = pre.parentElement;
-    if (autoscroll?.checked && wrap) wrap.scrollTop = wrap.scrollHeight;
+    renderRuntimeLogView();
 }
 
 function stopRuntimeLogStream() {
@@ -60,13 +92,7 @@ async function fetchRuntimeLogsTail() {
     runtimeLogText = (data.entries || []).map(formatRuntimeLogLine).join('\n');
     if (runtimeLogText) runtimeLogText += '\n';
     runtimeLogAfter = Number(data.nextAfter || 0);
-    const pre = document.getElementById('runtime_log_pre');
-    if (pre) {
-        pre.textContent = runtimeLogText;
-        const autoscroll = document.getElementById('runtime_log_autoscroll');
-        const wrap = pre.parentElement;
-        if (autoscroll?.checked && wrap) wrap.scrollTop = wrap.scrollHeight;
-    }
+    renderRuntimeLogView();
 }
 
 async function fetchRuntimeLogsIncremental() {
@@ -337,16 +363,19 @@ function renderActivationManualHolds() {
         tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-dim); padding:28px 0;">暂无待人工确认记录</td></tr>';
         return;
     }
-    tbody.innerHTML = activationManualHolds.map((hold) => `
+    tbody.innerHTML = activationManualHolds.map((hold) => {
+        const [planColor, planBg] = getPlanColors(hold.planType || 'plus');
+        return `
         <tr>
             <td>${escapeHtml(hold.accountEmail || '账号未返回')}</td>
-            <td>${escapeHtml(formatPlanLabel(hold.planType))}</td>
+            <td><span class="status-badge" style="color:${planColor}; background:${planBg}; white-space:nowrap;">${escapeHtml(formatPlanLabel(hold.planType))}</span></td>
             <td><code title="${escapeHtml(hold.failedJobKey || '')}">${escapeHtml(shortenJobKey(hold.failedJobKey || '-'))}</code></td>
             <td><code>${escapeHtml(hold.cdkCode || '-')}</code></td>
             <td style="max-width:320px; white-space:normal;">${escapeHtml(hold.reason || '-')}</td>
-            <td>${escapeHtml(formatTimeShort(hold.createdAt))}</td>
-            <td style="text-align:center;"><button type="button" class="btn btn-success" style="padding:5px 9px; font-size:12px;" onclick="resolveActivationManualHold(${Number(hold.id)})">解除</button></td>
-        </tr>`).join('');
+            <td style="white-space:nowrap; font-size:12.5px; color:var(--text-dim);">${escapeHtml(formatTimeShort(hold.createdAt))}</td>
+            <td style="text-align:center;"><button type="button" class="btn btn-primary" style="padding:5px 10px; font-size:12px;" onclick="resolveActivationManualHold(${Number(hold.id)})">解除</button></td>
+        </tr>`;
+    }).join('');
     lucide.createIcons();
 }
 
@@ -396,31 +425,96 @@ async function resolveActivationManualHold(id) {
     }
 }
 
+function selectTaskLogQuickStatus(status) {
+    taskLogStatusFilter = status || 'all';
+    if (paginationState?.log) paginationState.log.page = 1;
+    renderLogTable(window.__adminLogs || []);
+}
+
+function handleTaskLogSearch(value) {
+    taskLogSearchKeyword = String(value || '');
+    if (paginationState?.log) paginationState.log.page = 1;
+    renderLogTable(window.__adminLogs || []);
+}
+
+function renderTaskLogQuickTabs(allLogs) {
+    const container = document.getElementById('task_log_quick_tabs');
+    if (!container) return;
+    const list = Array.isArray(allLogs) ? allLogs : [];
+    const counts = { all: list.length, success: 0, running: 0, failed: 0, manual: 0 };
+    for (const item of list) {
+        const st = String(item.status || '').toLowerCase();
+        if (st === 'success') counts.success += 1;
+        else if (st === 'running') counts.running += 1;
+        else if (st === 'manual') counts.manual += 1;
+        else if (st === 'failed' || st === 'card_invalid' || st === 'maintenance') counts.failed += 1;
+    }
+    const tabs = [
+        { value: 'all', label: '全部', count: counts.all },
+        { value: 'success', label: '成功', count: counts.success },
+        { value: 'running', label: '进行中', count: counts.running },
+        { value: 'failed', label: '失败', count: counts.failed },
+        { value: 'manual', label: '需人工', count: counts.manual }
+    ];
+    container.innerHTML = tabs.map((tab) => {
+        const isActive = taskLogStatusFilter === tab.value;
+        return `<button type="button" role="tab" aria-selected="${isActive}" class="orbitcard-quick-tab ${isActive ? 'is-active' : ''}" onclick="selectTaskLogQuickStatus('${tab.value}')">
+            <span>${tab.label}</span>
+            <span class="orbitcard-quick-count">${tab.count}</span>
+        </button>`;
+    }).join('');
+}
+
+function getFilteredTaskLogs(logs) {
+    let result = Array.isArray(logs) ? logs : [];
+    if (taskLogStatusFilter && taskLogStatusFilter !== 'all') {
+        result = result.filter((item) => {
+            const st = String(item.status || '').toLowerCase();
+            if (taskLogStatusFilter === 'failed') {
+                return st === 'failed' || st === 'card_invalid' || st === 'maintenance';
+            }
+            return st === taskLogStatusFilter;
+        });
+    }
+    const keyword = taskLogSearchKeyword.trim().toLowerCase();
+    if (keyword) {
+        result = result.filter((item) => (
+            String(item.cdk || '').toLowerCase().includes(keyword)
+            || String(item.token || '').toLowerCase().includes(keyword)
+            || String(item.message || '').toLowerCase().includes(keyword)
+            || String(item.id || '').toLowerCase().includes(keyword)
+        ));
+    }
+    return result;
+}
+
 function renderLogTable(logs) {
     const tbody = document.getElementById('log_body');
     if (!tbody) return;
-    const pageData = getPageItems(logs, 'log');
+    renderTaskLogQuickTabs(logs);
+    const filtered = getFilteredTaskLogs(logs);
+    const pageData = getPageItems(filtered, 'log');
     if (!pageData.items.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-dim); padding: 36px 0;">暂无任务记录</td></tr>';
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color: var(--text-dim); padding: 36px 0;">${(Array.isArray(logs) && logs.length) ? '暂无符合筛选条件的任务记录' : '暂无任务记录'}</td></tr>`;
         renderPagination('log_pagination', 'log', 0);
         return;
     }
     tbody.innerHTML = pageData.items.map((l) => `
         <tr>
-            <td>${escapeHtml(l.time || '-')}</td>
+            <td style="font-size:12.5px; color:var(--text-dim);">${escapeHtml(l.time || '-')}</td>
             <td><code>${escapeHtml(l.cdk || '-')}</code></td>
-            <td><code>${escapeHtml(l.token || '-')}</code></td>
-            <td>${l.message ? escapeHtml(l.message) : '-'}</td>
+            <td style="max-width:168px; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(l.token || '')}"><code>${escapeHtml(l.token || '-')}</code></td>
+            <td><div class="task-msg-clamp" title="${escapeHtml(l.message || '')}">${l.message ? escapeHtml(l.message) : '-'}</div></td>
             <td>
-                <div style="font-size: 12px; margin-bottom: 2px;">${l.progress}%</div>
+                <div style="font-size: 12px; margin-bottom: 3px; font-variant-numeric: tabular-nums;">${Number(l.progress || 0)}%</div>
                 <div class="progress-mini-track">
                     <div class="progress-mini-bar ${escapeHtml(l.status)}" style="width: ${Number(l.progress || 0)}%"></div>
                 </div>
             </td>
-            <td>${renderStatus(l.status)}</td>
+            <td style="text-align:center;">${renderStatus(l.status)}</td>
             <td style="text-align:center">
                 <div class="table-action-group">
-                    <button type="button" class="btn btn-secondary" style="padding:6px 10px; font-size:12px;" title="查看充值详细日志" data-view-task-log="${escapeHtml(l.id)}"><i data-lucide="scroll-text"></i> 日志</button>
+                    <button type="button" class="btn btn-secondary" style="padding:5px 10px; font-size:12px;" title="查看充值详细日志" data-view-task-log="${escapeHtml(l.id)}"><i data-lucide="scroll-text"></i> 日志</button>
                     <button type="button" class="btn-delete" title="删除此任务记录" data-delete-task="${escapeHtml(l.id)}"><i data-lucide="trash-2"></i></button>
                 </div>
             </td>
@@ -487,12 +581,21 @@ async function loadData(isInitial = false) {
     try {
         const res = await authFetch('/api/admin/data');
         const data = await res.json();
-        document.getElementById('stat_cpu_percent').innerText = `${Number(data.runtime?.system?.cpu?.percent || 0)}%`;
+        const cpuPct = Math.max(0, Math.min(100, Number(data.runtime?.system?.cpu?.percent || 0)));
+        const memPct = Math.max(0, Math.min(100, Number(data.runtime?.system?.memory?.percent || 0)));
+        const diskPct = Math.max(0, Math.min(100, Number(data.runtime?.system?.disk?.percent || 0)));
+        document.getElementById('stat_cpu_percent').innerText = `${cpuPct}%`;
         document.getElementById('stat_cpu_meta').innerText = data.runtime?.system?.cpu?.text || '实时 CPU 使用率';
-        document.getElementById('stat_memory_percent').innerText = `${Number(data.runtime?.system?.memory?.percent || 0)}%`;
+        const cpuBar = document.getElementById('stat_cpu_bar');
+        if (cpuBar) cpuBar.style.width = `${cpuPct}%`;
+        document.getElementById('stat_memory_percent').innerText = `${memPct}%`;
         document.getElementById('stat_memory_meta').innerText = data.runtime?.system?.memory?.text || '0.0G/0.0G';
-        document.getElementById('stat_disk_percent').innerText = `${Number(data.runtime?.system?.disk?.percent || 0)}%`;
+        const memBar = document.getElementById('stat_memory_bar');
+        if (memBar) memBar.style.width = `${memPct}%`;
+        document.getElementById('stat_disk_percent').innerText = `${diskPct}%`;
         document.getElementById('stat_disk_meta').innerText = `${data.runtime?.system?.disk?.usedText || '0.0G'}/${data.runtime?.system?.disk?.totalText || '0.0G'}${data.runtime?.system?.disk?.drive ? ` (${data.runtime.system.disk.drive})` : ''}`;
+        const diskBar = document.getElementById('stat_disk_bar');
+        if (diskBar) diskBar.style.width = `${diskPct}%`;
         document.getElementById('stat_uptime_meta').innerText = '服务持续运行时间';
         startUptimeTicker(data.runtime?.system?.uptime?.seconds || 0);
         document.getElementById('stat_total').innerText = data.stats.total;

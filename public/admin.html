@@ -9,7 +9,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="stylesheet" href="/admin/assets/admin.css?v=20261127-orbitcard-ui">
+    <link rel="stylesheet" href="/admin/assets/admin.css?v=20261127-ui-polish">
 </head>
 
 <body>
@@ -23,7 +23,7 @@
             <div id="admin_confirm_title" class="admin-confirm-title">请确认</div>
             <p id="admin_confirm_text" class="admin-confirm-text"></p>
             <div class="admin-confirm-actions">
-                <button type="button" class="btn btn-success" id="admin_confirm_cancel"
+                <button type="button" class="btn btn-secondary" id="admin_confirm_cancel"
                     onclick="closeAdminConfirm(false)">取消</button>
                 <button type="button" class="btn btn-primary" id="admin_confirm_ok"
                     onclick="closeAdminConfirm(true)">确定</button>
@@ -38,8 +38,8 @@
                 <h3 style="margin:0; font-size:18px;">Session 详情</h3>
                 <div style="display:flex; gap:8px; flex-wrap:wrap;">
                     <button type="button" class="btn btn-primary" onclick="copySessionModalContent()">复制</button>
-                    <button type="button" class="btn btn-success" onclick="exportSessionModalContent()">导出</button>
-                    <button type="button" class="btn btn-success" onclick="closeSessionModal()">关闭</button>
+                    <button type="button" class="btn btn-secondary" onclick="exportSessionModalContent()">导出</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeSessionModal()">关闭</button>
                 </div>
             </div>
             <p id="session_modal_meta" style="color:var(--text-dim); font-size:13px; margin:0 0 12px;"></p>
@@ -52,7 +52,7 @@
         <div class="screenshot-modal task-log-modal" role="dialog" aria-modal="true" onclick="event.stopPropagation()">
             <div class="screenshot-modal-header">
                 <h3 style="margin:0; font-size:18px;">充值详细日志</h3>
-                <button type="button" class="btn btn-success" onclick="closeTaskLogModal()">关闭</button>
+                <button type="button" class="btn btn-secondary" onclick="closeTaskLogModal()">关闭</button>
             </div>
             <p id="task_log_modal_meta" style="color:var(--text-dim); font-size:13px; margin:0 0 12px;"></p>
             <div id="task_log_modal_body" class="task-log-body"></div>
@@ -132,51 +132,59 @@
                 <p>实时监控第三方代充任务执行状态与资源分配情况</p>
             </div>
 
-            <div class="stat-grid">
+            <div class="dashboard-section-label">系统运行状态</div>
+            <div class="stat-grid stat-grid--system">
                 <div class="stat-card">
                     <div class="stat-header">
                         <span class="stat-label">CPU 占用率</span>
-                        <div class="stat-icon" style="background: rgba(244, 114, 182, 0.1); color: #f472b6;">
+                        <div class="stat-icon" style="background: rgba(219, 39, 119, 0.10); color: #db2777;">
                             <i data-lucide="cpu"></i>
                         </div>
                     </div>
-                    <div id="stat_cpu_percent" class="stat-value" style="color: #f9a8d4;">0%</div>
-                    <div id="stat_cpu_meta" style="font-size: 13px; color: var(--text-dim);">实时 CPU 使用率</div>
+                    <div id="stat_cpu_percent" class="stat-value" style="color: #be185d;">0%</div>
+                    <div class="stat-meter"><span id="stat_cpu_bar" style="width:0%; background:#db2777;"></span></div>
+                    <div id="stat_cpu_meta" class="stat-meta">实时 CPU 使用率</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-header">
                         <span class="stat-label">内存占用率</span>
-                        <div class="stat-icon" style="background: rgba(34, 197, 94, 0.1); color: #4ade80;">
+                        <div class="stat-icon" style="background: rgba(22, 163, 74, 0.10); color: #16a34a;">
                             <i data-lucide="memory-stick"></i>
                         </div>
                     </div>
-                    <div id="stat_memory_percent" class="stat-value" style="color: #86efac;">0%</div>
-                    <div id="stat_memory_meta" style="font-size: 13px; color: var(--text-dim);">0.0G/0.0G</div>
+                    <div id="stat_memory_percent" class="stat-value" style="color: #15803d;">0%</div>
+                    <div class="stat-meter"><span id="stat_memory_bar" style="width:0%; background:#16a34a;"></span></div>
+                    <div id="stat_memory_meta" class="stat-meta">0.0G/0.0G</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-header">
                         <span class="stat-label">硬盘占用率</span>
-                        <div class="stat-icon" style="background: rgba(251, 191, 36, 0.1); color: #fbbf24;">
+                        <div class="stat-icon" style="background: rgba(217, 119, 6, 0.12); color: #d97706;">
                             <i data-lucide="hard-drive"></i>
                         </div>
                     </div>
-                    <div id="stat_disk_percent" class="stat-value" style="color: #fde68a;">0%</div>
-                    <div id="stat_disk_meta" style="font-size: 13px; color: var(--text-dim);">0.0G/0.0G</div>
+                    <div id="stat_disk_percent" class="stat-value" style="color: #b45309;">0%</div>
+                    <div class="stat-meter"><span id="stat_disk_bar" style="width:0%; background:#d97706;"></span></div>
+                    <div id="stat_disk_meta" class="stat-meta">0.0G/0.0G</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-header">
                         <span class="stat-label">运行时间</span>
-                        <div class="stat-icon" style="background: rgba(45, 212, 191, 0.1); color: #5eead4;">
+                        <div class="stat-icon" style="background: rgba(13, 148, 136, 0.10); color: #0d9488;">
                             <i data-lucide="timer"></i>
                         </div>
                     </div>
-                    <div id="stat_uptime_text" class="stat-value" style="color: #99f6e4; font-size: 28px;">0秒</div>
-                    <div id="stat_uptime_meta" style="font-size: 13px; color: var(--text-dim);">服务持续运行时间</div>
+                    <div id="stat_uptime_text" class="stat-value" style="color: #0f766e; font-size: 26px;">0秒</div>
+                    <div id="stat_uptime_meta" class="stat-meta">服务持续运行时间</div>
                 </div>
+            </div>
+
+            <div class="dashboard-section-label">业务与资产概览</div>
+            <div class="stat-grid stat-grid--business">
                 <div class="stat-card">
                     <div class="stat-header">
                         <span class="stat-label">总任务量</span>
-                        <div class="stat-icon" style="background: rgba(99, 102, 241, 0.1); color: var(--accent);">
+                        <div class="stat-icon" style="background: rgba(37, 99, 235, 0.10); color: #2563eb;">
                             <i data-lucide="activity"></i>
                         </div>
                     </div>
@@ -185,75 +193,75 @@
                 <div class="stat-card">
                     <div class="stat-header">
                         <span class="stat-label">成功任务</span>
-                        <div class="stat-icon" style="background: rgba(16, 185, 129, 0.1); color: var(--success);">
+                        <div class="stat-icon" style="background: rgba(16, 185, 129, 0.10); color: #059669;">
                             <i data-lucide="check-circle"></i>
                         </div>
                     </div>
-                    <div id="stat_success" class="stat-value" style="color: var(--success);">0</div>
+                    <div id="stat_success" class="stat-value" style="color: #059669;">0</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-header">
                         <span class="stat-label">失败任务</span>
-                        <div class="stat-icon" style="background: rgba(239, 68, 68, 0.1); color: var(--error);">
+                        <div class="stat-icon" style="background: rgba(239, 68, 68, 0.10); color: #dc2626;">
                             <i data-lucide="x-circle"></i>
                         </div>
                     </div>
-                    <div id="stat_failed" class="stat-value" style="color: var(--error);">0</div>
+                    <div id="stat_failed" class="stat-value" style="color: #dc2626;">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">前台并发槽位</span>
+                        <div class="stat-icon" style="background: rgba(14, 165, 233, 0.10); color: #0284c7;">
+                            <i data-lucide="gauge"></i>
+                        </div>
+                    </div>
+                    <div id="stat_foreground_slots" class="stat-value" style="color: #0369a1;">0/0</div>
+                    <div id="stat_foreground_slots_meta" class="stat-meta">当前占用 / 最大前台并发</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-header">
                         <span class="stat-label">卡密总数</span>
-                        <div class="stat-icon" style="background: rgba(59, 130, 246, 0.1); color: #60a5fa;">
+                        <div class="stat-icon" style="background: rgba(37, 99, 235, 0.10); color: #2563eb;">
                             <i data-lucide="tickets"></i>
                         </div>
                     </div>
-                    <div id="stat_cdk_total" class="stat-value" style="color: #93c5fd;">0</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <span class="stat-label">已使用卡密</span>
-                        <div class="stat-icon" style="background: rgba(16, 185, 129, 0.1); color: var(--success);">
-                            <i data-lucide="badge-check"></i>
-                        </div>
-                    </div>
-                    <div id="stat_cdk_used" class="stat-value" style="color: var(--success);">0</div>
+                    <div id="stat_cdk_total" class="stat-value" style="color: #1d4ed8;">0</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-header">
                         <span class="stat-label">未使用卡密</span>
-                        <div class="stat-icon" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b;">
+                        <div class="stat-icon" style="background: rgba(217, 119, 6, 0.12); color: #d97706;">
                             <i data-lucide="badge-plus"></i>
                         </div>
                     </div>
-                    <div id="stat_cdk_unused" class="stat-value" style="color: #fbbf24;">0</div>
+                    <div id="stat_cdk_unused" class="stat-value" style="color: #b45309;">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">已使用卡密</span>
+                        <div class="stat-icon" style="background: rgba(16, 185, 129, 0.10); color: #059669;">
+                            <i data-lucide="badge-check"></i>
+                        </div>
+                    </div>
+                    <div id="stat_cdk_used" class="stat-value" style="color: #059669;">0</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-header">
                         <span class="stat-label">Orbitcard 可复用卡</span>
-                        <div class="stat-icon" style="background: rgba(168, 85, 247, 0.1); color: #c084fc;">
+                        <div class="stat-icon" style="background: rgba(124, 58, 237, 0.10); color: #7c3aed;">
                             <i data-lucide="credit-card"></i>
                         </div>
                     </div>
-                    <div id="stat_orbitcard_reusable" class="stat-value" style="color: #d8b4fe;">0</div>
+                    <div id="stat_orbitcard_reusable" class="stat-value" style="color: #6d28d9;">0</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-header">
                         <span class="stat-label">本地卡池数量</span>
-                        <div class="stat-icon" style="background: rgba(45, 212, 191, 0.1); color: #5eead4;">
+                        <div class="stat-icon" style="background: rgba(13, 148, 136, 0.10); color: #0d9488;">
                             <i data-lucide="wallet"></i>
                         </div>
                     </div>
-                    <div id="stat_card_total" class="stat-value" style="color: #99f6e4;">0</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <span class="stat-label">前台并发槽位信息</span>
-                        <div class="stat-icon" style="background: rgba(59, 130, 246, 0.1); color: #60a5fa;">
-                            <i data-lucide="activity"></i>
-                        </div>
-                    </div>
-                    <div id="stat_foreground_slots" class="stat-value" style="color: #60a5fa; font-size: 30px;">0/0</div>
-                    <div id="stat_foreground_slots_meta" style="font-size: 13px; color: var(--text-dim);">前台占用/最大前台并发</div>
+                    <div id="stat_card_total" class="stat-value" style="color: #0f766e;">0</div>
                 </div>
             </div>
         </div>
@@ -265,272 +273,303 @@
                 <p>第三方代充 API、并发与维护模式及安全设置（保存后立即生效，配置持久化于 MySQL）。</p>
             </div>
 
-            <!-- 第三方代充 API 设置 -->
-            <div class="panel">
-                <h2 class="panel-title">第三方代充 API（协议对接）</h2>
-                <p style="font-size: 13px; color: var(--text-dim); margin-top: 10px;">
-                    前台兑换开通统一调用第三方 GPT 代充平台提交订单并轮询状态。卡源可选择 Orbitcard 卡台自动开卡复用或本地银行卡池。
-                </p>
-                <div class="toggle-field" style="margin-top: 18px;">
-                    <div class="toggle-label"><span>启用第三方代充 API</span></div>
-                    <label class="toggle-control">
-                        <input type="checkbox" id="gpt_api_enabled" class="toggle-input">
-                        <span class="toggle-switch"></span>
-                    </label>
+            <div class="admin-switcher" data-switcher="system-config">
+                <div class="admin-switcher-tabs" role="tablist" aria-label="系统配置分组">
+                    <button type="button" class="admin-switcher-tab is-active" role="tab" aria-selected="true" data-switcher-tab="api" onclick="switchAdminSection('system-config', 'api')">代充 API 与并发</button>
+                    <button type="button" class="admin-switcher-tab" role="tab" aria-selected="false" data-switcher-tab="telegram" onclick="switchAdminSection('system-config', 'telegram')">Telegram 通知</button>
+                    <button type="button" class="admin-switcher-tab" role="tab" aria-selected="false" data-switcher-tab="security" onclick="switchAdminSection('system-config', 'security')">账号与安全</button>
                 </div>
-                <div class="form-group" style="margin-top: 18px;">
-                    <label>API 基础地址（Base URL）</label>
-                    <input type="text" id="gpt_api_base_url" class="asset-input" placeholder="https://recharge.desolate.run/api/v1/open">
-                </div>
-                <div class="form-group" style="margin-top: 16px;">
-                    <label>API Key</label>
-                    <input type="password" id="gpt_api_key" class="asset-input" placeholder="ap_live_..." autocomplete="off">
-                    <p id="gpt_api_key_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
-                </div>
-                <div class="form-group" style="margin-top: 16px;">
-                    <label>Desolate 套餐代码映射</label>
-                    <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
-                        Plus 使用公开文档定义的 chatgptplusplan；Pro 100 / 200 / 500 仅接受运营方提供的明确代码，留空时该档提交会清晰报错，不会降级到 Plus。
-                    </p>
-                    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-top:8px;">
-                        <input type="text" id="gpt_api_plan_key" class="asset-input" placeholder="Plus: chatgptplusplan" autocomplete="off">
-                        <input type="text" id="gpt_api_plan_key_pro100" class="asset-input" placeholder="Pro 100: 未配置" autocomplete="off">
-                        <input type="text" id="gpt_api_plan_key_pro200" class="asset-input" placeholder="Pro 200: 未配置" autocomplete="off">
-                        <input type="text" id="gpt_api_plan_key_pro500" class="asset-input" placeholder="Pro 500: 未配置" autocomplete="off">
-                    </div>
-                </div>
-                <div class="form-group" style="margin-top: 16px;">
-                    <label for="gpt_api_payment_region">Desolate 支付地区（可选）</label>
-                    <input type="text" id="gpt_api_payment_region" class="asset-input" placeholder="留空由供应商选择默认地区" maxlength="2" pattern="[A-Za-z]{2}" autocomplete="off">
-                    <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
-                        仅在明确配置时发送两位大写地区代码；留空会省略 paymentRegion，由 Desolate 按文档默认地区选择。
-                    </p>
-                </div>
-                <div class="form-group" style="margin-top: 16px;">
-                    <label for="gpt_api_card_source">代充卡源</label>
-                    <select id="gpt_api_card_source" class="asset-input">
-                        <option value="local">本地卡池</option>
-                        <option value="orbitcard">Orbitcard 卡台</option>
-                    </select>
-                    <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
-                        第三方代充每笔订单从这里选择卡源；本地卡池沿用现有卡片，Orbitcard 会优先复用可用卡，不足时自动查询产品目录开新卡。
-                    </p>
-                </div>
-                <div id="orbitcard_config_fields" style="display:none;">
-                    <div class="form-group" style="margin-top: 16px;">
-                        <label>Orbitcard Base URL</label>
-                        <input type="text" id="orbitcard_base_url" class="asset-input" placeholder="https://orbitcard.cc">
-                    </div>
-                    <div class="form-group" style="margin-top: 16px;">
-                        <label>Orbitcard API Key</label>
-                        <input type="password" id="orbitcard_api_key" class="asset-input" placeholder="留空不修改" autocomplete="off">
-                        <p id="orbitcard_api_key_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
-                    </div>
-                    <div class="form-group" style="margin-top: 16px;">
-                        <label>Orbitcard Secret</label>
-                        <input type="password" id="orbitcard_api_secret" class="asset-input" placeholder="留空不修改" autocomplete="off">
-                        <p id="orbitcard_api_secret_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
-                    </div>
-                    <p id="orbitcard_auto_create_status_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 10px;"></p>
-                </div>
-                <p style="font-size: 12px; color: var(--text-dim); margin-top: 12px;">
-                    Desolate Open 平台要求完整 Session（含 user、account、accessToken、sessionToken、expires）；根域名会自动补全 /api/v1/open。
-                </p>
-                <div id="gpt_api_status" style="margin-top: 18px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary);">
-                    <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
-                        <strong>供应商账户状态</strong>
-                        <button type="button" class="btn btn-secondary" onclick="refreshGptApiStatus()"><i data-lucide="refresh-cw"></i>刷新</button>
-                    </div>
-                    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-top:14px;">
-                        <div><div style="font-size:12px;color:var(--text-dim)">可用积分</div><div id="gpt_api_credits" style="font-size:22px;font-weight:700">—</div></div>
-                        <div><div style="font-size:12px;color:var(--text-dim)">USD 余额</div><div id="gpt_api_balance_usd" style="font-size:22px;font-weight:700">—</div></div>
-                        <div><div style="font-size:12px;color:var(--text-dim)">可用 GPT 套餐</div><div id="gpt_api_plans" style="font-size:13px;margin-top:5px">—</div></div>
-                        <div><div style="font-size:12px;color:var(--text-dim)">积分套餐</div><div id="gpt_api_credit_plans" style="font-size:13px;margin-top:5px">—</div></div>
-                    </div>
-                    <div id="gpt_api_status_hint" style="font-size:12px;color:var(--text-dim); margin-top:10px"></div>
-                </div>
-                <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
-                    <button type="button" class="btn btn-secondary" onclick="testGptApiConnection()">
-                        <i data-lucide="activity"></i>
-                        测试连接
-                    </button>
-                    <button type="button" class="btn btn-primary" onclick="saveGptApiConfig()">
-                        <i data-lucide="save"></i>
-                        保存 API 配置
-                    </button>
-                </div>
-            </div>
 
-            <div class="config-grid">
-                <div class="panel">
-                    <h2 class="panel-title">并发与维护</h2>
-                    <div class="form-group" style="margin-top: 24px;">
-                        <label>最大并发激活数</label>
-                        <input type="number" id="max_concurrent_activations" min="1" step="1" class="asset-input" placeholder="1">
-                        <p style="font-size: 13px; color: var(--text-dim); margin-top: 10px;">超过该数量时，前台将提示「当前任务过多，请稍后再试」。</p>
-                    </div>
-                    <div class="form-group" style="margin-top: 22px;">
-                        <div class="toggle-field">
-                            <div class="toggle-label">
-                                <span>维护模式</span>
-                            </div>
+                <div class="admin-switcher-panel" role="tabpanel" data-switch-panel="api">
+                    <!-- 第三方代充 API 设置 -->
+                    <div class="panel">
+                        <h2 class="panel-title">第三方代充 API（协议对接）</h2>
+                        <p style="font-size: 13px; color: var(--text-dim); margin-top: 10px;">
+                            前台兑换开通统一调用第三方 GPT 代充平台提交订单并轮询状态。卡源可选择 Orbitcard 卡台自动开卡复用或本地银行卡池。
+                        </p>
+                        <div class="toggle-field" style="margin-top: 18px;">
+                            <div class="toggle-label"><span>启用第三方代充 API</span></div>
                             <label class="toggle-control">
-                                <input type="checkbox" id="maintenance_mode" class="toggle-input">
+                                <input type="checkbox" id="gpt_api_enabled" class="toggle-input">
                                 <span class="toggle-switch"></span>
                             </label>
                         </div>
-                        <p id="maintenance_mode_hint" style="font-size: 13px; color: var(--text-dim); margin-top: 10px;">开启后立即拒绝所有新任务。</p>
+                        <div class="config-two-col" style="margin-top: 16px;">
+                            <div class="form-group" style="margin: 0;">
+                                <label>API 基础地址（Base URL）</label>
+                                <input type="text" id="gpt_api_base_url" class="asset-input" placeholder="https://recharge.desolate.run/api/v1/open">
+                            </div>
+                            <div class="form-group" style="margin: 0;">
+                                <label>API Key</label>
+                                <input type="password" id="gpt_api_key" class="asset-input" placeholder="ap_live_..." autocomplete="off">
+                                <p id="gpt_api_key_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
+                            </div>
+                        </div>
+                        <div class="form-group" style="margin-top: 16px;">
+                            <label>Desolate 套餐代码映射</label>
+                            <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
+                                Plus 使用公开文档定义的 chatgptplusplan；Pro 100 / 200 / 500 仅接受运营方提供的明确代码，留空时该档提交会清晰报错，不会降级到 Plus。
+                            </p>
+                            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-top:8px;">
+                                <input type="text" id="gpt_api_plan_key" class="asset-input" placeholder="Plus: chatgptplusplan" autocomplete="off">
+                                <input type="text" id="gpt_api_plan_key_pro100" class="asset-input" placeholder="Pro 100: 未配置" autocomplete="off">
+                                <input type="text" id="gpt_api_plan_key_pro200" class="asset-input" placeholder="Pro 200: 未配置" autocomplete="off">
+                                <input type="text" id="gpt_api_plan_key_pro500" class="asset-input" placeholder="Pro 500: 未配置" autocomplete="off">
+                            </div>
+                        </div>
+                        <div class="config-two-col" style="margin-top: 16px;">
+                            <div class="form-group" style="margin: 0;">
+                                <label for="gpt_api_payment_region">Desolate 支付地区（可选）</label>
+                                <input type="text" id="gpt_api_payment_region" class="asset-input" placeholder="留空由供应商选择默认地区" maxlength="2" pattern="[A-Za-z]{2}" autocomplete="off">
+                                <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
+                                    仅在明确配置时发送两位大写地区代码；留空由供应商默认选择。
+                                </p>
+                            </div>
+                            <div class="form-group" style="margin: 0;">
+                                <label for="gpt_api_card_source">代充卡源</label>
+                                <select id="gpt_api_card_source" class="asset-input">
+                                    <option value="local">本地卡池</option>
+                                    <option value="orbitcard">Orbitcard 卡台</option>
+                                </select>
+                                <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
+                                    本地卡池使用导入卡片；Orbitcard 优先复用卡台可用卡。
+                                </p>
+                            </div>
+                        </div>
+                        <div id="orbitcard_config_fields" class="admin-subbox" style="display:none; margin-top: 16px;">
+                            <div class="config-two-col">
+                                <div class="form-group" style="margin: 0;">
+                                    <label>Orbitcard Base URL</label>
+                                    <input type="text" id="orbitcard_base_url" class="asset-input" placeholder="https://orbitcard.cc">
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label>Orbitcard API Key</label>
+                                    <input type="password" id="orbitcard_api_key" class="asset-input" placeholder="留空不修改" autocomplete="off">
+                                    <p id="orbitcard_api_key_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
+                                </div>
+                            </div>
+                            <div class="form-group" style="margin-top: 14px; max-width: 480px;">
+                                <label>Orbitcard Secret</label>
+                                <input type="password" id="orbitcard_api_secret" class="asset-input" placeholder="留空不修改" autocomplete="off">
+                                <p id="orbitcard_api_secret_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
+                            </div>
+                            <p id="orbitcard_auto_create_status_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 10px;"></p>
+                        </div>
+                        <p style="font-size: 12px; color: var(--text-dim); margin-top: 12px;">
+                            Desolate Open 平台要求完整 Session（含 user、account、accessToken、sessionToken、expires）；根域名会自动补全 /api/v1/open。
+                        </p>
+                        <div id="gpt_api_status" class="admin-subbox" style="margin-top: 16px;">
+                            <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
+                                <strong>供应商账户状态</strong>
+                                <button type="button" class="btn btn-secondary" onclick="refreshGptApiStatus()"><i data-lucide="refresh-cw"></i>刷新</button>
+                            </div>
+                            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-top:14px;">
+                                <div><div style="font-size:12px;color:var(--text-dim)">可用积分</div><div id="gpt_api_credits" style="font-size:22px;font-weight:700">—</div></div>
+                                <div><div style="font-size:12px;color:var(--text-dim)">USD 余额</div><div id="gpt_api_balance_usd" style="font-size:22px;font-weight:700">—</div></div>
+                                <div><div style="font-size:12px;color:var(--text-dim)">可用 GPT 套餐</div><div id="gpt_api_plans" style="font-size:13px;margin-top:5px">—</div></div>
+                                <div><div style="font-size:12px;color:var(--text-dim)">积分套餐</div><div id="gpt_api_credit_plans" style="font-size:13px;margin-top:5px">—</div></div>
+                            </div>
+                            <div id="gpt_api_status_hint" style="font-size:12px;color:var(--text-dim); margin-top:10px"></div>
+                        </div>
+                        <div style="margin-top: 20px; display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
+                            <button type="button" class="btn btn-secondary" onclick="testGptApiConnection()">
+                                <i data-lucide="activity"></i>
+                                测试连接
+                            </button>
+                            <button type="button" class="btn btn-primary" onclick="saveGptApiConfig()">
+                                <i data-lucide="save"></i>
+                                保存 API 配置
+                            </button>
+                        </div>
                     </div>
-                </div>
-            </div>
 
-            <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end;">
-                <button class="btn btn-primary" onclick="saveAllConfigs(event)">
-                    <i data-lucide="save"></i>
-                    保存全局配置
-                </button>
-            </div>
-
-            <div class="panel" style="margin-top: 24px;">
-                <h2 class="panel-title">Telegram 通知</h2>
-                <p style="font-size: 13px; color: var(--text-dim); margin-top: 8px;">
-                    开通成功、失败、卡池耗尽或后台安全告警时推送到管理员私聊和/或群组。
-                </p>
-                <div class="form-group" style="margin-top: 20px;">
-                    <label>Bot Token</label>
-                    <input type="password" id="telegram_bot_token" class="asset-input" placeholder="123456789:ABCdefGHI..." autocomplete="off">
-                </div>
-                <div class="form-group" style="margin-top: 16px;">
-                    <label>管理员 Chat ID</label>
-                    <input type="text" id="telegram_admin_chat_id" class="asset-input" placeholder="例如 123456789">
-                </div>
-                <div class="form-group" style="margin-top: 16px;">
-                    <label>群组 Chat ID</label>
-                    <input type="text" id="telegram_group_chat_id" class="asset-input" placeholder="例如 -1001234567890">
-                </div>
-
-                <div style="margin-top: 20px; display: grid; gap: 14px;">
-                    <div class="toggle-field">
-                        <div class="toggle-label"><span>通知管理员</span></div>
-                        <label class="toggle-control">
-                            <input type="checkbox" id="telegram_notify_admin" class="toggle-input">
-                            <span class="toggle-switch"></span>
-                        </label>
-                    </div>
-                    <div class="toggle-field">
-                        <div class="toggle-label"><span>通知群组</span></div>
-                        <label class="toggle-control">
-                            <input type="checkbox" id="telegram_notify_group" class="toggle-input">
-                            <span class="toggle-switch"></span>
-                        </label>
+                    <div class="panel">
+                        <h2 class="panel-title">并发与维护</h2>
+                        <div class="config-two-col" style="margin-top: 18px; align-items: start;">
+                            <div class="form-group" style="margin: 0;">
+                                <label>最大并发激活数</label>
+                                <input type="number" id="max_concurrent_activations" min="1" step="1" class="asset-input" placeholder="1">
+                                <p style="font-size: 12.5px; color: var(--text-dim); margin-top: 8px;">超过该数量时，前台将提示「当前任务过多，请稍后再试」。</p>
+                            </div>
+                            <div class="form-group" style="margin: 0;">
+                                <div class="toggle-field">
+                                    <div class="toggle-label">
+                                        <span>维护模式</span>
+                                    </div>
+                                    <label class="toggle-control">
+                                        <input type="checkbox" id="maintenance_mode" class="toggle-input">
+                                        <span class="toggle-switch"></span>
+                                    </label>
+                                </div>
+                                <p id="maintenance_mode_hint" style="font-size: 12.5px; color: var(--text-dim); margin-top: 8px;">开启后立即拒绝所有新任务。</p>
+                            </div>
+                        </div>
+                        <div style="margin-top: 18px; display: flex; justify-content: flex-end;">
+                            <button class="btn btn-primary" onclick="saveAllConfigs(event)">
+                                <i data-lucide="save"></i>
+                                保存全局配置
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                <div style="margin-top: 22px; display: grid; gap: 14px;">
-                    <div class="toggle-field">
-                        <div class="toggle-label"><span>开通成功时通知</span></div>
-                        <label class="toggle-control">
-                            <input type="checkbox" id="telegram_on_success" class="toggle-input">
-                            <span class="toggle-switch"></span>
-                        </label>
-                    </div>
-                    <div class="toggle-field">
-                        <div class="toggle-label"><span>开通失败时通知</span></div>
-                        <label class="toggle-control">
-                            <input type="checkbox" id="telegram_on_failure" class="toggle-input">
-                            <span class="toggle-switch"></span>
-                        </label>
-                    </div>
-                    <div class="toggle-field">
-                        <div class="toggle-label"><span>卡池耗尽时通知</span></div>
-                        <label class="toggle-control">
-                            <input type="checkbox" id="telegram_on_card_pool_empty" class="toggle-input">
-                            <span class="toggle-switch"></span>
-                        </label>
-                    </div>
-                </div>
-
-                <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
-                    <button type="button" class="btn btn-secondary" onclick="testTelegramNotification()">
-                        <i data-lucide="send"></i>
-                        发送测试消息
-                    </button>
-                    <button type="button" class="btn btn-primary" onclick="saveTelegramConfig()">
-                        <i data-lucide="save"></i>
-                        保存 Telegram 配置
-                    </button>
-                </div>
-            </div>
-
-            <div class="panel" style="margin-top: 24px;">
-                <h2 class="panel-title">修改后台密码</h2>
-                <div class="form-group" style="margin-top: 24px;">
-                    <label>原密码</label>
-                    <input type="password" id="current_password" placeholder="请输入原密码" class="asset-input"
-                        autocomplete="current-password">
-                </div>
-                <div class="form-group" style="margin-top: 16px;">
-                    <label>新密码</label>
-                    <input type="password" id="new_password" placeholder="请输入新密码，至少 6 位" class="asset-input"
-                        autocomplete="new-password">
-                </div>
-                <button class="btn btn-primary" style="margin-top: 16px;" onclick="changeAdminPassword(event)">
-                    <i data-lucide="key-round"></i>
-                    修改密码
-                </button>
-            </div>
-
-            <div class="panel" style="margin-top: 24px;">
-                <h2 class="panel-title">安全设置</h2>
-                <p style="font-size: 13px; color: var(--text-dim); margin-top: 10px;">
-                    登录支持 Google Authenticator 或 Telegram 验证码。
-                </p>
-                <div style="margin-top: 16px; padding: 14px; border: 1px solid var(--border); border-radius: 10px;">
-                    <div class="form-group" style="margin-bottom: 12px;">
-                        <label>登录入口路径</label>
-                        <input type="text" id="admin_login_path" class="asset-input" placeholder="例如 secure-login" autocomplete="off" spellcheck="false">
-                        <div id="admin_login_path_url" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></div>
-                    </div>
-                    <div class="form-group" style="margin-bottom: 12px;">
-                        <label>管理后台路径</label>
-                        <input type="text" id="admin_panel_path" class="asset-input" placeholder="例如 secure-panel" autocomplete="off" spellcheck="false">
-                        <div id="admin_panel_path_url" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></div>
-                    </div>
-                    <p style="font-size: 12px; color: var(--text-dim); margin-bottom: 12px;">
-                        仅支持小写字母、数字与连字符（2–32 字符）。保存后请收藏新地址，默认 <code>/admin-login</code>、<code>/admin</code> 将失效。
+                <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="telegram" hidden>
+                    <h2 class="panel-title">Telegram 通知</h2>
+                    <p style="font-size: 13px; color: var(--text-dim); margin-top: 8px;">
+                        开通成功、失败、卡池耗尽或后台安全告警时推送到管理员私聊和/或群组。
                     </p>
-                    <button class="btn btn-secondary" onclick="saveAdminPaths()">
-                        <i data-lucide="link"></i>
-                        保存入口路径
-                    </button>
-                </div>
-                <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border);">
-                    <div class="form-group" style="margin-bottom: 14px;">
-                        <label>登录二次验证方式</label>
-                        <select id="admin_2fa_login_mode" class="asset-input">
-                            <option value="either">登录时可切换（Google Authenticator / Telegram）</option>
-                            <option value="totp">仅 Google Authenticator</option>
-                            <option value="telegram">仅 Telegram 验证码</option>
-                        </select>
-                        <button class="btn btn-secondary" style="margin-top: 10px;" onclick="saveAdmin2faLoginMode()">
+                    <div class="config-two-col" style="margin-top: 20px; align-items: start;">
+                        <div>
+                            <div class="form-group">
+                                <label>Bot Token</label>
+                                <input type="password" id="telegram_bot_token" class="asset-input" placeholder="123456789:ABCdefGHI..." autocomplete="off">
+                            </div>
+                            <div class="form-group" style="margin-top: 14px;">
+                                <label>管理员 Chat ID</label>
+                                <input type="text" id="telegram_admin_chat_id" class="asset-input" placeholder="例如 123456789">
+                            </div>
+                            <div class="form-group" style="margin-top: 14px;">
+                                <label>群组 Chat ID</label>
+                                <input type="text" id="telegram_group_chat_id" class="asset-input" placeholder="例如 -1001234567890">
+                            </div>
+                        </div>
+                        <div class="admin-subbox" style="display: grid; gap: 14px;">
+                            <div class="toggle-field">
+                                <div class="toggle-label"><span>通知管理员</span></div>
+                                <label class="toggle-control">
+                                    <input type="checkbox" id="telegram_notify_admin" class="toggle-input">
+                                    <span class="toggle-switch"></span>
+                                </label>
+                            </div>
+                            <div class="toggle-field">
+                                <div class="toggle-label"><span>通知群组</span></div>
+                                <label class="toggle-control">
+                                    <input type="checkbox" id="telegram_notify_group" class="toggle-input">
+                                    <span class="toggle-switch"></span>
+                                </label>
+                            </div>
+                            <div style="border-top: 1px solid var(--divider); margin: 2px 0;"></div>
+                            <div class="toggle-field">
+                                <div class="toggle-label"><span>开通成功时通知</span></div>
+                                <label class="toggle-control">
+                                    <input type="checkbox" id="telegram_on_success" class="toggle-input">
+                                    <span class="toggle-switch"></span>
+                                </label>
+                            </div>
+                            <div class="toggle-field">
+                                <div class="toggle-label"><span>开通失败时通知</span></div>
+                                <label class="toggle-control">
+                                    <input type="checkbox" id="telegram_on_failure" class="toggle-input">
+                                    <span class="toggle-switch"></span>
+                                </label>
+                            </div>
+                            <div class="toggle-field">
+                                <div class="toggle-label"><span>卡池耗尽时通知</span></div>
+                                <label class="toggle-control">
+                                    <input type="checkbox" id="telegram_on_card_pool_empty" class="toggle-input">
+                                    <span class="toggle-switch"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 20px; display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
+                        <button type="button" class="btn btn-secondary" onclick="testTelegramNotification()">
+                            <i data-lucide="send"></i>
+                            发送测试消息
+                        </button>
+                        <button type="button" class="btn btn-primary" onclick="saveTelegramConfig()">
                             <i data-lucide="save"></i>
-                            保存验证方式
+                            保存 Telegram 配置
                         </button>
                     </div>
-                    <div id="totp_status_text" style="font-size: 13px; color: var(--text-dim); margin-bottom: 12px;">2FA 状态加载中...</div>
-                    <button class="btn btn-secondary" onclick="setupAdmin2fa()">
-                        <i data-lucide="smartphone"></i>
-                        绑定 Google Authenticator
-                    </button>
-                    <button class="btn btn-delete" style="margin-left: 8px;" onclick="disableAdmin2fa()">
-                        <i data-lucide="shield-off"></i>
-                        关闭 2FA
-                    </button>
-                    <div id="totp_setup_box" style="display:none; margin-top: 14px; padding: 12px; background: var(--primary-soft); border-radius: 10px;">
-                        <img id="totp_qr_img" alt="Google Authenticator QR" style="display:block; width:220px; height:220px; margin:0 auto 12px; border-radius:8px; background:#fff;">
-                        <div style="font-size: 12px; word-break: break-all; margin-bottom: 8px;" id="totp_secret_text"></div>
-                        <input type="text" id="totp_confirm_code" class="asset-input" placeholder="输入 Authenticator 6 位码确认" inputmode="numeric" maxlength="6">
-                        <button class="btn btn-primary" style="margin-top: 10px;" onclick="confirmAdmin2fa()">确认启用</button>
+                </div>
+
+                <div class="admin-switcher-panel" role="tabpanel" data-switch-panel="security" hidden>
+                    <div class="config-two-col" style="align-items: start;">
+                        <div style="display: flex; flex-direction: column; gap: 20px;">
+                            <div class="panel" style="margin-bottom: 0;">
+                                <h2 class="panel-title">修改后台密码</h2>
+                                <div class="form-group" style="margin-top: 18px;">
+                                    <label>原密码</label>
+                                    <input type="password" id="current_password" placeholder="请输入原密码" class="asset-input"
+                                        autocomplete="current-password">
+                                </div>
+                                <div class="form-group" style="margin-top: 14px;">
+                                    <label>新密码</label>
+                                    <input type="password" id="new_password" placeholder="请输入新密码，至少 6 位" class="asset-input"
+                                        autocomplete="new-password">
+                                </div>
+                                <div style="margin-top: 16px; display: flex; justify-content: flex-end;">
+                                    <button class="btn btn-primary" onclick="changeAdminPassword(event)">
+                                        <i data-lucide="key-round"></i>
+                                        修改密码
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="panel" style="margin-bottom: 0;">
+                                <h2 class="panel-title">自定义后台入口路径</h2>
+                                <div class="form-group" style="margin-top: 16px; margin-bottom: 12px;">
+                                    <label>登录入口路径</label>
+                                    <input type="text" id="admin_login_path" class="asset-input" placeholder="例如 secure-login" autocomplete="off" spellcheck="false">
+                                    <div id="admin_login_path_url" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></div>
+                                </div>
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <label>管理后台路径</label>
+                                    <input type="text" id="admin_panel_path" class="asset-input" placeholder="例如 secure-panel" autocomplete="off" spellcheck="false">
+                                    <div id="admin_panel_path_url" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></div>
+                                </div>
+                                <p style="font-size: 12px; color: var(--text-dim); margin-bottom: 14px;">
+                                    仅支持小写字母、数字与连字符（2–32 字符）。保存后请收藏新地址，默认 <code>/admin-login</code>、<code>/admin</code> 将失效。
+                                </p>
+                                <div style="display: flex; justify-content: flex-end;">
+                                    <button class="btn btn-secondary" onclick="saveAdminPaths()">
+                                        <i data-lucide="link"></i>
+                                        保存入口路径
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="panel" style="margin-bottom: 0;">
+                            <h2 class="panel-title">二次验证（2FA）</h2>
+                            <p style="font-size: 13px; color: var(--text-dim); margin-top: 10px;">
+                                登录支持 Google Authenticator 或 Telegram 验证码，推荐仅使用 Google Authenticator。
+                            </p>
+                            <div class="form-group" style="margin-top: 16px;">
+                                <label>登录二次验证方式</label>
+                                <select id="admin_2fa_login_mode" class="asset-input">
+                                    <option value="either">登录时可切换（Google Authenticator / Telegram）</option>
+                                    <option value="totp">仅 Google Authenticator</option>
+                                    <option value="telegram">仅 Telegram 验证码</option>
+                                </select>
+                                <div style="margin-top: 10px; display: flex; justify-content: flex-end;">
+                                    <button class="btn btn-secondary" onclick="saveAdmin2faLoginMode()">
+                                        <i data-lucide="save"></i>
+                                        保存验证方式
+                                    </button>
+                                </div>
+                            </div>
+                            <div style="margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--divider);">
+                                <div id="totp_status_text" class="admin-subbox" style="font-size: 13px; color: var(--text-secondary); margin-bottom: 14px; padding: 10px 12px;">2FA 状态加载中...</div>
+                                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                                    <button class="btn btn-primary" onclick="setupAdmin2fa()">
+                                        <i data-lucide="smartphone"></i>
+                                        绑定 Google Authenticator
+                                    </button>
+                                    <button class="btn btn-danger" onclick="disableAdmin2fa()">
+                                        <i data-lucide="shield-off"></i>
+                                        关闭 2FA
+                                    </button>
+                                </div>
+                                <div id="totp_setup_box" style="display:none; margin-top: 14px; padding: 14px; background: var(--primary-soft); border: 1px solid #bfdbfe; border-radius: 10px;">
+                                    <img id="totp_qr_img" alt="Google Authenticator QR" style="display:block; width:220px; height:220px; margin:0 auto 12px; border-radius:8px; background:#fff;">
+                                    <div style="font-size: 12px; word-break: break-all; margin-bottom: 10px;" id="totp_secret_text"></div>
+                                    <input type="text" id="totp_confirm_code" class="asset-input" placeholder="输入 Authenticator 6 位码确认" inputmode="numeric" maxlength="6">
+                                    <button class="btn btn-primary" style="margin-top: 10px; width: 100%; justify-content: center;" onclick="confirmAdmin2fa()">确认启用</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -672,27 +711,47 @@
                             设置后对后续新开的卡生效；已有卡继续按卡片记录中的上限执行。范围 1-20 次。
                         </p>
                         <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px;">
-                            <label style="font-size:13px; color:var(--text-secondary);">ChatGPT Plus
-                                <input id="orbitcard_reuse_limit_plus" class="asset-input" type="number" min="1" max="20" step="1" value="4" style="margin-top:6px;">
-                                <input id="orbitcard_safety_margin_plus" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
-                            </label>
-                            <label style="font-size:13px; color:var(--text-secondary);">Pro 100
-                                <input id="orbitcard_reuse_limit_pro100" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
-                                <input id="orbitcard_safety_margin_pro100" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
-                            </label>
-                            <label style="font-size:13px; color:var(--text-secondary);">Pro 200
-                                <input id="orbitcard_reuse_limit_pro200" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
-                                <input id="orbitcard_safety_margin_pro200" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
-                            </label>
-                            <label style="font-size:13px; color:var(--text-secondary);">Pro 500
-                                <input id="orbitcard_reuse_limit_pro500" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
-                                <input id="orbitcard_safety_margin_pro500" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
-                            </label>
+                            <div class="strategy-tier-card">
+                                <div class="strategy-tier-title">ChatGPT Plus</div>
+                                <label class="strategy-field-label">一卡几冲（次）
+                                    <input id="orbitcard_reuse_limit_plus" class="asset-input" type="number" min="1" max="20" step="1" value="4">
+                                </label>
+                                <label class="strategy-field-label">安全余量（USD）
+                                    <input id="orbitcard_safety_margin_plus" class="asset-input" type="number" min="0" max="100" step="0.01" value="1">
+                                </label>
+                            </div>
+                            <div class="strategy-tier-card">
+                                <div class="strategy-tier-title">Pro 100</div>
+                                <label class="strategy-field-label">一卡几冲（次）
+                                    <input id="orbitcard_reuse_limit_pro100" class="asset-input" type="number" min="1" max="20" step="1" value="1">
+                                </label>
+                                <label class="strategy-field-label">安全余量（USD）
+                                    <input id="orbitcard_safety_margin_pro100" class="asset-input" type="number" min="0" max="100" step="0.01" value="1">
+                                </label>
+                            </div>
+                            <div class="strategy-tier-card">
+                                <div class="strategy-tier-title">Pro 200</div>
+                                <label class="strategy-field-label">一卡几冲（次）
+                                    <input id="orbitcard_reuse_limit_pro200" class="asset-input" type="number" min="1" max="20" step="1" value="1">
+                                </label>
+                                <label class="strategy-field-label">安全余量（USD）
+                                    <input id="orbitcard_safety_margin_pro200" class="asset-input" type="number" min="0" max="100" step="0.01" value="1">
+                                </label>
+                            </div>
+                            <div class="strategy-tier-card">
+                                <div class="strategy-tier-title">Pro 500</div>
+                                <label class="strategy-field-label">一卡几冲（次）
+                                    <input id="orbitcard_reuse_limit_pro500" class="asset-input" type="number" min="1" max="20" step="1" value="1">
+                                </label>
+                                <label class="strategy-field-label">安全余量（USD）
+                                    <input id="orbitcard_safety_margin_pro500" class="asset-input" type="number" min="0" max="100" step="0.01" value="1">
+                                </label>
+                            </div>
                         </div>
                     </div>
                     <div id="orbitcard_strategy_summary" style="margin-top:18px;"></div>
                     <div class="table-container" style="margin-top:16px;">
-                        <table style="min-width:860px;">
+                        <table style="min-width:720px; width:100%;">
                             <thead>
                                 <tr>
                                     <th>套餐</th>
@@ -719,10 +778,16 @@
                 <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="local" hidden>
                     <div class="panel-header">
                         <h2 class="panel-title">本地银行卡列表</h2>
-                        <button class="btn btn-success" onclick="toggleCardPoolImportBox()">
-                            <i data-lucide="upload"></i>
-                            批量导入
-                        </button>
+                        <div class="table-toolbar-actions">
+                            <button type="button" class="btn btn-secondary" id="local_card_mask_toggle_btn" onclick="toggleLocalCardSensitiveMask()">
+                                <i data-lucide="eye"></i>
+                                <span>显示明文</span>
+                            </button>
+                            <button type="button" class="btn btn-primary" onclick="toggleCardPoolImportBox()">
+                                <i data-lucide="upload"></i>
+                                批量导入
+                            </button>
+                        </div>
                     </div>
 
                     <div id="card_pool_import_box" class="import-box">
@@ -736,7 +801,7 @@
                             placeholder="5349336392059744|04/31|738|John Doe&#10;5349336383247282|04/31|937"></textarea>
                         <p id="card_pool_import_result" style="font-size: 13px; color: var(--text-dim); margin-top: 10px;"></p>
                         <div class="import-actions">
-                            <button id="card_pool_import_btn" class="btn btn-success" onclick="importCardPool()">
+                            <button id="card_pool_import_btn" class="btn btn-primary" onclick="importCardPool()">
                                 <i data-lucide="check-check"></i>
                                 解析并导入
                             </button>
@@ -744,19 +809,16 @@
                     </div>
 
                     <div class="table-container">
-                        <table class="admin-action-table card-pool-table">
+                        <table class="admin-action-table card-pool-table" style="width:100%; min-width:820px;">
                             <thead>
                                 <tr>
-                                    <th width="200px">卡号</th>
-                                    <th width="90px">有效期</th>
-                                    <th width="70px">CVC</th>
-                                    <th width="100px">导入持卡人</th>
-                                    <th width="110px">支付姓名</th>
-                                    <th>绑定地址</th>
-                                    <th width="90px" style="text-align:center">状态</th>
-                                    <th width="80px" style="text-align:center">次数</th>
-                                    <th width="140px" style="text-align:center">最近使用</th>
-                                    <th width="80px" style="text-align:center">操作</th>
+                                    <th style="width:240px;">卡片信息</th>
+                                    <th style="width:150px;">持卡人 / 支付姓名</th>
+                                    <th style="min-width:200px;">绑定地址</th>
+                                    <th style="width:90px; text-align:center;">状态</th>
+                                    <th style="width:72px; text-align:center;">次数</th>
+                                    <th style="width:136px; text-align:center;">最近使用</th>
+                                    <th style="width:72px; text-align:center;">操作</th>
                                 </tr>
                             </thead>
                             <tbody id="card_pool_list_body"></tbody>
@@ -775,28 +837,28 @@
             <div class="panel">
                 <div class="panel-header">
                     <h2 class="panel-title">激活码列表</h2>
-                    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: flex-end;">
-                        <button class="btn btn-primary" onclick="loadCdkList().then(() => showMessage('CDK 列表已刷新', 'success')).catch((e) => showMessage(e.message || '刷新失败', 'error'))">
-                            <i data-lucide="refresh-cw"></i>
-                            刷新
-                        </button>
-                        <button class="btn btn-success" onclick="toggleImportBox('cdk')">
+                    <div class="table-toolbar-actions">
+                        <div class="cdk-generate-group">
+                            <select id="cdk_plan_type" class="asset-input" style="width: 118px;" aria-label="生成套餐">
+                                <option value="plus" selected>Plus</option>
+                                <option value="pro100">Pro 100</option>
+                                <option value="pro200">Pro 200</option>
+                                <option value="pro500">Pro 500</option>
+                            </select>
+                            <input type="number" id="cdk_count" value="1" min="1" max="100" class="asset-input"
+                                style="width: 68px; text-align:center;" aria-label="生成数量">
+                            <button class="btn btn-primary" onclick="generateCDKs(this)">
+                                <i data-lucide="sparkles"></i>
+                                生成
+                            </button>
+                        </div>
+                        <button class="btn btn-secondary" onclick="toggleImportBox('cdk')">
                             <i data-lucide="upload"></i>
                             批量导入
                         </button>
-                        <input type="text" id="cdk_search" class="asset-input" placeholder="搜索激活码 / 卡密"
-                            style="width: 220px;" oninput="handleCdkSearch(this.value)">
-                        <select id="cdk_plan_type" class="asset-input" style="width: 130px;">
-                            <option value="plus" selected>Plus</option>
-                            <option value="pro100">Pro 100</option>
-                            <option value="pro200">Pro 200</option>
-                            <option value="pro500">Pro 500</option>
-                        </select>
-                        <input type="number" id="cdk_count" value="1" min="1" max="100" class="asset-input"
-                            style="width: 80px;">
-                        <button class="btn btn-primary" onclick="generateCDKs(this)">
-                            <i data-lucide="sparkles"></i>
-                            生成
+                        <button class="btn btn-secondary" onclick="loadCdkList().then(() => showMessage('CDK 列表已刷新', 'success')).catch((e) => showMessage(e.message || '刷新失败', 'error'))">
+                            <i data-lucide="refresh-cw"></i>
+                            刷新
                         </button>
                     </div>
                 </div>
@@ -810,67 +872,73 @@
                     <textarea id="cdk_import_text" class="import-textarea"
                         placeholder="KC-ABCDEFGHJK23456&#10;KC-MNPQRSTUVW56789"></textarea>
                     <div class="import-actions">
-                        <button class="btn btn-success" onclick="importCDKs()">
+                        <button class="btn btn-primary" onclick="importCDKs()">
                             <i data-lucide="check-check"></i>
                             解析并导入
                         </button>
                     </div>
                 </div>
-                <div class="batch-actions">
-                    <div class="filter-dropdown" data-filter="cdk">
-                        <button class="filter-trigger" onclick="toggleFilterMenu('cdk')"><span>全部状态</span><i
-                                data-lucide="chevron-down"></i></button>
-                        <div class="filter-menu">
-                            <button class="filter-option active"
-                                onclick="selectFilter('cdk', 'all', '全部状态')">全部状态</button>
-                            <button class="filter-option" onclick="selectFilter('cdk', 'unused', '未使用')">未使用</button>
-                            <button class="filter-option" onclick="selectFilter('cdk', 'used', '已使用')">已使用</button>
-                            <button class="filter-option" onclick="selectFilter('cdk', 'unshipped', '未出库')">未出库</button>
-                            <button class="filter-option" onclick="selectFilter('cdk', 'shipped', '已出库')">已出库</button>
+                <div id="cdk_quick_tabs" class="orbitcard-quick-tabs" role="tablist" aria-label="按 CDK 状态快速筛选"></div>
+                <div class="cdk-toolbar-bar">
+                    <div class="cdk-toolbar-filters">
+                        <input type="search" id="cdk_search" class="asset-input" placeholder="搜索激活码 / 账号摘要"
+                            style="width: 240px;" oninput="handleCdkSearch(this.value)">
+                        <div class="filter-dropdown" data-filter="cdk" style="display:none;">
+                            <button class="filter-trigger" onclick="toggleFilterMenu('cdk')"><span>全部状态</span><i data-lucide="chevron-down"></i></button>
+                            <div class="filter-menu">
+                                <button class="filter-option active" onclick="selectFilter('cdk', 'all', '全部状态')">全部状态</button>
+                                <button class="filter-option" onclick="selectFilter('cdk', 'unused', '未使用')">未使用</button>
+                                <button class="filter-option" onclick="selectFilter('cdk', 'used', '已使用')">已使用</button>
+                                <button class="filter-option" onclick="selectFilter('cdk', 'unshipped', '未出库')">未出库</button>
+                                <button class="filter-option" onclick="selectFilter('cdk', 'shipped', '已出库')">已出库</button>
+                            </div>
+                        </div>
+                        <div class="filter-dropdown" data-filter="cdk_plan_type_filter" style="min-width: 120px;">
+                            <button class="filter-trigger" onclick="toggleFilterMenu('cdk_plan_type_filter')"><span>全部套餐</span><i
+                                    data-lucide="chevron-down"></i></button>
+                            <div id="filter_menu_cdk_plan_type_filter" class="filter-menu">
+                                <button class="filter-option active" onclick="selectCdkPlanTypeFilter('all', '全部套餐')">全部套餐</button>
+                                <button class="filter-option" onclick="selectCdkPlanTypeFilter('plus', 'Plus')">Plus</button>
+                                <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro100', 'Pro 100')">Pro 100</button>
+                                <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro200', 'Pro 200')">Pro 200</button>
+                                <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro500', 'Pro 500')">Pro 500</button>
+                                <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro_5x', 'Pro 5x（历史）')">Pro 5x（历史）</button>
+                                <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro_20x', 'Pro 20x（历史）')">Pro 20x（历史）</button>
+                            </div>
                         </div>
                     </div>
-                    <div class="filter-dropdown" data-filter="cdk_plan_type_filter" style="min-width: 120px;">
-                        <button class="filter-trigger" onclick="toggleFilterMenu('cdk_plan_type_filter')"><span>全部套餐</span><i
-                                data-lucide="chevron-down"></i></button>
-                        <div id="filter_menu_cdk_plan_type_filter" class="filter-menu">
-                            <button class="filter-option active" onclick="selectCdkPlanTypeFilter('all', '全部套餐')">全部套餐</button>
-                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('plus', 'Plus')">Plus</button>
-                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro100', 'Pro 100')">Pro 100</button>
-                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro200', 'Pro 200')">Pro 200</button>
-                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro500', 'Pro 500')">Pro 500</button>
-                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro_5x', 'Pro 5x（历史）')">Pro 5x（历史）</button>
-                            <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro_20x', 'Pro 20x（历史）')">Pro 20x（历史）</button>
-                        </div>
+                    <div class="cdk-toolbar-batch">
+                        <span id="cdk_selected_badge" class="cdk-selected-badge" style="display:none;">已选 0</span>
+                        <button class="btn btn-secondary" onclick="togglePageSelection('cdk')">
+                            <i data-lucide="check-square"></i>
+                            本页全选
+                        </button>
+                        <button class="btn btn-secondary" onclick="selectUnusedOnPage('cdk')">
+                            <i data-lucide="square-check"></i>
+                            选未使用
+                        </button>
+                        <button class="btn btn-primary" onclick="batchCopyCDKs()">
+                            <i data-lucide="copy"></i>
+                            复制
+                        </button>
+                        <button class="btn btn-danger" onclick="batchDeleteCDKs()">
+                            <i data-lucide="trash-2"></i>
+                            删除
+                        </button>
                     </div>
-                    <button class="btn btn-success" onclick="togglePageSelection('cdk')">
-                        <i data-lucide="check-square"></i>
-                        本页全选/取消
-                    </button>
-                    <button class="btn btn-success" onclick="selectUnusedOnPage('cdk')">
-                        <i data-lucide="square-check"></i>
-                        选中本页未使用
-                    </button>
-                    <button class="btn btn-success" onclick="batchCopyCDKs()">
-                        <i data-lucide="copy"></i>
-                        复制
-                    </button>
-                    <button class="btn btn-success" onclick="batchDeleteCDKs()">
-                        <i data-lucide="trash-2"></i>
-                        删除
-                    </button>
                 </div>
                 <div class="table-container">
-                    <table>
+                    <table class="cdk-table">
                         <thead>
                             <tr>
-                                <th class="select-header">选择</th>
-                                <th>激活码内容</th>
-                                <th width="100px" style="text-align:center">套餐</th>
-                                <th width="200px">Session 记录</th>
-                                <th width="120px" style="text-align:center">是否出库</th>
-                                <th width="140px">状态</th>
-                                <th width="180px">使用时间</th>
-                                <th width="100px" style="text-align:center">操作</th>
+                                <th class="select-header" style="width:52px;">选择</th>
+                                <th style="width:215px;">激活码内容</th>
+                                <th style="width:82px; text-align:center;">套餐</th>
+                                <th>Session 记录</th>
+                                <th style="width:66px; text-align:center;">出库</th>
+                                <th style="width:84px; text-align:center;">状态</th>
+                                <th style="width:136px;">使用时间</th>
+                                <th style="width:64px; text-align:center;">操作</th>
                             </tr>
                         </thead>
                         <tbody id="cdk_body"></tbody>
@@ -973,28 +1041,33 @@
                     <button type="button" class="admin-switcher-tab" role="tab" aria-selected="false" data-switcher-tab="holds" onclick="switchAdminSection('task-records', 'holds')">待人工确认</button>
                 </div>
                 <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="tasks">
-                    <div class="runtime-log-toolbar log-page-toolbar">
-                        <button type="button" class="btn btn-success" id="admin_refresh_pause_btn" onclick="toggleAdminDataRefresh()">
-                            <i data-lucide="pause"></i>
-                            <span id="admin_refresh_pause_label">停止自动刷新</span>
-                        </button>
-                        <button type="button" class="btn btn-primary" onclick="loadTaskLogs(true)">
-                            <i data-lucide="refresh-cw"></i>
-                            立即刷新
-                        </button>
-                        <span class="log-page-toolbar-hint">默认每 3 秒自动拉取概览与下方表格；停止后仅在你点击「立即刷新」时更新。</span>
+                    <div class="panel-header" style="margin-bottom: 12px;">
+                        <h2 class="panel-title">任务记录列表</h2>
+                        <div class="table-toolbar-actions">
+                            <input type="search" id="task_log_search" class="asset-input" style="width:230px;"
+                                placeholder="搜索 CDK / 账号 / 信息" oninput="handleTaskLogSearch(this.value)">
+                            <button type="button" class="btn btn-secondary" id="admin_refresh_pause_btn" onclick="toggleAdminDataRefresh()">
+                                <i data-lucide="pause"></i>
+                                <span id="admin_refresh_pause_label">停止自动刷新</span>
+                            </button>
+                            <button type="button" class="btn btn-primary" onclick="loadTaskLogs(true)">
+                                <i data-lucide="refresh-cw"></i>
+                                立即刷新
+                            </button>
+                        </div>
                     </div>
+                    <div id="task_log_quick_tabs" class="orbitcard-quick-tabs" role="tablist" aria-label="按任务状态快速筛选"></div>
                     <div class="table-container">
                         <table class="admin-action-table task-records-table">
                             <thead>
                                 <tr>
                                     <th>执行时间</th>
                                     <th>激活码</th>
-                                    <th>Token 摘要</th>
+                                    <th>账号 / Token 摘要</th>
                                     <th>任务信息</th>
-                                    <th width="150px">进度</th>
-                                    <th>状态</th>
-                                    <th width="150px" style="text-align:center">操作</th>
+                                    <th>进度</th>
+                                    <th style="text-align:center;">状态</th>
+                                    <th style="text-align:center;">操作</th>
                                 </tr>
                             </thead>
                             <tbody id="log_body"></tbody>
@@ -1003,10 +1076,10 @@
                     <div id="log_pagination" class="table-footer"></div>
                 </div>
                 <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="holds" hidden>
-                    <div class="runtime-log-toolbar log-page-toolbar">
+                    <div class="panel-header" style="margin-bottom: 12px;">
                         <div>
-                            <h2 style="margin:0 0 4px;">待人工确认</h2>
-                            <span class="log-page-toolbar-hint">失败后该卡密会被锁定，任何账号都不能再次使用；确认处理后在这里解除。</span>
+                            <h2 class="panel-title">待人工确认</h2>
+                            <p style="font-size:12.5px; color:var(--text-dim); margin:6px 0 0;">失败后该卡密会被锁定，任何账号都不能再次使用；确认处理后在这里解除。</p>
                         </div>
                         <button type="button" class="btn btn-secondary" onclick="loadActivationManualHolds(true)">
                             <i data-lucide="refresh-cw"></i>
@@ -1023,7 +1096,7 @@
                                     <th>激活码</th>
                                     <th>失败原因</th>
                                     <th>时间</th>
-                                    <th width="100px" style="text-align:center">操作</th>
+                                    <th width="90px" style="text-align:center">操作</th>
                                 </tr>
                             </thead>
                             <tbody id="activation_manual_hold_body"></tbody>
@@ -1041,20 +1114,28 @@
             </div>
             <div class="panel">
                 <div class="runtime-log-toolbar">
+                    <input type="search" id="runtime_log_filter" class="asset-input" style="width:240px;"
+                        placeholder="筛选任务 ID / 关键字" oninput="applyRuntimeLogFilter(this.value)">
                     <label class="runtime-log-toggle">
                         <input type="checkbox" id="runtime_log_autoscroll" checked>
-                        <span>自动滚动到底部</span>
+                        <span>自动滚动</span>
                     </label>
                     <label class="runtime-log-toggle">
                         <input type="checkbox" id="runtime_log_pause">
                         <span>暂停拉取</span>
                     </label>
-                    <button type="button" class="btn btn-primary" id="runtime_log_refresh_btn" onclick="refreshRuntimeLogsManual()">
-                        <i data-lucide="refresh-cw"></i> 立即刷新
-                    </button>
-                    <button type="button" class="btn btn-delete" id="runtime_log_clear_btn" onclick="clearRuntimeLogs()">
-                        <i data-lucide="trash-2"></i> 清空日志
-                    </button>
+                    <span id="runtime_log_count" class="runtime-log-count-pill">0 行</span>
+                    <div style="margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;">
+                        <button type="button" class="btn btn-secondary" onclick="copyRuntimeLogs()">
+                            <i data-lucide="copy"></i> 复制
+                        </button>
+                        <button type="button" class="btn btn-primary" id="runtime_log_refresh_btn" onclick="refreshRuntimeLogsManual()">
+                            <i data-lucide="refresh-cw"></i> 立即刷新
+                        </button>
+                        <button type="button" class="btn btn-danger" id="runtime_log_clear_btn" onclick="clearRuntimeLogs()">
+                            <i data-lucide="trash-2"></i> 清空日志
+                        </button>
+                    </div>
                 </div>
                 <p class="runtime-log-hint">此处为内存实时流水，便于排查上游 API 请求与轮询过程。</p>
                 <div class="runtime-log-pre-wrap">
@@ -1077,10 +1158,10 @@
                         刷新
                     </button>
                 </div>
-                <p style="font-size: 13px; color: var(--text-dim); margin-top: 10px;">
-                    被封禁的 IP 或网段访问任何页面和接口都会被拒绝。同一来源 24 小时内用不存在的邮箱试 3 次、密码错 10 次，或后台登录被限流后仍持续尝试，会自动封禁 7 天（IPv6 按 /48）；近 30 天成功登录过的 IP 不会被自动封禁。Tor 出口节点整站拦截。
+                <p style="font-size: 13px; color: var(--text-dim); margin: 0 0 12px;">
+                    被封禁的 IP 或网段访问任何页面和接口都会被拒绝。同一来源 24 小时内错误邮箱 3 次、错密码 10 次、无效令牌 20 次或触发限流持续试探将自动封禁 7 天（IPv6 按 /48）；近 30 天成功登录过的 IP 不会被自动封禁。Tor 出口节点整站拦截。
                 </p>
-                <div style="display: grid; grid-template-columns: minmax(200px, 2fr) minmax(160px, 2fr) minmax(110px, 1fr) auto; gap: 10px; margin-top: 14px; align-items: end;">
+                <div class="ip-ban-form-grid">
                     <div class="form-group" style="margin: 0;">
                         <label>IP 或网段</label>
                         <input type="text" id="ip_ban_cidr" class="asset-input" placeholder="例如 1.2.3.4 或 2a01:e5c0:2e15::/48" autocomplete="off" spellcheck="false">
@@ -1103,22 +1184,22 @@
                         封禁
                     </button>
                 </div>
-                <div id="ip_ban_your_ip" style="font-size: 12px; color: var(--text-dim); margin-top: 8px;"></div>
-                <div style="overflow:auto; margin-top: 14px;">
-                    <table class="data-table">
+                <div id="ip_ban_your_ip" class="orbitcard-usage-meta-bar" style="margin-top: 12px; font-size: 12.5px; color: var(--text-secondary);"></div>
+                <div class="table-container" style="margin-top: 14px;">
+                    <table class="data-table security-table">
                         <thead>
                             <tr>
                                 <th>IP / 网段</th>
-                                <th style="white-space:nowrap">来源</th>
+                                <th style="width:76px; text-align:center;">来源</th>
                                 <th>原因</th>
-                                <th style="white-space:nowrap">拦截次数</th>
-                                <th>封禁时间</th>
-                                <th>到期</th>
-                                <th style="text-align:center">操作</th>
+                                <th style="width:86px; text-align:center;">拦截次数</th>
+                                <th style="width:140px;">封禁时间</th>
+                                <th style="width:148px;">到期</th>
+                                <th style="width:84px; text-align:center;">操作</th>
                             </tr>
                         </thead>
                         <tbody id="ip_ban_body">
-                            <tr><td colspan="7" style="text-align:center; color: var(--text-dim);">加载中...</td></tr>
+                            <tr><td colspan="7" style="text-align:center; color: var(--text-dim); padding:28px 0;">加载中...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1131,21 +1212,21 @@
                         刷新
                     </button>
                 </div>
-                <div style="overflow:auto; margin-top: 14px;">
-                    <table class="data-table">
+                <div class="table-container">
+                    <table class="data-table security-table">
                         <thead>
                             <tr>
-                                <th>时间</th>
-                                <th>事件</th>
-                                <th>账号</th>
-                                <th>IP</th>
-                                <th>指纹</th>
+                                <th style="width:128px;">时间</th>
+                                <th style="width:100px; text-align:center;">事件</th>
+                                <th style="width:155px;">账号</th>
+                                <th style="width:185px;">IP</th>
+                                <th style="width:110px;">指纹</th>
                                 <th>浏览器</th>
-                                <th>详情</th>
+                                <th style="width:150px;">详情</th>
                             </tr>
                         </thead>
                         <tbody id="admin_login_logs_body">
-                            <tr><td colspan="7" style="text-align:center; color: var(--text-dim);">加载中...</td></tr>
+                            <tr><td colspan="7" style="text-align:center; color: var(--text-dim); padding:28px 0;">加载中...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1153,14 +1234,14 @@
         </div>
     </main>
 
-    <script src="/admin/assets/core.js?v=20261127-refactor"></script>
-    <script src="/admin/assets/security.js?v=20261127-orbitcard-ui"></script>
-    <script src="/admin/assets/config.js?v=20261127-refactor"></script>
-    <script src="/admin/assets/cards.js?v=20261127-orbitcard-ui2"></script>
-    <script src="/admin/assets/cdks.js?v=20261127-refactor"></script>
-    <script src="/admin/assets/sessions.js?v=20261127-refactor"></script>
-    <script src="/admin/assets/tasks.js?v=20261127-refactor"></script>
-    <script src="/admin/assets/main.js?v=20261127-refactor"></script>
+    <script src="/admin/assets/core.js?v=20261127-ui-polish"></script>
+    <script src="/admin/assets/security.js?v=20261127-ui-polish"></script>
+    <script src="/admin/assets/config.js?v=20261127-ui-polish"></script>
+    <script src="/admin/assets/cards.js?v=20261127-ui-polish"></script>
+    <script src="/admin/assets/cdks.js?v=20261127-ui-polish"></script>
+    <script src="/admin/assets/sessions.js?v=20261127-ui-polish"></script>
+    <script src="/admin/assets/tasks.js?v=20261127-ui-polish"></script>
+    <script src="/admin/assets/main.js?v=20261127-ui-polish"></script>
 </body>
 
 </html>

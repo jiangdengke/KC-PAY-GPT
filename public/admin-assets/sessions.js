@@ -1,4 +1,4 @@
-/* global lucide, authFetch, readJsonResponse, showMessage, escapeHtml, renderStatus,
+/* global lucide, authFetch, readJsonResponse, showMessage, showAdminConfirm, escapeHtml, renderStatus,
    copyTextToClipboard, downloadTextFile, renderPagination, paginationState */
 /* exported loadSessions, searchSessions, openSessionModal, closeSessionModal,
    copySessionByJobKey, exportSessionByJobKey, copySessionModalContent, exportSessionModalContent,
@@ -148,10 +148,10 @@ function renderAutoRenewCell(row) {
     }
     const info = sessionRenewalStatus[row.job_key];
     if (!info) return '<span style="color:var(--text-dim); font-size:12px;">查询中…</span>';
-    if (!info.ok) return `<span style="color:#f87171; font-size:12px;" title="${escapeHtml(info.error || '查询失败')}">失败</span>`;
+    if (!info.ok) return `<span style="color:var(--error); font-size:12px;" title="${escapeHtml(info.error || '查询失败')}">失败</span>`;
     if (!info.hasActiveSubscription) return '<span style="color:var(--text-dim); font-size:12px;">无订阅</span>';
     if (info.autoRenewRaw === true) return '<span class="status-badge status-success">已开启</span>';
-    if (info.autoRenewRaw === false) return '<span class="status-badge" style="background:rgba(251,191,36,0.12);color:#fbbf24;">已关闭</span>';
+    if (info.autoRenewRaw === false) return '<span class="status-badge status-warning">已关闭</span>';
     return '<span style="color:var(--text-dim);">—</span>';
 }
 
@@ -177,17 +177,17 @@ function renderSessionTable() {
             : '';
         return `
             <tr class="session-record">
-                <td data-label="执行时间"><span class="session-text-preview">${escapeHtml(row.time || row.created_at || '-')}</span></td>
-                <td data-label="激活码"><code class="session-text-preview">${escapeHtml(row.cdk_code || '-')}</code></td>
+                <td data-label="执行时间"><span class="session-text-preview" title="${escapeHtml(row.time || row.created_at || '-')}">${escapeHtml(row.time || row.created_at || '-')}</span></td>
+                <td data-label="激活码"><code class="session-text-preview" title="${escapeHtml(row.cdk_code || '-')}">${escapeHtml(row.cdk_code || '-')}</code></td>
                 <td data-label="Session">${sessionCell}</td>
                 <td class="session-cell-center" data-label="卡尾号">${escapeHtml(row.card_last4 || '-')}</td>
-                <td class="session-cell-message" data-label="任务信息">${escapeHtml(row.message || '-')}</td>
+                <td class="session-cell-message" data-label="任务信息" title="${escapeHtml(row.message || '-')}">${escapeHtml(row.message || '-')}</td>
                 <td data-label="状态">${renderStatus(row.status)}</td>
                 <td class="session-cell-center" data-label="自动续费">${renderAutoRenewCell(row)}</td>
                 <td class="session-cell-actions session-cell-center" data-label="操作">
                     <div class="session-actions">
-                        <button type="button" class="btn btn-primary" data-copy-session="${jobKey}" title="复制 Session">复制</button>
-                        <button type="button" class="btn btn-success" data-export-session="${jobKey}" title="导出 Session">导出</button>
+                        <button type="button" class="btn btn-secondary" data-copy-session="${jobKey}" title="复制 Session">复制</button>
+                        <button type="button" class="btn btn-secondary" data-export-session="${jobKey}" title="导出 Session">导出</button>
                         ${cancelRenewBtn}
                         <button type="button" class="btn-delete" title="删除此任务记录" data-delete-task="${jobKey}">
                             <i data-lucide="trash-2"></i>
@@ -298,7 +298,7 @@ function renderCancelRenewalDetail(data = {}) {
         ['自动续费', data.autoRenew || '—']
     ];
     return rows.map(([label, value]) => (
-        `<div style="display:flex; justify-content:space-between; gap:16px; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+        `<div style="display:flex; justify-content:space-between; gap:16px; padding:9px 0; border-bottom:1px solid var(--divider);">
             <span style="color: var(--text-dim);">${escapeHtml(label)}</span>
             <strong>${escapeHtml(String(value))}</strong>
         </div>`
@@ -352,7 +352,7 @@ async function submitCancelRenewalPage() {
         showMessage('请先粘贴 Session JSON 或 AccessToken', 'warning');
         return;
     }
-    if (!confirm('确认要关闭该账号的自动续费吗？当前计费周期内仍可继续使用。')) return;
+    if (!(await showAdminConfirm('确认要关闭该账号的自动续费吗？当前计费周期内仍可继续使用。', '取消自动续费'))) return;
     if (btn) btn.disabled = true;
     if (hint) hint.textContent = '正在处理，请稍候…';
     const box = document.getElementById('cancel_renewal_result');
@@ -379,7 +379,7 @@ async function submitEnableRenewalPage() {
         showMessage('请先粘贴 Session JSON 或 AccessToken', 'warning');
         return;
     }
-    if (!confirm('确认要开启该账号的自动续费吗？')) return;
+    if (!(await showAdminConfirm('确认要开启该账号的自动续费吗？', '开启自动续费'))) return;
     if (btn) btn.disabled = true;
     if (hint) hint.textContent = '正在处理，请稍候…';
     const box = document.getElementById('cancel_renewal_result');
@@ -399,7 +399,7 @@ async function submitEnableRenewalPage() {
 
 async function cancelAutoRenewByJobKey(jobKey, triggerBtn) {
     if (!jobKey) return;
-    if (!confirm('确认要关闭该 Session 对应账号的自动续费吗？')) return;
+    if (!(await showAdminConfirm('确认要关闭该 Session 对应账号的自动续费吗？', '取消自动续费'))) return;
     const originalLabel = triggerBtn ? triggerBtn.textContent : '';
     if (triggerBtn) {
         triggerBtn.disabled = true;

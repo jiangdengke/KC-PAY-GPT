@@ -1,4 +1,4 @@
-/* global lucide, authFetch, showMessage, escapeHtml, formatTimeShort, redirectToLogin, setAdminLoginPath, ADMIN_LOGIN_EVENT_LABELS */
+/* global lucide, authFetch, showMessage, showAdminConfirm, escapeHtml, formatTimeShort, redirectToLogin, setAdminLoginPath, ADMIN_LOGIN_EVENT_LABELS */
 /* exported updateAdminPathPreview, loadAdminSecurityStatus, saveAdminPaths, saveAdmin2faLoginMode,
    setupAdmin2fa, confirmAdmin2fa, disableAdmin2fa, changeAdminPassword,
    loadAdminLoginLogs, loadIpBans, submitIpBan, removeIpBan, prefillIpBan */
@@ -225,17 +225,25 @@ async function loadAdminLoginLogs() {
             body.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-dim);">暂无记录</td></tr>';
             return;
         }
-        body.innerHTML = logs.map((row) => `
+        body.innerHTML = logs.map((row) => {
+            const eventKey = String(row.event || '');
+            const eventLabel = ADMIN_LOGIN_EVENT_LABELS[eventKey] || eventKey || '-';
+            const eventBadgeClass = eventKey === 'login_success'
+                ? 'status-success'
+                : (['login_failed', '2fa_failed', 'secondary_failed'].includes(eventKey)
+                    ? 'status-failed'
+                    : (eventKey === 'password_changed' ? 'status-warning' : 'status-running'));
+            return `
             <tr>
-                <td>${escapeHtml(String(row.created_at || ''))}</td>
-                <td>${escapeHtml(ADMIN_LOGIN_EVENT_LABELS[row.event] || row.event || '')}</td>
-                <td>${escapeHtml(String(row.admin_email || ''))}</td>
-                <td>${escapeHtml(String(row.ip || ''))}${row.ip ? ` <button type="button" class="btn btn-secondary" style="padding:2px 8px; font-size:12px; margin-left:6px;" data-ban-ip="${escapeHtml(String(row.ip))}" title="填入上方封禁表单">封禁</button>` : ''}</td>
-                <td title="${escapeHtml(String(row.fingerprint || ''))}">${escapeHtml(String(row.fingerprint || '').slice(0, 16))}</td>
-                <td title="${escapeHtml(String(row.user_agent || ''))}">${escapeHtml(String(row.user_agent || '').slice(0, 40))}</td>
-                <td>${escapeHtml(String(row.detail || ''))}</td>
-            </tr>
-        `).join('');
+                <td style="white-space:nowrap; font-size:12.5px; color:var(--text-dim);">${escapeHtml(formatTimeShort(row.created_at))}</td>
+                <td style="text-align:center;"><span class="status-badge ${eventBadgeClass}">${escapeHtml(eventLabel)}</span></td>
+                <td style="font-size:13px;">${escapeHtml(String(row.admin_email || '-'))}</td>
+                <td><div class="security-ip-cell"><code>${escapeHtml(String(row.ip || '-'))}</code>${row.ip ? `<button type="button" class="btn btn-secondary" style="padding:2px 8px; font-size:11.5px;" data-ban-ip="${escapeHtml(String(row.ip))}" title="填入上方封禁表单">封禁</button>` : ''}</div></td>
+                <td title="${escapeHtml(String(row.fingerprint || ''))}"><code>${escapeHtml(String(row.fingerprint || '-').slice(0, 14))}</code></td>
+                <td><span class="security-ua-cell" title="${escapeHtml(String(row.user_agent || ''))}">${escapeHtml(String(row.user_agent || '-'))}</span></td>
+                <td style="font-size:12.5px; color:var(--text-secondary);">${escapeHtml(String(row.detail || '-'))}</td>
+            </tr>`;
+        }).join('');
     } catch (error) {
         showMessage(error.message || '加载登录日志失败', 'error');
     }
@@ -300,7 +308,7 @@ async function submitIpBan() {
 }
 
 async function removeIpBan(id, cidr) {
-    if (!confirm(`确定解封 ${cidr}？`)) return;
+    if (!(await showAdminConfirm(`确定解封 ${cidr}？`, '解除 IP 封禁'))) return;
     try {
         const res = await authFetch(`/api/admin/ip-bans/${encodeURIComponent(id)}`, { method: 'DELETE' });
         const data = await res.json();

@@ -1,7 +1,7 @@
 /* global lucide, authFetch, showMessage, showAdminConfirm, escapeHtml, copyText, formatPlanLabel,
-   getPlanColors, getPageItems, renderPagination, closeFilterMenus, selectedItems, tableFilters,
+   getPlanColors, formatTimeShort, getPageItems, renderPagination, closeFilterMenus, selectedItems, tableFilters,
    tableSearch, paginationState, pruneSelection, loadData */
-/* exported loadCdkList, renderCDKTable, setFilter, handleCdkSearch, selectCdkPlanTypeFilter,
+/* exported loadCdkList, renderCDKTable, setFilter, selectCdkQuickFilter, updateCdkSelectedBadge, handleCdkSearch, selectCdkPlanTypeFilter,
    toggleImportBox, togglePageSelection, selectUnusedOnPage, generateCDKs, importCDKs,
    copyCDK, batchCopyCDKs, batchDeleteCDKs, deleteCDK */
 'use strict';
@@ -36,10 +36,58 @@ function getFilteredCdks() {
 
     const keyword = String(tableSearch.cdk || '').trim().toUpperCase();
     if (keyword) {
-        result = result.filter((item) => String(getCdkCode(item)).toUpperCase().includes(keyword));
+        result = result.filter((item) => {
+            const code = String(getCdkCode(item)).toUpperCase();
+            const preview = typeof item === 'string' ? '' : String(item.session_preview || '').toUpperCase();
+            return code.includes(keyword) || preview.includes(keyword);
+        });
     }
 
     return result;
+}
+
+function selectCdkQuickFilter(value) {
+    setFilter('cdk', value || 'all');
+}
+
+function renderCdkQuickTabs() {
+    const container = document.getElementById('cdk_quick_tabs');
+    if (!container) return;
+    const total = cdkPool.length;
+    let unused = 0;
+    let used = 0;
+    let unshipped = 0;
+    let shipped = 0;
+    for (const item of cdkPool) {
+        const st = typeof item === 'string' ? 'unused' : (item.status || 'unused');
+        if (st === 'used') used += 1;
+        else if (st === 'unused') unused += 1;
+        if (typeof item !== 'string' && item.shipped) shipped += 1;
+        else unshipped += 1;
+    }
+    const current = tableFilters.cdk || 'all';
+    const tabs = [
+        { value: 'all', label: '全部', count: total },
+        { value: 'unused', label: '未使用', count: unused },
+        { value: 'used', label: '已使用', count: used },
+        { value: 'unshipped', label: '未出库', count: unshipped },
+        { value: 'shipped', label: '已出库', count: shipped }
+    ];
+    container.innerHTML = tabs.map((tab) => {
+        const isActive = current === tab.value;
+        return `<button type="button" role="tab" aria-selected="${isActive}" class="orbitcard-quick-tab ${isActive ? 'is-active' : ''}" onclick="selectCdkQuickFilter('${tab.value}')">
+            <span>${tab.label}</span>
+            <span class="orbitcard-quick-count">${tab.count}</span>
+        </button>`;
+    }).join('');
+}
+
+function updateCdkSelectedBadge() {
+    const badge = document.getElementById('cdk_selected_badge');
+    if (!badge) return;
+    const count = selectedItems.cdk.size;
+    badge.textContent = `已选 ${count}`;
+    badge.style.display = count > 0 ? 'inline-flex' : 'none';
 }
 
 function setFilter(type, value) {
@@ -105,7 +153,15 @@ function selectUnusedOnPage(type) {
 function renderCDKTable() {
     const tbody = document.getElementById('cdk_body');
     if (!tbody) return;
+    renderCdkQuickTabs();
+    updateCdkSelectedBadge();
     const pageData = getPageItems(getFilteredCdks(), 'cdk');
+    if (!pageData.items.length) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--text-dim); padding:38px 0;">${cdkPool.length ? '暂无符合筛选条件的激活码' : '暂无激活码，点击右上角「生成」或「批量导入」添加'}</td></tr>`;
+        renderPagination('cdk_pagination', 'cdk', 0);
+        lucide.createIcons();
+        return;
+    }
     tbody.innerHTML = pageData.items.map((cdk) => {
         const code = getCdkCode(cdk);
         const status = typeof cdk === 'string' ? 'unused' : (cdk.status || 'unused');
@@ -116,21 +172,21 @@ function renderCDKTable() {
         const [planTypeColor, planTypeBg] = getPlanColors(planType);
         const planTypeLabel = formatPlanLabel(planType);
         const statusBadge = status === 'processing'
-            ? '<span class="status-badge" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b;">开通中</span>'
+            ? '<span class="status-badge status-warning">开通中</span>'
             : (status === 'used'
                 ? '<span class="status-badge status-success">已使用</span>'
                 : '<span class="status-badge status-running">未使用</span>');
         return `
             <tr>
-                <td class="select-cell"><input type="checkbox" ${selectedItems.cdk.has(code) ? 'checked' : ''} onchange="toggleSelection('cdk', '${escapeHtml(code)}', this.checked)"></td>
+                <td class="select-cell"><input type="checkbox" ${selectedItems.cdk.has(code) ? 'checked' : ''} onchange="toggleSelection('cdk', '${escapeHtml(code)}', this.checked); updateCdkSelectedBadge();"></td>
                 <td><span class="cdk-copy" onclick="copyCDK('${escapeHtml(code)}')"><code>${escapeHtml(code)}</code><i data-lucide="copy"></i></span></td>
                 <td style="text-align:center"><span class="status-badge" style="background: ${planTypeBg}; color: ${planTypeColor}">${escapeHtml(planTypeLabel)}</span></td>
-                <td><code>${sessionPreview ? escapeHtml(sessionPreview) : '-'}</code></td>
+                <td style="max-width:210px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(sessionPreview || '')}"><code>${sessionPreview ? escapeHtml(sessionPreview) : '-'}</code></td>
                 <td style="text-align:center"><span class="readonly-switch ${shipped ? 'active' : ''}" title="${shipped ? '已出库' : '未出库'}"></span></td>
-                <td>${statusBadge}</td>
-                <td>${escapeHtml(usedAt || '-')}</td>
+                <td style="text-align:center">${statusBadge}</td>
+                <td style="white-space:nowrap; font-size:12.5px; color:var(--text-dim);">${usedAt ? escapeHtml(formatTimeShort(usedAt)) : '-'}</td>
                 <td style="text-align:center">
-                    <button class="btn-delete" onclick="deleteCDK('${escapeHtml(code)}')">
+                    <button class="btn-delete" onclick="deleteCDK('${escapeHtml(code)}')" title="删除">
                         <i data-lucide="trash-2"></i>
                     </button>
                 </td>
