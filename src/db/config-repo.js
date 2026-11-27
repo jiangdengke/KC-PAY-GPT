@@ -24,6 +24,8 @@ const GPT_API_CONFIG_KEYS = [
     'gpt_api_currency',
     'gpt_api_payment_region',
     'gpt_api_card_source',
+    'orbitcard_auto_create_card',
+    'orbitcard_plus_unit_price',
     'orbitcard_product_code',
     'orbitcard_next_product_code',
     'orbitcard_base_url',
@@ -54,6 +56,11 @@ function parseOrbitcardReuseLimit(value, fallback) {
 function parseOrbitcardSafetyMargin(value, fallback) {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : fallback;
+}
+
+function parseOrbitcardPlusUnitPrice(value, fallback = 20) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 1 && parsed <= 500 ? Number(parsed.toFixed(2)) : fallback;
 }
 
 function normalizeCardPool(cardPool) {
@@ -106,6 +113,8 @@ async function ensureDefaultConfigs() {
         ['gpt_api_currency', 'PHP'],
         ['gpt_api_payment_region', ''],
         ['gpt_api_card_source', 'orbitcard'],
+        ['orbitcard_auto_create_card', '0'],
+        ['orbitcard_plus_unit_price', '20'],
         ['orbitcard_product_code', ''],
         ['orbitcard_next_product_code', ''],
         ['orbitcard_base_url', config.defaults.orbitcardBaseUrl],
@@ -185,6 +194,8 @@ async function getGptApiConfig() {
         currency: String(map.gpt_api_currency || 'PHP').trim().toUpperCase() || 'PHP',
         payment_region: String(map.gpt_api_payment_region || '').trim().toUpperCase(),
         card_source: String(map.gpt_api_card_source || 'local').trim().toLowerCase() === 'orbitcard' ? 'orbitcard' : 'local',
+        orbitcard_auto_create_card: String(map.orbitcard_auto_create_card ?? '0') === '1',
+        orbitcard_plus_unit_price: parseOrbitcardPlusUnitPrice(map.orbitcard_plus_unit_price, 20),
         orbitcard_product_code: String(map.orbitcard_product_code || map.orbitcard_next_product_code || '').trim(),
         orbitcard_base_url: String(map.orbitcard_base_url || config.defaults.orbitcardBaseUrl).trim().replace(/\/+$/, '') || config.defaults.orbitcardBaseUrl,
         orbitcard_api_key: String(map.orbitcard_api_key || '').trim(),
@@ -200,6 +211,12 @@ async function saveGptApiConfig(input = {}) {
     const productCode = Object.prototype.hasOwnProperty.call(input, 'orbitcard_product_code')
         ? String(input.orbitcard_product_code || '').trim()
         : existing.orbitcard_product_code;
+    const autoCreateCard = Object.prototype.hasOwnProperty.call(input, 'orbitcard_auto_create_card')
+        ? Boolean(input.orbitcard_auto_create_card)
+        : Boolean(existing.orbitcard_auto_create_card);
+    const plusUnitPrice = Object.prototype.hasOwnProperty.call(input, 'orbitcard_plus_unit_price')
+        ? parseOrbitcardPlusUnitPrice(input.orbitcard_plus_unit_price, existing.orbitcard_plus_unit_price ?? 20)
+        : (existing.orbitcard_plus_unit_price ?? 20);
     const orbitcardApiSecret = String(input.orbitcard_api_secret || '').trim() || existing.orbitcard_api_secret || '';
     const requestedMappings = input.plan_mappings && typeof input.plan_mappings === 'object' ? input.plan_mappings : {};
     const planMappings = Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [
@@ -225,6 +242,8 @@ async function saveGptApiConfig(input = {}) {
         ['gpt_api_currency', String(input.currency || existing.currency || 'PHP').trim().toUpperCase() || 'PHP'],
         ['gpt_api_payment_region', String(input.payment_region ?? existing.payment_region ?? '').trim().toUpperCase()],
         ['gpt_api_card_source', String(input.card_source || existing.card_source || 'local').trim().toLowerCase() === 'orbitcard' ? 'orbitcard' : 'local'],
+        ['orbitcard_auto_create_card', autoCreateCard ? '1' : '0'],
+        ['orbitcard_plus_unit_price', String(plusUnitPrice)],
         ['orbitcard_product_code', productCode],
         ['orbitcard_next_product_code', ''],
         ['orbitcard_base_url', String(input.orbitcard_base_url || existing.orbitcard_base_url || config.defaults.orbitcardBaseUrl).trim().replace(/\/+$/, '') || config.defaults.orbitcardBaseUrl],

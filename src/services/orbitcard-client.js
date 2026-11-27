@@ -758,6 +758,7 @@ async function getCardDetail(cfg, cardId) {
     if (!/^\d{13,19}$/.test(cardNumber) || !/^\d{3,4}$/.test(cvc) || !expiry) {
         return { success: false, status: result.status, error: 'Orbitcard 卡详情未返回完整卡资料，请确认 API Key 具备 cards:sensitive Scope' };
     }
+    const balance = extractCardBalance(row);
     return {
         success: true,
         status: result.status,
@@ -768,6 +769,11 @@ async function getCardDetail(cfg, cardId) {
             expiry,
             holder: String(row.cardholder_name || row.card_holder || row.cardholderName || '').trim(),
             country: String(row.country || '').trim(),
+            status: String(row.status || row.card_status || '').trim().toUpperCase(),
+            productCode: String(row.product_code || row.productCode || '').trim(),
+            balance: balance.value,
+            balanceField: balance.field,
+            currency: extractCardCurrency(row),
             raw: row
         },
         raw: result.raw
@@ -843,6 +849,107 @@ async function testConnection(cfg) {
     };
 }
 
+function findMatchingCatalogProduct(card = {}, productCatalog = []) {
+    const products = Array.isArray(productCatalog)
+        ? (productCatalog.length && productCatalog[0]?.productCode !== undefined
+            ? productCatalog
+            : normalizeProductList(productCatalog))
+        : normalizeProductList(productCatalog);
+    if (!products.length) return null;
+
+    const code = String(card.productCode || card.product_code || card.raw?.product_code || '').trim().toLowerCase();
+    if (code) {
+        const byCode = products.find((item) => item.productCode.toLowerCase() === code);
+        if (byCode) return byCode;
+    }
+
+    const bin = String(
+        card.bin || card.cardBin || card.raw?.bin
+        || String(card.cardNumber || card.card_number || card.cardNumberMasked || card.card_number_masked || '').replace(/\D/g, '').slice(0, 8)
+    ).replace(/\s+/g, '').trim();
+    if (bin) {
+        const exactBin = products.find((item) => item.bin && item.bin === bin);
+        if (exactBin) return exactBin;
+        const prefixMatches = products.filter((item) => item.bin && (bin.startsWith(item.bin) || item.bin.startsWith(bin)));
+        if (prefixMatches.length === 1) return prefixMatches[0];
+    }
+    return null;
+}
+
+/**
+ * 按卡片当前余额推算可开通的 ChatGPT Plus 次数：
+ * - 优先使用产品目录中匹配到的实时 Plus 价格与最低留存余额
+ * - 找不到产品目录价格时，回退至可配置的兜底 Plus 单价（默认 20 USD）
+ * - 扣除最低留存与 Plus 安全余量后向下取整，并受 Plus 一卡几冲上限封顶
+ */
+function estimatePlusCapacityFromBalance(card = {}, options = {}) {
+    const status = String(card?.status || 'ACTIVE').trim().toUpperCase();
+    if (status !== 'ACTIVE') {
+        return { eligible: false, estimatedCount: 0, reason: 'inactive' };
+    }
+    if (isBlockedCardProduct(card)) {
+        return { eligible: false, estimatedCount: 0, reason: 'blocked_product' };
+    }
+
+    const rawBalance = card?.balance;
+    const balance = rawBalance == null || rawBalance === '' ? NaN : Number(rawBalance);
+    if (!Number.isFinite(balance) || balance <= 0) {
+        return { eligible: false, estimatedCount: 0, reason: 'missing_or_zero_balance' };
+    }
+
+    const fallbackPriceRaw = Number(options.fallbackPlusPrice);
+    const fallbackPlusPrice = Number.isFinite(fallbackPriceRaw) && fallbackPriceRaw >= 1 && fallbackPriceRaw <= 500
+        ? fallbackPriceRaw
+        : 20;
+    const maxCap = getPlanReuseLimit('plus', options.reuseLimits || null);
+    const safetyMargin = getPlanSafetyMargin('plus', options.safetyMargins || null);
+
+    const matchedProduct = findMatchingCatalogProduct(card, options.productCatalog || []);
+    const catalogPrice = matchedProduct ? resolveProductPlanPrice(matchedProduct, 'plus') : null;
+    const minRetainedBalance = matchedProduct
+        && Number.isFinite(matchedProduct.minRetainedBalance)
+        && matchedProduct.minRetainedBalance > 0
+        ? matchedProduct.minRetainedBalance
+        : 0;
+    const unitPrice = catalogPrice && Number(catalogPrice.price) > 0
+        ? Number(catalogPrice.price)
+        : fallbackPlusPrice;
+    const priceSource = catalogPrice && Number(catalogPrice.price) > 0 ? 'catalog' : 'fallback';
+    const priceCurrency = String(catalogPrice?.currency || 'USD').trim().toUpperCase() || 'USD';
+    const cardCurrency = String(card?.currency || 'USD').trim().toUpperCase() || 'USD';
+
+    if (cardCurrency !== priceCurrency) {
+        return {
+            eligible: false,
+            estimatedCount: 0,
+            reason: 'currency_mismatch',
+            unitPrice,
+            priceCurrency,
+            cardCurrency
+        };
+    }
+
+    const spendable = balance - minRetainedBalance - safetyMargin;
+    const rawCount = spendable >= unitPrice ? Math.floor((spendable + 1e-9) / unitPrice) : 0;
+    const estimatedCount = Math.min(maxCap, Math.max(0, rawCount));
+
+    return {
+        eligible: estimatedCount >= 1,
+        planType: estimatedCount >= 1 ? 'plus' : null,
+        estimatedCount,
+        rawCount,
+        cap: maxCap,
+        balance,
+        spendable: Number(Math.max(0, spendable).toFixed(2)),
+        unitPrice,
+        minRetainedBalance,
+        safetyMargin,
+        priceSource,
+        currency: priceCurrency,
+        reason: estimatedCount >= 1 ? 'ok' : 'insufficient_balance'
+    };
+}
+
 module.exports = {
     DEFAULT_BASE_URL,
     normalizeBaseUrl,
@@ -873,6 +980,7 @@ module.exports = {
     getProductOptionsForPlan,
     buildProductStrategyCatalog,
     chooseProductForPlan,
+    estimatePlusCapacityFromBalance,
     createCard,
     extractCreateCardOrder,
     createCardUntilReady,

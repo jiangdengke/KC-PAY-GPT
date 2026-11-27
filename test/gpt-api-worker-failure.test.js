@@ -407,4 +407,227 @@ describe('runGptApiWorker failure notification wiring', () => {
         expect(harness.markedUnusedCdks).toHaveLength(0);
         expect(harness.resetCdks).toEqual(['KC-SYNTHETIC']);
     });
+
+    it('auto-syncs upstream cards and estimates Plus capacity without calling createCard when auto-create is disabled', async () => {
+        const orbitcardClient = require('../src/services/orbitcard-client');
+        const taskUpdates = [];
+        const broadcasts = [];
+        const notifications = [];
+        const holdRows = [];
+        const markedUnusedCdks = [];
+        const dbCards = new Map();
+
+        const store = {
+            getGptApiConfig: async () => ({
+                enabled: true,
+                api_key: 'synthetic-api-key',
+                card_source: 'orbitcard',
+                orbitcard_auto_create_card: false,
+                orbitcard_plus_unit_price: 20,
+                orbitcard_base_url: 'https://orbitcard.cc',
+                orbitcard_api_key: 'ok',
+                orbitcard_api_secret: 'os',
+                orbitcard_reuse_limits: { plus: 4, pro100: 1, pro200: 1, pro500: 1 },
+                orbitcard_safety_margins: { plus: 1, pro100: 1, pro200: 1, pro500: 1 },
+                country: 'US',
+                currency: 'USD'
+            }),
+            getActiveProxy: async () => null,
+            getOrbitcardCardMetaByIds: async (ids) => ids.map((id) => dbCards.get(id)).filter(Boolean),
+            syncOrbitcardCards: async (cards) => {
+                let autoAssigned = 0;
+                for (const card of cards) {
+                    const existing = dbCards.get(card.cardId);
+                    if (!existing?.planType && card.autoPlanType) {
+                        dbCards.set(card.cardId, {
+                            cardId: card.cardId,
+                            status: 'ACTIVE',
+                            planType: card.autoPlanType,
+                            usageCount: 0,
+                            maxUsageCount: card.autoMaxUsageCount,
+                            initialAmount: card.autoInitialAmount,
+                            last4: card.last4
+                        });
+                        autoAssigned += 1;
+                    }
+                }
+                return { total: cards.length, inserted: autoAssigned, updated: 0, autoAssigned, autoAssignedCards: [] };
+            },
+            reserveOrbitcardCard: async (cards, _owner, { planType }) => {
+                for (const card of cards) {
+                    const row = dbCards.get(card.cardId);
+                    if (row && row.planType === planType && row.usageCount < row.maxUsageCount) {
+                        return {
+                            id: row.cardId,
+                            orbitcard_id: row.cardId,
+                            last4: row.last4 || '8888',
+                            usage_count: row.usageCount,
+                            max_usage_count: row.maxUsageCount,
+                            plan_type: row.planType,
+                            initial_amount: row.initialAmount
+                        };
+                    }
+                }
+                return null;
+            },
+            createOrbitcardRecharge: async () => true,
+            updateOrbitcardRecharge: async () => null,
+            recordOrbitcardCardUsage: async (cardId) => {
+                const row = dbCards.get(cardId);
+                row.usageCount += 1;
+                return { usageCount: row.usageCount, maxUsageCount: row.maxUsageCount };
+            },
+            releaseOrbitcardCard: async () => null,
+            retireOrbitcardCard: async () => null,
+            updateTaskLog: async (_jobKey, update) => taskUpdates.push({ ...update }),
+            createActivationManualHold: async (input) => {
+                holdRows.push(input);
+                return input;
+            },
+            resetCdkFailure: async () => null,
+            markCdkUnused: async (cdk) => markedUnusedCdks.push(cdk),
+            getMaintenanceModeState: async () => ({ enabled: false, drain: false }),
+            setMaintenanceModeState: async () => null
+        };
+
+        const createCardUntilReady = vi.fn();
+        const mockOrbitcard = {
+            ...orbitcardClient,
+            getCardList: vi.fn(async () => ({
+                success: true,
+                data: [{ cardId: 901, status: 'ACTIVE', balance: 62, currency: 'USD', last4: '8888', productCode: 'P1' }]
+            })),
+            getProductCode: vi.fn(async () => ({ success: true, data: [] })),
+            getCardDetail: vi.fn(async () => ({
+                success: true,
+                data: { cardId: 901, cardNumber: '5556597900008888', expiry: '12/30', cvc: '123', holder: 'Manual Card' }
+            })),
+            createCardUntilReady
+        };
+
+        const runWorker = createGptApiWorker({
+            store,
+            gptApi: {
+                isDesolateOpenProtocol: () => true,
+                resolveOpenPlanCode: () => 'chatgptplusplan',
+                inspectPay: async () => ({ success: true }),
+                submitPay: async () => ({ success: true, orderId: 'ord-manual-card', data: { status: 'pending' } }),
+                queryTask: async () => ({ success: false }),
+                queryOrder: async () => ({ success: true, data: { status: 'succeeded', subscriptionCancelled: true }, rawStatus: 'succeeded' }),
+                getGptOrderPollDelayMs: () => 0,
+                extractProviderMessage: () => '',
+                extractCaptcha: () => null,
+                normalizeOpenOrderSummary: (data) => data,
+                extractTopupCode: () => null,
+                formatProgressMessage: () => '处理中'
+            },
+            orbitcard: mockOrbitcard,
+            activeTaskCaptchas: new Map(),
+            broadcastToTask: (_jobKey, update) => broadcasts.push(update),
+            notifyTaskOutcome: (payload) => notifications.push(payload),
+            logTask: vi.fn(),
+            releaseForegroundSlot: vi.fn(),
+            getTotalActiveJobs: () => 1,
+            sleep: async () => null,
+            env: { GPT_API_MAX_POLLS: '3', GPT_API_POLL_INTERVAL_MS: '0' },
+            logger: { error: vi.fn(), warn: vi.fn(), log: vi.fn() }
+        });
+
+        await runWorker({
+            task: { jobKey: 'job-manual-sync-ok' },
+            token: 'synthetic-token',
+            session: { user: { email: 'user@example.com' }, accessToken: 'synthetic-access-token' },
+            cdk: 'KC-MANUAL-OK',
+            planType: 'plus'
+        });
+
+        expect(createCardUntilReady).not.toHaveBeenCalled();
+        expect(dbCards.get(901)).toMatchObject({ planType: 'plus', maxUsageCount: 3, usageCount: 1 });
+        expect([...taskUpdates].reverse().find((u) => u.status === 'success')).toBeTruthy();
+        expect(holdRows).toHaveLength(0);
+        expect(markedUnusedCdks).toHaveLength(0);
+    });
+
+    it('emits card_pool_empty, rolls back CDK, and skips manual hold when auto-create is disabled and no cards are usable', async () => {
+        const orbitcardClient = require('../src/services/orbitcard-client');
+        const taskUpdates = [];
+        const broadcasts = [];
+        const notifications = [];
+        const holdRows = [];
+        const markedUnusedCdks = [];
+
+        const store = {
+            getGptApiConfig: async () => ({
+                enabled: true,
+                api_key: 'synthetic-api-key',
+                card_source: 'orbitcard',
+                orbitcard_auto_create_card: false,
+                orbitcard_plus_unit_price: 20,
+                orbitcard_base_url: 'https://orbitcard.cc',
+                orbitcard_api_key: 'ok',
+                orbitcard_api_secret: 'os',
+                orbitcard_reuse_limits: { plus: 4, pro100: 1, pro200: 1, pro500: 1 },
+                orbitcard_safety_margins: { plus: 1, pro100: 1, pro200: 1, pro500: 1 },
+                country: 'US',
+                currency: 'USD'
+            }),
+            getActiveProxy: async () => null,
+            getOrbitcardCardMetaByIds: async () => [],
+            syncOrbitcardCards: async () => ({ total: 0, inserted: 0, updated: 0, autoAssigned: 0, autoAssignedCards: [] }),
+            reserveOrbitcardCard: async () => null,
+            updateTaskLog: async (_jobKey, update) => taskUpdates.push({ ...update }),
+            createActivationManualHold: async (input) => {
+                holdRows.push(input);
+                return input;
+            },
+            markCdkUnused: async (cdk) => markedUnusedCdks.push(cdk),
+            getMaintenanceModeState: async () => ({ enabled: false, drain: false }),
+            setMaintenanceModeState: async () => null
+        };
+
+        const createCardUntilReady = vi.fn();
+        const runWorker = createGptApiWorker({
+            store,
+            gptApi: {
+                isDesolateOpenProtocol: () => true,
+                resolveOpenPlanCode: () => 'chatgptplusplan',
+                inspectPay: async () => ({ success: true })
+            },
+            orbitcard: {
+                ...orbitcardClient,
+                getCardList: vi.fn(async () => ({ success: true, data: [] })),
+                getProductCode: vi.fn(async () => ({ success: true, data: [] })),
+                createCardUntilReady
+            },
+            activeTaskCaptchas: new Map(),
+            broadcastToTask: (_jobKey, update) => broadcasts.push(update),
+            notifyTaskOutcome: (payload) => notifications.push(payload),
+            logTask: vi.fn(),
+            releaseForegroundSlot: vi.fn(),
+            getTotalActiveJobs: () => 1,
+            sleep: async () => null,
+            env: { GPT_API_MAX_POLLS: '3', GPT_API_POLL_INTERVAL_MS: '0' },
+            logger: { error: vi.fn(), warn: vi.fn(), log: vi.fn() }
+        });
+
+        await runWorker({
+            task: { jobKey: 'job-manual-empty' },
+            token: 'synthetic-token',
+            session: { user: { email: 'user@example.com' }, accessToken: 'synthetic-access-token' },
+            cdk: 'KC-MANUAL-EMPTY',
+            planType: 'plus'
+        });
+
+        expect(createCardUntilReady).not.toHaveBeenCalled();
+        expect(holdRows).toHaveLength(0);
+        expect(markedUnusedCdks).toEqual(['KC-MANUAL-EMPTY']);
+        expect(notifications).toHaveLength(1);
+        expect(notifications[0]).toMatchObject({
+            event: 'card_pool_empty',
+            cdk: 'KC-MANUAL-EMPTY',
+            planType: 'plus'
+        });
+        expect([...taskUpdates].reverse().find((u) => u.status === 'failed')?.message)
+            .toBe('当前暂无可用卡片，请稍后再试或联系客服');
+    });
 });

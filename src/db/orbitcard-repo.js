@@ -370,20 +370,66 @@ async function listOrbitcardUsage(limit = 200, offset = 0, filters = {}) {
     }));
 }
 
+async function getOrbitcardCardMetaByIds(cardIds = []) {
+    const ids = [...new Set((Array.isArray(cardIds) ? cardIds : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0))];
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = await runQuery(
+        `SELECT card_id, status, plan_type, usage_count, max_usage_count, initial_amount, provider_balance
+         FROM orbitcard_card_usage
+         WHERE card_id IN (${placeholders})`,
+        ids
+    );
+    return rows.map((row) => ({
+        cardId: Number(row.card_id),
+        status: String(row.status || 'ACTIVE').trim().toUpperCase(),
+        planType: row.plan_type || null,
+        usageCount: Number(row.usage_count || 0),
+        maxUsageCount: Math.max(1, Number(row.max_usage_count || 1)),
+        initialAmount: row.initial_amount == null ? null : Number(row.initial_amount),
+        balance: row.provider_balance == null ? null : Number(row.provider_balance)
+    }));
+}
+
 async function syncOrbitcardCards(cards = []) {
     const normalizedCards = (Array.isArray(cards) ? cards : [])
-        .map((card) => ({
-            cardId: Number(card?.cardId ?? card?.card_id ?? card?.id),
-            status: String(card?.status || 'ACTIVE').trim().toUpperCase() || 'ACTIVE',
-            last4: String(card?.last4 || card?.cardLast4 || card?.card_last4 || '').replace(/\D/g, '').slice(-4),
-            cardNumber: String(card?.cardNumber || card?.card_number || '').replace(/[\s-]+/g, '').trim(),
-            cardExpiry: String(card?.cardExpiry || card?.card_expiry || '').trim(),
-            cardCvc: String(card?.cardCvc || card?.card_cvc || '').trim(),
-            cardHolder: String(card?.cardHolder || card?.card_holder || '').trim(),
-            productCode: String(card?.productCode || card?.product_code || '').trim(),
-            balance: card?.balance == null || card.balance === '' ? null : Number(card.balance),
-            currency: String(card?.currency || '').trim().toUpperCase().slice(0, 8)
-        }))
+        .map((card) => {
+            const rawAutoPlan = String(card?.autoPlanType || '').trim();
+            let autoPlanType = null;
+            if (rawAutoPlan) {
+                try {
+                    autoPlanType = requireCanonicalPlanType(rawAutoPlan, 'plan_type');
+                } catch (_) {
+                    autoPlanType = null;
+                }
+            }
+            const rawAutoMax = Number(card?.autoMaxUsageCount);
+            const autoMaxUsageCount = Number.isInteger(rawAutoMax) && rawAutoMax >= 1 && rawAutoMax <= 20
+                ? rawAutoMax
+                : null;
+            const rawAutoInitial = card?.autoInitialAmount == null || card.autoInitialAmount === ''
+                ? null
+                : Number(card.autoInitialAmount);
+            return {
+                cardId: Number(card?.cardId ?? card?.card_id ?? card?.id),
+                status: String(card?.status || 'ACTIVE').trim().toUpperCase() || 'ACTIVE',
+                last4: String(card?.last4 || card?.cardLast4 || card?.card_last4 || '').replace(/\D/g, '').slice(-4),
+                cardNumber: String(card?.cardNumber || card?.card_number || '').replace(/[\s-]+/g, '').trim(),
+                cardExpiry: String(card?.cardExpiry || card?.card_expiry || '').trim(),
+                cardCvc: String(card?.cardCvc || card?.card_cvc || '').trim(),
+                cardHolder: String(card?.cardHolder || card?.card_holder || '').trim(),
+                productCode: String(card?.productCode || card?.product_code || '').trim(),
+                balance: card?.balance == null || card.balance === '' ? null : Number(card.balance),
+                currency: String(card?.currency || '').trim().toUpperCase().slice(0, 8),
+                autoPlanType,
+                autoMaxUsageCount,
+                autoInitialAmount: rawAutoInitial != null && Number.isFinite(rawAutoInitial) && rawAutoInitial > 0
+                    ? rawAutoInitial
+                    : null
+            };
+        })
         .filter((card) => Number.isInteger(card.cardId) && card.cardId > 0)
         .map((card) => ({
             ...card,
@@ -392,26 +438,66 @@ async function syncOrbitcardCards(cards = []) {
         }));
 
     if (!normalizedCards.length) {
-        return { total: 0, inserted: 0, updated: 0 };
+        return { total: 0, inserted: 0, updated: 0, autoAssigned: 0, autoAssignedCards: [] };
     }
 
     return withTransaction(async (connection) => {
         const ids = normalizedCards.map((card) => card.cardId);
         const placeholders = ids.map(() => '?').join(', ');
         const [existingRows] = await connection.query(
-            `SELECT card_id FROM orbitcard_card_usage WHERE card_id IN (${placeholders})`,
+            `SELECT card_id, status, plan_type, usage_count, max_usage_count, initial_amount
+             FROM orbitcard_card_usage
+             WHERE card_id IN (${placeholders})
+             FOR UPDATE`,
             ids
         );
-        const existingIds = new Set(existingRows.map((row) => Number(row.card_id)));
+        const existingMap = new Map(existingRows.map((row) => [Number(row.card_id), row]));
+        const autoAssignedCards = [];
 
         for (const card of normalizedCards) {
+            const existing = existingMap.get(card.cardId) || null;
+            const existingStatus = String(existing?.status || '').trim().toUpperCase();
+            const existingPlanType = existing?.plan_type || null;
+            const existingUsageCount = Number(existing?.usage_count || 0);
+            const canAutoAssign = Boolean(
+                !existingPlanType
+                && existingStatus !== 'RETIRED'
+                && card.status === 'ACTIVE'
+                && card.autoPlanType
+                && card.autoMaxUsageCount
+            );
+            const nextPlanType = canAutoAssign ? card.autoPlanType : existingPlanType;
+            const nextMaxUsageCount = canAutoAssign
+                ? Math.min(20, Math.max(1, existingUsageCount + card.autoMaxUsageCount))
+                : (existing ? Math.max(1, Number(existing.max_usage_count || 1)) : 1);
+            const nextInitialAmount = existing?.initial_amount != null
+                ? Number(existing.initial_amount)
+                : (canAutoAssign ? (card.autoInitialAmount ?? card.balance) : null);
+
+            if (canAutoAssign) {
+                autoAssignedCards.push({
+                    cardId: card.cardId,
+                    last4: card.last4 || '',
+                    planType: nextPlanType,
+                    maxUsageCount: nextMaxUsageCount,
+                    balance: card.balance
+                });
+            }
+
             await connection.query(
                 `INSERT INTO orbitcard_card_usage
-                    (card_id, status, provider_status, provider_balance, provider_balance_currency,
+                    (card_id, status, plan_type, max_usage_count, initial_amount,
+                    provider_status, provider_balance, provider_balance_currency,
                     provider_balance_updated_at, card_number, card_expiry, card_cvc, card_holder, product_code, card_last4)
-                 VALUES (?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, ?, ?, ?, ?, ?, ?)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, ?, ?, ?, ?, ?, ?)
                  ON DUPLICATE KEY UPDATE
                     status = CASE WHEN orbitcard_card_usage.status = 'RETIRED' THEN orbitcard_card_usage.status ELSE VALUES(status) END,
+                    max_usage_count = CASE
+                        WHEN orbitcard_card_usage.plan_type IS NULL AND VALUES(plan_type) IS NOT NULL THEN VALUES(max_usage_count)
+                        ELSE orbitcard_card_usage.max_usage_count
+                    END,
+                    initial_amount = COALESCE(orbitcard_card_usage.initial_amount, VALUES(initial_amount)),
+                    plan_type = COALESCE(orbitcard_card_usage.plan_type, VALUES(plan_type)),
                     provider_status = VALUES(provider_status),
                     provider_balance = COALESCE(VALUES(provider_balance), orbitcard_card_usage.provider_balance),
                     provider_balance_currency = COALESCE(VALUES(provider_balance_currency), orbitcard_card_usage.provider_balance_currency),
@@ -425,6 +511,9 @@ async function syncOrbitcardCards(cards = []) {
                 [
                     card.cardId,
                     card.status,
+                    nextPlanType,
+                    nextMaxUsageCount,
+                    nextInitialAmount,
                     card.status,
                     card.balance,
                     card.currency || null,
@@ -441,8 +530,10 @@ async function syncOrbitcardCards(cards = []) {
 
         return {
             total: normalizedCards.length,
-            inserted: normalizedCards.filter((card) => !existingIds.has(card.cardId)).length,
-            updated: normalizedCards.filter((card) => existingIds.has(card.cardId)).length
+            inserted: normalizedCards.filter((card) => !existingMap.has(card.cardId)).length,
+            updated: normalizedCards.filter((card) => existingMap.has(card.cardId)).length,
+            autoAssigned: autoAssignedCards.length,
+            autoAssignedCards
         };
     });
 }
@@ -526,6 +617,7 @@ module.exports = {
     updateOrbitcardRecharge,
     countOrbitcardUsage,
     listOrbitcardUsage,
+    getOrbitcardCardMetaByIds,
     syncOrbitcardCards,
     updateOrbitcardCardBalance,
     markMissingOrbitcardCards,

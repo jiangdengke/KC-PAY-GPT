@@ -55,6 +55,8 @@ Apply this contract when changing `getProductCode`, product normalization, `/api
 - Manual selection may choose any displayed, available product with a valid price for the requested plan; the create-card request continues to use its saved `product_code`.
 - Supported automatic/catalog tiers are exactly `plus`, `pro100`, `pro200`, and `pro500`. Orbitcard price IDs are matched case-insensitively through explicit registry aliases; unknown plan IDs do not fall back to Plus.
 - Opening amount is `max(min_initial_amount, plan_price × reuse_limit + min_retained_balance + safety_margin)`, rounded up to the next USD 5 increment. Missing or invalid live plan prices make the product unavailable for that tier.
+- `orbitcard_auto_create_card` defaults to `false` (`'0'`). When disabled, `runGptApiWorker` must NEVER call `createCard` / `createCardUntilReady`; if no local reusable card is found, it first runs `syncAndAutoAssignOrbitcardCards` against the upstream ACTIVE list, retries reservation, and if still empty fails without creating a manual hold, rolls back the CDK, and emits `card_pool_empty`.
+- `estimatePlusCapacityFromBalance` estimates Plus capacity for unassigned, non-4002 `ACTIVE` cards using `floor((balance - minRetainedBalance - plusSafetyMargin) / plusUnitPrice)` capped by `reuseLimits.plus` (preferring matched catalog live Plus price and falling back to `orbitcard_plus_unit_price`). Auto-assignment must NEVER overwrite cards whose `plan_type` is already set or whose status is `RETIRED`.
 - `pro_5x` and `pro_20x` aliases remain available only for historical execution/read compatibility; new strategy configuration and card-plan assignment use canonical tiers.
 
 #### 4. Validation & Error Matrix

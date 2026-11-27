@@ -17,6 +17,7 @@ const {
 } = require('../utils/task-messages');
 const defaultGptApi = require('./gpt-api-client');
 const defaultOrbitcard = require('./orbitcard-client');
+const { syncAndAutoAssignOrbitcardCards } = require('./orbitcard-sync');
 const { buildGptApiFailureDiagnostic } = require('./gpt-api-failure');
 
 const LEGACY_GPT_API_PLAN_MAP = Object.freeze({ pro_5x: 'pro5x', pro_20x: 'pro20x' });
@@ -202,92 +203,125 @@ function createGptApiWorker({
                 let selection = null;
                 let createdOrbitcard = false;
                 if (!reservedOrbitcard) {
-                    const productResult = await orbitcard.getProductCode(orbitCfg);
-                    if (!productResult.success) throw new Error(`Orbitcard 产品目录查询失败: ${productResult.error}`);
-                    if (requestedProductCode) {
-                        const requestedSelection = orbitcard.getProductSelectionsForPlan(productResult.data, planType, {
-                            preferredProductCode: requestedProductCode,
-                            reuseLimits,
-                            safetyMargins
-                        });
-                        if (!requestedSelection.length) {
-                            throw new Error(`指定的 Orbitcard 产品 ${requestedProductCode} 当前不可用或缺少 ${getPlanTypeLabel(planType)} 套餐价格，请重新选择`);
-                        }
-                    }
-                    const selections = orbitcard.getProductSelectionsForPlan(
-                        productResult.data,
-                        planType,
-                        requestedProductCode
-                            ? { preferredProductCode: requestedProductCode, reuseLimits, safetyMargins }
-                            : { reuseLimits, safetyMargins }
-                    );
-                    if (!selections.length) throw new Error('Orbitcard 当前没有可开卡产品库存');
-
-                    let createdCardId = null;
-                    let lastCreateError = '';
-                    let unresolvedCreateOrder = '';
-                    let unresolvedCreateResponse = false;
-                    for (let candidateIndex = 0; candidateIndex < selections.length; candidateIndex += 1) {
-                        const candidate = selections[candidateIndex];
-                        selection = candidate;
-                        const channelLabel = candidate.channel
-                            ? `渠道 ${candidate.channel} ${candidate.network || '卡'} BIN ${candidate.product.bin || candidate.product.productCode}`
-                            : candidate.product.productCode;
-                        logTask(jobKey, `为 ${getPlanTypeLabel(planType)} 创建卡（${channelLabel}，首充 ${candidate.amount} USD，最多使用 ${candidate.maxUsageCount} 次）...`);
-                        const createResult = await orbitcard.createCardUntilReady(orbitCfg, {
-                            productCode: candidate.product.productCode,
-                            amount: candidate.amount,
-                            quantity: 1,
-                            idempotencyKey: `orbitcard-${jobKey}-${candidateIndex + 1}`
-                        }, {
-                            maxAttempts: 25,
-                            pollIntervalMs: 5000,
-                            onPending: async ({ attempt, maxAttempts, orderNo, status }) => {
-                                if (attempt === 1 || attempt % 3 === 0) {
-                                    logTask(jobKey, `Orbitcard 开卡订单等待确认 order=${orderNo || '-'} status=${status || '-'} poll=${attempt}/${maxAttempts}`);
-                                    await setProgress('running', 14, '正在等待支付方式准备完成...');
-                                }
+                    const autoCreateCard = Boolean(cfg.orbitcard_auto_create_card);
+                    if (!autoCreateCard) {
+                        logTask(jobKey, '本地暂无已绑定可用卡，自动开卡已关闭，正在同步卡台新卡并按余额推算...');
+                        try {
+                            const syncRes = await syncAndAutoAssignOrbitcardCards({
+                                store,
+                                orbitcard,
+                                cfg,
+                                providerCards: reusableCards,
+                                fetchDetails: false,
+                                markMissing: false
+                            });
+                            if (syncRes?.success && syncRes.autoAssigned > 0) {
+                                logTask(jobKey, `自动同步卡台完成：新绑定 ${syncRes.autoAssigned} 张 Plus 卡`);
                             }
-                        });
-                        if (createResult.success) {
-                            createdCardId = createResult.cardId || orbitcard.extractCreatedCardId(createResult.data);
-                            break;
+                        } catch (syncError) {
+                            logTask(jobKey, `自动同步卡台新卡失败: ${syncError.message}`, 'warn');
                         }
-                        lastCreateError = createResult.error || '未知错误';
-                        if (createResult.pending || createResult.ambiguous) {
-                            unresolvedCreateResponse = true;
-                            unresolvedCreateOrder = createResult.orderNo || '';
-                            logTask(jobKey, `Orbitcard 开卡订单尚未确认 order=${unresolvedCreateOrder || '-'} status=${createResult.createStatus || '-'}，停止切换产品`, 'warn');
-                            break;
-                        }
-                        if (!createResult.status) break;
-                        if (candidateIndex < selections.length - 1) {
-                            const next = selections[candidateIndex + 1];
-                            logTask(jobKey, `Orbitcard ${channelLabel} 开卡失败，切换备用产品 ${next.product.productCode}: ${lastCreateError}`, 'warn');
-                        }
-                    }
-                    if (!createdCardId) {
-                        if (unresolvedCreateResponse) {
-                            const orderLabel = unresolvedCreateOrder ? `（订单 ${unresolvedCreateOrder}）` : '';
-                            throw new Error(`Orbitcard 开卡结果仍待确认${orderLabel}，请勿解除审核或重新提交，待上游确认后再处理`);
-                        }
-                        throw new Error(`Orbitcard 开卡失败: ${lastCreateError || '当前渠道产品均不可用'}`);
-                    }
-
-                    reservedOrbitcard = await store.reserveOrbitcardCard(
-                        [{ card_id: createdCardId, status: 'ACTIVE' }],
-                        `gptapi_${jobKey}`,
-                        {
+                        reservedOrbitcard = await store.reserveOrbitcardCard(reusableCards, `gptapi_${jobKey}`, {
                             planType,
-                            maxUsageCount: selection.maxUsageCount,
-                            initialAmount: selection.amount,
-                            persistMetadata: true
+                            maxUsageCount: reuseLimit
+                        });
+                        if (!reservedOrbitcard) {
+                            const exhaustedError = new Error(
+                                `Orbitcard 自动开卡已关闭，同步卡台后仍无可用 ${getPlanTypeLabel(planType)} 卡片，请前往第三方卡台手动开卡`
+                            );
+                            exhaustedError.code = 'card_pool_exhausted';
+                            exhaustedError.skipManualHold = true;
+                            exhaustedError.customerMessage = '当前暂无可用卡片，请稍后再试或联系客服';
+                            throw exhaustedError;
                         }
-                    );
-                    if (!reservedOrbitcard) {
-                        throw new Error('Orbitcard 新卡已创建，但本地锁定失败，请联系管理员核对卡片状态');
+                    } else {
+                        const productResult = await orbitcard.getProductCode(orbitCfg);
+                        if (!productResult.success) throw new Error(`Orbitcard 产品目录查询失败: ${productResult.error}`);
+                        if (requestedProductCode) {
+                            const requestedSelection = orbitcard.getProductSelectionsForPlan(productResult.data, planType, {
+                                preferredProductCode: requestedProductCode,
+                                reuseLimits,
+                                safetyMargins
+                            });
+                            if (!requestedSelection.length) {
+                                throw new Error(`指定的 Orbitcard 产品 ${requestedProductCode} 当前不可用或缺少 ${getPlanTypeLabel(planType)} 套餐价格，请重新选择`);
+                            }
+                        }
+                        const selections = orbitcard.getProductSelectionsForPlan(
+                            productResult.data,
+                            planType,
+                            requestedProductCode
+                                ? { preferredProductCode: requestedProductCode, reuseLimits, safetyMargins }
+                                : { reuseLimits, safetyMargins }
+                        );
+                        if (!selections.length) throw new Error('Orbitcard 当前没有可开卡产品库存');
+
+                        let createdCardId = null;
+                        let lastCreateError = '';
+                        let unresolvedCreateOrder = '';
+                        let unresolvedCreateResponse = false;
+                        for (let candidateIndex = 0; candidateIndex < selections.length; candidateIndex += 1) {
+                            const candidate = selections[candidateIndex];
+                            selection = candidate;
+                            const channelLabel = candidate.channel
+                                ? `渠道 ${candidate.channel} ${candidate.network || '卡'} BIN ${candidate.product.bin || candidate.product.productCode}`
+                                : candidate.product.productCode;
+                            logTask(jobKey, `为 ${getPlanTypeLabel(planType)} 创建卡（${channelLabel}，首充 ${candidate.amount} USD，最多使用 ${candidate.maxUsageCount} 次）...`);
+                            const createResult = await orbitcard.createCardUntilReady(orbitCfg, {
+                                productCode: candidate.product.productCode,
+                                amount: candidate.amount,
+                                quantity: 1,
+                                idempotencyKey: `orbitcard-${jobKey}-${candidateIndex + 1}`
+                            }, {
+                                maxAttempts: 25,
+                                pollIntervalMs: 5000,
+                                onPending: async ({ attempt, maxAttempts, orderNo, status }) => {
+                                    if (attempt === 1 || attempt % 3 === 0) {
+                                        logTask(jobKey, `Orbitcard 开卡订单等待确认 order=${orderNo || '-'} status=${status || '-'} poll=${attempt}/${maxAttempts}`);
+                                        await setProgress('running', 14, '正在等待支付方式准备完成...');
+                                    }
+                                }
+                            });
+                            if (createResult.success) {
+                                createdCardId = createResult.cardId || orbitcard.extractCreatedCardId(createResult.data);
+                                break;
+                            }
+                            lastCreateError = createResult.error || '未知错误';
+                            if (createResult.pending || createResult.ambiguous) {
+                                unresolvedCreateResponse = true;
+                                unresolvedCreateOrder = createResult.orderNo || '';
+                                logTask(jobKey, `Orbitcard 开卡订单尚未确认 order=${unresolvedCreateOrder || '-'} status=${createResult.createStatus || '-'}，停止切换产品`, 'warn');
+                                break;
+                            }
+                            if (!createResult.status) break;
+                            if (candidateIndex < selections.length - 1) {
+                                const next = selections[candidateIndex + 1];
+                                logTask(jobKey, `Orbitcard ${channelLabel} 开卡失败，切换备用产品 ${next.product.productCode}: ${lastCreateError}`, 'warn');
+                            }
+                        }
+                        if (!createdCardId) {
+                            if (unresolvedCreateResponse) {
+                                const orderLabel = unresolvedCreateOrder ? `（订单 ${unresolvedCreateOrder}）` : '';
+                                throw new Error(`Orbitcard 开卡结果仍待确认${orderLabel}，请勿解除审核或重新提交，待上游确认后再处理`);
+                            }
+                            throw new Error(`Orbitcard 开卡失败: ${lastCreateError || '当前渠道产品均不可用'}`);
+                        }
+
+                        reservedOrbitcard = await store.reserveOrbitcardCard(
+                            [{ card_id: createdCardId, status: 'ACTIVE' }],
+                            `gptapi_${jobKey}`,
+                            {
+                                planType,
+                                maxUsageCount: selection.maxUsageCount,
+                                initialAmount: selection.amount,
+                                persistMetadata: true
+                            }
+                        );
+                        if (!reservedOrbitcard) {
+                            throw new Error('Orbitcard 新卡已创建，但本地锁定失败，请联系管理员核对卡片状态');
+                        }
+                        createdOrbitcard = true;
                     }
-                    createdOrbitcard = true;
                 }
 
                 const detail = await orbitcard.getCardDetail(orbitCfg, reservedOrbitcard.orbitcard_id);
@@ -663,6 +697,35 @@ function createGptApiWorker({
             }
         } catch (error) {
             logger.error(`[GPT API Task Error] ${jobKey}:`, error);
+            if (error?.code === 'card_pool_exhausted' && error?.skipManualHold) {
+                const customerFailureMessage = error.customerMessage || '当前暂无可用卡片，请稍后再试或联系客服';
+                logTask(jobKey, `卡池无可用卡片: ${error.message}`, 'warn');
+                await store.updateTaskLog(jobKey, {
+                    status: 'failed',
+                    message: customerFailureMessage,
+                    progress: 0,
+                    cdkCode: cdk,
+                    gptApiCaptcha: 'null'
+                });
+                broadcastToTask(jobKey, {
+                    type: 'status',
+                    jobKey,
+                    status: 'failed',
+                    message: customerFailureMessage,
+                    cdkCode: cdk,
+                    progress: 0,
+                    captcha: null
+                });
+                notifyTaskOutcome({
+                    event: 'card_pool_empty',
+                    email: accountEmail,
+                    planType,
+                    cdk,
+                    jobKey,
+                    message: error.message
+                });
+                return;
+            }
             const manualReviewMessage = getManualReviewMessage(error.message);
             const catchFailureDiagnostic = buildGptApiFailureDiagnostic({
                 openProtocol: activeOpenProtocol,

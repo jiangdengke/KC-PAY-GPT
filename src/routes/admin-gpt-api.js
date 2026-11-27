@@ -5,6 +5,7 @@ const { CANONICAL_PLAN_TYPES, getPlanLabel } = require('../config/plan-registry'
 const adminAuth = require('../security/admin-auth');
 const gptApi = require('../services/gpt-api-client');
 const orbitcard = require('../services/orbitcard-client');
+const { syncAndAutoAssignOrbitcardCards } = require('../services/orbitcard-sync');
 const { sendTelegramTest } = require('../services/telegram-notify');
 const { forwardAsyncErrors } = require('../middleware/async-handler');
 
@@ -40,6 +41,8 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
                     orbitcard_api_key_preview: orbitcard.maskApiKey(cfg.orbitcard_api_key),
                     orbitcard_api_secret_configured: Boolean(cfg.orbitcard_api_secret),
                     orbitcard_api_secret_preview: orbitcard.maskApiKey(cfg.orbitcard_api_secret),
+                    orbitcard_auto_create_card: Boolean(cfg.orbitcard_auto_create_card),
+                    orbitcard_plus_unit_price: cfg.orbitcard_plus_unit_price ?? 20,
                     orbitcard_product_code: cfg.orbitcard_product_code || ''
                 }
             });
@@ -56,7 +59,7 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
             if (redirectError) {
                 return res.status(400).json({ success: false, message: redirectError });
             }
-            await store.saveGptApiConfig({
+            const payload = {
                 enabled: Boolean(body.enabled),
                 base_url: body.base_url,
                 api_key: body.api_key,
@@ -71,7 +74,14 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
                 orbitcard_base_url: body.orbitcard_base_url,
                 orbitcard_api_key: body.orbitcard_api_key,
                 orbitcard_api_secret: body.orbitcard_api_secret
-            });
+            };
+            if (Object.prototype.hasOwnProperty.call(body, 'orbitcard_auto_create_card')) {
+                payload.orbitcard_auto_create_card = Boolean(body.orbitcard_auto_create_card);
+            }
+            if (Object.prototype.hasOwnProperty.call(body, 'orbitcard_plus_unit_price')) {
+                payload.orbitcard_plus_unit_price = body.orbitcard_plus_unit_price;
+            }
+            await store.saveGptApiConfig(payload);
             return res.json({ success: true, message: '第三方代充 API 配置已保存' });
         } catch (error) {
             return res.status(500).json({ success: false, message: error.message });
@@ -193,6 +203,8 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
             return res.json({
                 success: true,
                 plan_type: planType,
+                auto_create_card: Boolean(cfg.orbitcard_auto_create_card),
+                plus_unit_price: cfg.orbitcard_plus_unit_price ?? 20,
                 selected_product_code: cfg.orbitcard_product_code || '',
                 fetched_at: new Date().toISOString(),
                 automatic: strategyCatalog.automatic,
@@ -210,6 +222,17 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
             await ensureStoreReady();
             const cfg = await store.getGptApiConfig();
             const productCode = String(req.body?.product_code || '').trim();
+            const autoCreateCard = Object.prototype.hasOwnProperty.call(req.body || {}, 'auto_create_card')
+                ? Boolean(req.body.auto_create_card)
+                : Boolean(cfg.orbitcard_auto_create_card);
+            let plusUnitPrice = cfg.orbitcard_plus_unit_price ?? 20;
+            if (Object.prototype.hasOwnProperty.call(req.body || {}, 'plus_unit_price')) {
+                const parsedPrice = Number(req.body.plus_unit_price);
+                if (!Number.isFinite(parsedPrice) || parsedPrice < 1 || parsedPrice > 500) {
+                    return res.status(400).json({ success: false, message: '兜底 Plus 估算单价必须是 1-500 之间的数字' });
+                }
+                plusUnitPrice = Number(parsedPrice.toFixed(2));
+            }
             const reuseLimits = { ...cfg.orbitcard_reuse_limits };
             const safetyMargins = { ...cfg.orbitcard_safety_margins };
 
@@ -252,6 +275,8 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
                     return res.status(400).json({ success: false, message: '所选产品已不可用或缺少有效套餐价格，请刷新上游库存后重新选择' });
                 }
             }
+            await store.setAppConfigValue('orbitcard_auto_create_card', autoCreateCard ? '1' : '0');
+            await store.setAppConfigValue('orbitcard_plus_unit_price', String(plusUnitPrice));
             await store.setAppConfigValue('orbitcard_product_code', productCode);
             await store.setAppConfigValue('orbitcard_next_product_code', '');
             for (const planType of CANONICAL_PLAN_TYPES) {
@@ -260,10 +285,14 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
             }
             return res.json({
                 success: true,
+                auto_create_card: autoCreateCard,
+                plus_unit_price: plusUnitPrice,
                 product_code: productCode,
                 reuse_limits: reuseLimits,
                 safety_margins: safetyMargins,
-                message: productCode ? 'Orbitcard 后续开卡产品与复用上限已保存' : '已恢复自动按优先级开卡，复用上限已保存'
+                message: !autoCreateCard
+                    ? '已关闭自动开卡并保存复用上限与余额推算参数（仅使用卡台同步卡片）'
+                    : (productCode ? 'Orbitcard 自动开卡策略与复用上限已保存' : '已开启自动按优先级开卡，复用上限已保存')
             });
         } catch (error) {
             return res.status(500).json({ success: false, message: error.message });
@@ -289,8 +318,8 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
             let offset = (page - 1) * pageSize;
             let cards = await store.listOrbitcardUsage(pageSize, offset, filters);
 
+            const cfg = await store.getGptApiConfig();
             if (String(req.query.refresh || '') === '1' && cards.length) {
-                const cfg = await store.getGptApiConfig();
                 if (cfg.card_source !== 'orbitcard') {
                     return res.status(400).json({ success: false, message: '当前卡源不是 Orbitcard' });
                 }
@@ -347,7 +376,17 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
                     });
                 }
             }
-            return res.json({ success: true, cards, total, page, pageSize });
+            return res.json({
+                success: true,
+                cards,
+                total,
+                page,
+                pageSize,
+                auto_create_card: Boolean(cfg.orbitcard_auto_create_card),
+                plus_unit_price: cfg.orbitcard_plus_unit_price ?? 20,
+                reuse_limits: cfg.orbitcard_reuse_limits,
+                safety_margins: cfg.orbitcard_safety_margins
+            });
         } catch (error) {
             return res.status(500).json({ success: false, message: error.message });
         }
@@ -360,60 +399,34 @@ function createAdminGptApiRouter({ store, ensureStoreReady, taskHub, requireSeco
             if (!cfg.orbitcard_api_key || !cfg.orbitcard_api_secret) {
                 return res.status(400).json({ success: false, message: '请先配置 Orbitcard API Key 和 Secret' });
             }
-            const orbitCfg = {
-                base_url: cfg.orbitcard_base_url,
-                api_key: cfg.orbitcard_api_key,
-                api_secret: cfg.orbitcard_api_secret
-            };
-            const providerList = await orbitcard.getCardList(orbitCfg, { status: '' });
-            if (!providerList.success) {
-                return res.status(502).json({
+            const result = await syncAndAutoAssignOrbitcardCards({
+                store,
+                orbitcard,
+                cfg,
+                fetchDetails: true,
+                markMissing: true
+            });
+            if (!result.success) {
+                return res.status(result.statusCode || 502).json({
                     success: false,
-                    message: `Orbitcard 卡片列表查询失败: ${providerList.error || '未知错误'}`
+                    message: result.error || '同步卡台卡片失败'
                 });
             }
-
-            const syncedCards = [];
-            const detailFailures = [];
-            for (const providerCard of providerList.data) {
-                let detail = null;
-                try {
-                    const detailResult = await orbitcard.getCardDetail(orbitCfg, providerCard.cardId);
-                    if (detailResult.success) {
-                        detail = detailResult.data;
-                    } else {
-                        detailFailures.push({
-                            cardId: providerCard.cardId,
-                            error: detailResult.error || '卡片详情查询失败'
-                        });
-                    }
-                } catch (error) {
-                    detailFailures.push({
-                        cardId: providerCard.cardId,
-                        error: error.message || '卡片详情查询失败'
-                    });
-                }
-
-                syncedCards.push({
-                    ...providerCard,
-                    cardNumber: detail?.cardNumber || '',
-                    cardExpiry: detail?.expiry || '',
-                    cardCvc: detail?.cvc || '',
-                    cardHolder: detail?.holder || ''
-                });
-            }
-
-            const syncResult = await store.syncOrbitcardCards(syncedCards);
-            await store.markMissingOrbitcardCards(providerList.data.map((card) => card.cardId));
+            const autoPart = result.autoAssigned > 0
+                ? `，其中 ${result.autoAssigned} 张按余额自动绑定 Plus`
+                : '';
+            const failurePart = result.detailFailures.length
+                ? `，${result.detailFailures.length} 张未获取完整卡资料`
+                : '';
             return res.json({
                 success: true,
-                total: syncResult.total,
-                inserted: syncResult.inserted,
-                updated: syncResult.updated,
-                detailFailures,
-                message: detailFailures.length
-                    ? `已同步 ${syncResult.total} 张卡，其中 ${detailFailures.length} 张未获取完整卡资料`
-                    : `已同步 ${syncResult.total} 张卡台卡片`
+                total: result.total,
+                inserted: result.inserted,
+                updated: result.updated,
+                autoAssigned: result.autoAssigned,
+                autoAssignedCards: result.autoAssignedCards,
+                detailFailures: result.detailFailures,
+                message: `已同步 ${result.total} 张卡台卡片${autoPart}${failurePart}`
             });
         } catch (error) {
             return res.status(500).json({ success: false, message: error.message });

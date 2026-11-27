@@ -335,6 +335,7 @@
                         <input type="password" id="orbitcard_api_secret" class="asset-input" placeholder="留空不修改" autocomplete="off">
                         <p id="orbitcard_api_secret_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
                     </div>
+                    <p id="orbitcard_auto_create_status_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 10px;"></p>
                 </div>
                 <p style="font-size: 12px; color: var(--text-dim); margin-top: 12px;">
                     Desolate Open 平台要求完整 Session（含 user、account、accessToken、sessionToken、expires）；根域名会自动补全 /api/v1/open。
@@ -636,7 +637,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                         </div>
                     </div>
                     <p id="orbitcard_usage_hint" style="font-size:13px; color:var(--text-dim); margin:0 0 12px;">
-                        开卡优先渠道 3 Mastercard（BIN 55565979），再使用渠道 3 Visa 4004；使用渠道 1 时仅创建 Mastercard 5556 卡头。4002 系列暂不新开也不复用。同步卡台卡片后，请在每张卡的“操作”列手动绑定套餐；可同时填写单卡使用上限（1-20），留空则使用该套餐默认上限。
+                        同步卡台卡片会自动拉取余额，并为未绑定套餐的 ACTIVE 新卡按余额自动推算可充 Plus 次数并绑定（不覆盖已绑定卡或 Pro 卡）；4002 系列暂不新开也不复用。你仍可随时在“操作”列手动修改任意卡的套餐和上限。
                     </p>
                     <form id="orbitcard_usage_filters" class="orbitcard-usage-filters" onsubmit="applyOrbitcardUsageFilters(event)">
                         <input id="orbitcard_usage_keyword" class="asset-input" type="search" maxlength="80" placeholder="搜索卡 ID / 后四位 / 产品编码 / 账号邮箱 / 订单号" aria-label="搜索 Orbitcard 用卡记录">
@@ -705,8 +706,29 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                             刷新上游库存
                         </button>
                     </div>
+                    <div style="margin-top:18px; max-width:820px; padding:16px; border:1px solid var(--border); border-radius:8px; background:var(--bg-secondary);">
+                        <div class="toggle-field">
+                            <div class="toggle-label">
+                                <span>允许自动开卡</span>
+                            </div>
+                            <label class="toggle-control">
+                                <input type="checkbox" id="orbitcard_auto_create_card" class="toggle-input" onchange="renderOrbitcardStrategyDetails()">
+                                <span class="toggle-switch"></span>
+                            </label>
+                        </div>
+                        <p id="orbitcard_auto_create_hint" style="font-size:12px; color:var(--text-dim); margin:8px 0 0;">
+                            关闭后系统不会自动去卡台开新卡，仅使用手动在卡台开出并同步过来的卡片；下单若本地无可用卡会自动同步一次卡台新卡并按余额推算可充 Plus 次数，仍无卡时退回 CDK 并推送 Telegram 缺卡告警。
+                        </p>
+                        <div class="form-group" style="margin-top:14px; max-width:340px;">
+                            <label for="orbitcard_plus_unit_price">兜底 Plus 估算单价（USD）</label>
+                            <input id="orbitcard_plus_unit_price" class="asset-input" type="number" min="1" max="500" step="0.01" value="20" style="margin-top:6px;">
+                            <p style="font-size:12px; color:var(--text-dim); margin-top:6px;">
+                                同步未绑定新卡时按 <code>⌊(余额 - 最低留存 - Plus 安全余量) / Plus 单价⌋</code> 估算（优先用卡台实时 Plus 价，缺失时用此兜底单价），并受下方 Plus 一卡几冲上限封顶。
+                            </p>
+                        </div>
+                    </div>
                     <div class="form-group" style="margin-top:18px; max-width:820px;">
-                        <label for="orbitcard_strategy_product_code">后续新开卡产品</label>
+                        <label for="orbitcard_strategy_product_code">后续新开卡产品（仅开启自动开卡时生效）</label>
                         <select id="orbitcard_strategy_product_code" class="asset-input" onchange="renderOrbitcardStrategyDetails()">
                             <option value="">自动按优先级选择</option>
                         </select>

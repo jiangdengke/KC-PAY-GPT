@@ -299,6 +299,12 @@ async function loadGptApiConfig() {
         if (orbitSecretHint) {
             orbitSecretHint.textContent = cfg.orbitcard_api_secret_configured ? '✓ Orbitcard Secret 已保存，留空不修改' : '尚未配置 Orbitcard Secret';
         }
+        const autoCreateStatusHint = document.getElementById('orbitcard_auto_create_status_hint');
+        if (autoCreateStatusHint) {
+            autoCreateStatusHint.textContent = cfg.orbitcard_auto_create_card
+                ? '自动开卡：已开启（无可用复用卡时自动调用卡台开卡；可在「银行卡池 → Orbitcard 开卡策略」关闭）'
+                : `自动开卡：已关闭（手动开卡 + 自动同步模式，兜底 Plus 单价 ${Number(cfg.orbitcard_plus_unit_price || 20)} USD；可在「银行卡池 → Orbitcard 开卡策略」切换）`;
+        }
         updateOrbitcardConfigVisibility();
         if (keyHint) keyHint.textContent = cfg.api_key_saved ? '✓ API Key 已保存' : '尚未配置 API Key';
         if (cfg.api_key_saved) refreshGptApiStatus();

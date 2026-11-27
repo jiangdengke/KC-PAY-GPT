@@ -22,6 +22,8 @@ const orbitcardUsageState = {
 let orbitcardUsageRequestId = 0;
 let orbitcardStrategyProducts = [];
 let orbitcardStrategyAutomatic = {};
+let orbitcardStrategyAutoCreate = false;
+let orbitcardStrategyPlusUnitPrice = 20;
 let orbitcardStrategyReuseLimits = { plus: 4, pro100: 1, pro200: 1, pro500: 1 };
 let orbitcardStrategySafetyMargins = { plus: 1, pro100: 1, pro200: 1, pro500: 1 };
 
@@ -229,10 +231,20 @@ function renderOrbitcardStrategyDetails() {
     const select = document.getElementById('orbitcard_strategy_product_code');
     const summary = document.getElementById('orbitcard_strategy_summary');
     const tbody = document.getElementById('orbitcard_strategy_plan_body');
+    const autoCreateToggle = document.getElementById('orbitcard_auto_create_card');
     if (!select || !summary || !tbody) return;
+    const autoCreateEnabled = autoCreateToggle ? Boolean(autoCreateToggle.checked) : orbitcardStrategyAutoCreate;
+    const plusLimit = Number(document.getElementById('orbitcard_reuse_limit_plus')?.value || orbitcardStrategyReuseLimits.plus || 4);
+    const plusMargin = Number(document.getElementById('orbitcard_safety_margin_plus')?.value ?? orbitcardStrategySafetyMargins.plus ?? 1);
+    const plusFallbackPrice = Number(document.getElementById('orbitcard_plus_unit_price')?.value || orbitcardStrategyPlusUnitPrice || 20);
     const selectedCode = select.value || '';
     const selected = orbitcardStrategyProducts.find((item) => item.product_code === selectedCode);
-    if (selectedCode && selected) {
+    if (!autoCreateEnabled) {
+        summary.innerHTML = `<div style="padding:14px 16px; border-left:3px solid var(--warning, #d97706); background:var(--bg-secondary);">
+            <strong>手动开卡 + 自动同步模式（已关闭自动开卡）</strong>
+            <div style="font-size:13px; color:var(--text-dim); margin-top:5px;">系统不会主动向 Orbitcard 发起开卡；同步或下单发现未绑定新卡时，将按余额自动推算可充 Plus 次数（安全余量 ${plusMargin} USD、兜底单价 ${plusFallbackPrice} USD、单卡上限 ${plusLimit} 次）。</div>
+        </div>`;
+    } else if (selectedCode && selected) {
         summary.innerHTML = `<div style="display:flex; gap:18px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:14px 16px; border:1px solid var(--border); border-radius:8px; background:var(--bg-secondary);">
             <div><strong>持续指定产品</strong><div style="font-size:13px; color:var(--text-dim); margin-top:5px;">${escapeHtml(orbitcardProductGroupLabel(selected))} · ${escapeHtml(selected.network || '卡')} · BIN ${escapeHtml(selected.bin || '未知')} · ${escapeHtml(selected.product_code)}</div></div>
             <div style="font-size:13px; font-weight:600;">${escapeHtml(orbitcardInventoryLabel(selected))}</div>
@@ -268,6 +280,8 @@ function renderOrbitcardStrategyDetails() {
 async function loadOrbitcardProductStrategy(showToast = false) {
     const select = document.getElementById('orbitcard_strategy_product_code');
     const hint = document.getElementById('orbitcard_strategy_inventory_hint');
+    const autoCreateToggle = document.getElementById('orbitcard_auto_create_card');
+    const plusUnitPriceInput = document.getElementById('orbitcard_plus_unit_price');
     if (!select || !hint) return;
     const previous = select.value || '';
     select.disabled = true;
@@ -277,6 +291,12 @@ async function loadOrbitcardProductStrategy(showToast = false) {
         if (!res.ok || !data.success) throw new Error(data.message || '产品目录查询失败');
         orbitcardStrategyProducts = Array.isArray(data.products) ? data.products : [];
         orbitcardStrategyAutomatic = data.automatic || {};
+        orbitcardStrategyAutoCreate = Boolean(data.auto_create_card);
+        orbitcardStrategyPlusUnitPrice = Number.isFinite(Number(data.plus_unit_price))
+            ? Number(data.plus_unit_price)
+            : 20;
+        if (autoCreateToggle) autoCreateToggle.checked = orbitcardStrategyAutoCreate;
+        if (plusUnitPriceInput) plusUnitPriceInput.value = orbitcardStrategyPlusUnitPrice;
         orbitcardStrategyReuseLimits = Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [
             planType,
             Number(data.reuse_limits?.[planType]) || (planType === 'plus' ? 4 : 1)
@@ -306,6 +326,17 @@ async function loadOrbitcardProductStrategy(showToast = false) {
         renderOrbitcardStrategyDetails();
         if (showToast) showMessage('上游产品与库存已刷新', 'success');
     } catch (error) {
+        try {
+            const cfgRes = await authFetch('/api/admin/gpt-api');
+            const cfgData = await cfgRes.json();
+            if (cfgRes.ok && cfgData?.success && cfgData.config) {
+                orbitcardStrategyAutoCreate = Boolean(cfgData.config.orbitcard_auto_create_card);
+                orbitcardStrategyPlusUnitPrice = Number(cfgData.config.orbitcard_plus_unit_price) || 20;
+                if (autoCreateToggle) autoCreateToggle.checked = orbitcardStrategyAutoCreate;
+                if (plusUnitPriceInput) plusUnitPriceInput.value = orbitcardStrategyPlusUnitPrice;
+                renderOrbitcardStrategyDetails();
+            }
+        } catch (_) { /* ignore fallback read failure */ }
         hint.textContent = `产品目录读取失败：${error.message || '未知错误'}`;
         if (showToast) showMessage(error.message || '产品目录读取失败', 'error');
     } finally {
@@ -316,6 +347,12 @@ async function loadOrbitcardProductStrategy(showToast = false) {
 
 async function saveOrbitcardProductStrategy() {
     const productCode = document.getElementById('orbitcard_strategy_product_code')?.value || '';
+    const autoCreateCard = Boolean(document.getElementById('orbitcard_auto_create_card')?.checked);
+    const plusUnitPrice = Number(document.getElementById('orbitcard_plus_unit_price')?.value);
+    if (!Number.isFinite(plusUnitPrice) || plusUnitPrice < 1 || plusUnitPrice > 500) {
+        showMessage('兜底 Plus 估算单价必须是 1-500 之间的数字', 'warning');
+        return;
+    }
     const reuseLimits = {};
     const safetyMargins = {};
     for (const planType of CANONICAL_PLAN_TYPES) {
@@ -336,10 +373,18 @@ async function saveOrbitcardProductStrategy() {
         const res = await authFetch('/api/admin/orbitcard/product-strategy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ product_code: productCode, reuse_limits: reuseLimits, safety_margins: safetyMargins })
+            body: JSON.stringify({
+                auto_create_card: autoCreateCard,
+                plus_unit_price: Number(plusUnitPrice.toFixed(2)),
+                product_code: productCode,
+                reuse_limits: reuseLimits,
+                safety_margins: safetyMargins
+            })
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.message || '保存开卡策略失败');
+        orbitcardStrategyAutoCreate = Boolean(data.auto_create_card);
+        orbitcardStrategyPlusUnitPrice = Number(data.plus_unit_price) || plusUnitPrice;
         showMessage(data.message || '开卡策略已保存', 'success');
         await loadOrbitcardProductStrategy(false);
     } catch (error) {
@@ -510,6 +555,21 @@ async function loadOrbitcardUsage(showToast = false, refreshBalances = false, pa
         orbitcardUsageList = Array.isArray(data.cards) ? data.cards : [];
         orbitcardUsageState.total = Number(data.total || 0);
         orbitcardUsageState.page = Number(data.page || orbitcardUsageState.page);
+        if (typeof data.auto_create_card === 'boolean') {
+            orbitcardStrategyAutoCreate = data.auto_create_card;
+        }
+        if (Number.isFinite(Number(data.plus_unit_price))) {
+            orbitcardStrategyPlusUnitPrice = Number(data.plus_unit_price);
+        }
+        const usageHint = document.getElementById('orbitcard_usage_hint');
+        if (usageHint && typeof data.auto_create_card === 'boolean') {
+            const plusLimit = Number(data.reuse_limits?.plus || orbitcardStrategyReuseLimits.plus || 4);
+            const plusMargin = Number(data.safety_margins?.plus ?? orbitcardStrategySafetyMargins.plus ?? 1);
+            const modeText = data.auto_create_card
+                ? '当前已开启自动开卡（本地无复用卡时将自动调用卡台开卡）。'
+                : '当前已关闭自动开卡（仅使用卡台已有卡片；下单缺卡时自动同步新卡，仍无卡则退回 CDK 并推送缺卡告警）。';
+            usageHint.textContent = `${modeText} 同步卡台卡片时，未绑定套餐的 ACTIVE 非 4002 新卡将按余额自动推算可充 Plus 次数（兜底单价 ${orbitcardStrategyPlusUnitPrice} USD、安全余量 ${plusMargin} USD、单卡上限 ${plusLimit} 次），绝不覆盖已绑定或 Pro 卡片。`;
+        }
         renderOrbitcardUsageTable();
         renderOrbitcardUsagePagination();
         if (showToast) showMessage('Orbitcard 用卡记录已刷新', 'success');
