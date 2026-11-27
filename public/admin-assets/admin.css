@@ -515,7 +515,7 @@
 
         .orbitcard-usage-filters {
             display: grid;
-            grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(135px, 1fr)) auto;
+            grid-template-columns: minmax(240px, 2.2fr) repeat(2, minmax(150px, 1fr)) auto;
             gap: 8px;
             align-items: center;
             margin: 0 0 14px;

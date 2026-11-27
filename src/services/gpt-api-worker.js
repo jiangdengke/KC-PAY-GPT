@@ -20,7 +20,6 @@ const defaultOrbitcard = require('./orbitcard-client');
 const { syncAndAutoAssignOrbitcardCards } = require('./orbitcard-sync');
 const { buildGptApiFailureDiagnostic } = require('./gpt-api-failure');
 
-const LEGACY_GPT_API_PLAN_MAP = Object.freeze({ pro_5x: 'pro5x', pro_20x: 'pro20x' });
 const GPT_API_TERMINAL_SUCCESS = new Set(['success', 'succeeded', 'completed', 'paid', 'active', '开通成功', '成功']);
 const GPT_API_TERMINAL_FAILED = new Set(['failed', 'declined', 'canceled', 'cancelled', 'error', 'expired', 'rejected', '失败', '取消']);
 
@@ -38,19 +37,17 @@ function isTerminalGptApiStatus(rawStatus) {
 
 function mapGptApiPlanKey(planType, cfg = {}, gptApi = defaultGptApi) {
     const type = requireReadablePlanType(planType);
+    if (!CANONICAL_PLAN_TYPES.includes(type)) {
+        throw new Error(`当前仅支持 ChatGPT Plus 开通，不支持 ${getPlanLabel(type)}`);
+    }
     if (gptApi.isDesolateOpenProtocol(cfg)) {
-        if (!CANONICAL_PLAN_TYPES.includes(type)) {
-            throw new Error(`${getPlanLabel(type)} 不支持 Desolate Open 协议，请改用四档新套餐`);
-        }
         return gptApi.resolveOpenPlanCode(type, cfg);
     }
     const configured = String(cfg.plan_key || '').trim();
     if (configured && !['plus', 'chatgptplusplan'].includes(configured.toLowerCase())) {
         return configured;
     }
-    if (CANONICAL_PLAN_TYPES.includes(type)) return type;
-    if (LEGACY_GPT_API_PLAN_MAP[type]) return LEGACY_GPT_API_PLAN_MAP[type];
-    throw new Error(`第三方 API 不支持套餐: ${type}`);
+    return type;
 }
 
 function sanitizeGptApiRaw(data, openProtocol, responseMeta = null, gptApi = defaultGptApi) {

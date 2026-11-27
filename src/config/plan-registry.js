@@ -1,7 +1,7 @@
 'use strict';
 
-const CANONICAL_PLAN_TYPES = Object.freeze(['plus', 'pro100', 'pro200', 'pro500']);
-const LEGACY_PLAN_TYPES = Object.freeze(['pro_5x', 'pro_20x']);
+const CANONICAL_PLAN_TYPES = Object.freeze(['plus']);
+const LEGACY_PLAN_TYPES = Object.freeze(['pro100', 'pro200', 'pro500', 'pro_5x', 'pro_20x']);
 
 const PLAN_REGISTRY = Object.freeze({
     plus: Object.freeze({
@@ -15,10 +15,17 @@ const PLAN_REGISTRY = Object.freeze({
         orbitcardPriceNameAliases: Object.freeze(['Plus', 'ChatGPT Plus', 'plus', 'chatgpt plus', 'chatgptplus', 'chatgptplusplan']),
         defaultReuseLimit: 4,
         defaultSafetyMargin: 1
-    }),
+    })
+});
+
+const PLAN_NAME_MAP = Object.freeze(Object.fromEntries(
+    CANONICAL_PLAN_TYPES.map((planType) => [planType, PLAN_REGISTRY[planType].checkoutPlanName])
+));
+
+const LEGACY_PLAN_REGISTRY = Object.freeze({
     pro100: Object.freeze({
         type: 'pro100',
-        label: 'Pro 100',
+        label: 'Pro 100（历史）',
         displayLabel: 'ChatGPT Pro 100',
         checkoutPlanName: '',
         desolatePlanCode: '',
@@ -30,7 +37,7 @@ const PLAN_REGISTRY = Object.freeze({
     }),
     pro200: Object.freeze({
         type: 'pro200',
-        label: 'Pro 200',
+        label: 'Pro 200（历史）',
         displayLabel: 'ChatGPT Pro 200',
         checkoutPlanName: '',
         desolatePlanCode: '',
@@ -42,7 +49,7 @@ const PLAN_REGISTRY = Object.freeze({
     }),
     pro500: Object.freeze({
         type: 'pro500',
-        label: 'Pro 500',
+        label: 'Pro 500（历史）',
         displayLabel: 'ChatGPT Pro 500',
         checkoutPlanName: '',
         desolatePlanCode: '',
@@ -51,14 +58,7 @@ const PLAN_REGISTRY = Object.freeze({
         orbitcardPriceNameAliases: Object.freeze(['Pro 500', 'ChatGPT Pro 500', 'pro500', 'pro 500', 'chatgpt pro 500']),
         defaultReuseLimit: 1,
         defaultSafetyMargin: 1
-    })
-});
-
-const PLAN_NAME_MAP = Object.freeze(Object.fromEntries(
-    CANONICAL_PLAN_TYPES.map((planType) => [planType, PLAN_REGISTRY[planType].checkoutPlanName])
-));
-
-const LEGACY_PLAN_REGISTRY = Object.freeze({
+    }),
     pro_5x: Object.freeze({
         type: 'pro_5x',
         label: 'Pro 5x（历史）',
@@ -131,8 +131,9 @@ function normalizeCredentialPlan(value, hasActive = true) {
     const raw = normalizePlanValue(value);
     if (!raw) return hasActive ? 'unknown' : 'free';
     const compact = raw.replace(/[\s_-]+/g, '');
-    for (const type of CANONICAL_PLAN_TYPES) {
-        const aliases = PLAN_REGISTRY[type].credentialAliases;
+    for (const type of READABLE_PLAN_TYPES) {
+        const definition = getPlanDefinition(type, { includeLegacy: true });
+        const aliases = definition?.credentialAliases || [];
         if (aliases.includes(raw) || aliases.some((alias) => alias.replace(/[\s_-]+/g, '') === compact)) return type;
     }
     if (raw.includes('team')) return 'team';
@@ -171,7 +172,7 @@ function getOrbitcardPriceAliases(value, options = {}) {
     const definition = getPlanDefinition(value, { includeLegacy: options.includeLegacy === true });
     if (!definition) return [];
     const targetType = definition.orbitcardPlanType || definition.type;
-    const targetDefinition = PLAN_REGISTRY[targetType];
+    const targetDefinition = getPlanDefinition(targetType, { includeLegacy: options.includeLegacy === true });
     return [...new Set([
         ...(targetDefinition?.orbitcardPriceAliases || []),
         ...(definition.orbitcardPriceAliases || [])
@@ -182,7 +183,7 @@ function getOrbitcardPriceNameAliases(value, options = {}) {
     const definition = getPlanDefinition(value, { includeLegacy: options.includeLegacy === true });
     if (!definition) return [];
     const targetType = definition.orbitcardPlanType || definition.type;
-    const targetDefinition = PLAN_REGISTRY[targetType];
+    const targetDefinition = getPlanDefinition(targetType, { includeLegacy: options.includeLegacy === true });
     return [...new Set([
         ...(targetDefinition?.orbitcardPriceNameAliases || []),
         ...(definition.orbitcardPriceNameAliases || [])

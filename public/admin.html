@@ -9,7 +9,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="stylesheet" href="/admin/assets/admin.css?v=20261127-ui-polish">
+    <link rel="stylesheet" href="/admin/assets/admin.css?v=20261127-plus-only">
 </head>
 
 <body>
@@ -305,17 +305,12 @@
                                 <p id="gpt_api_key_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 6px;"></p>
                             </div>
                         </div>
-                        <div class="form-group" style="margin-top: 16px;">
-                            <label>Desolate 套餐代码映射</label>
+                        <div class="form-group" style="margin-top: 16px; max-width: 420px;">
+                            <label for="gpt_api_plan_key">Desolate Plus 套餐代码</label>
+                            <input type="text" id="gpt_api_plan_key" class="asset-input" placeholder="chatgptplusplan" autocomplete="off" style="margin-top: 6px;">
                             <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
-                                Plus 使用公开文档定义的 chatgptplusplan；Pro 100 / 200 / 500 仅接受运营方提供的明确代码，留空时该档提交会清晰报错，不会降级到 Plus。
+                                默认使用公开文档定义的 <code>chatgptplusplan</code>（当前仅支持 ChatGPT Plus 开通）。
                             </p>
-                            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-top:8px;">
-                                <input type="text" id="gpt_api_plan_key" class="asset-input" placeholder="Plus: chatgptplusplan" autocomplete="off">
-                                <input type="text" id="gpt_api_plan_key_pro100" class="asset-input" placeholder="Pro 100: 未配置" autocomplete="off">
-                                <input type="text" id="gpt_api_plan_key_pro200" class="asset-input" placeholder="Pro 200: 未配置" autocomplete="off">
-                                <input type="text" id="gpt_api_plan_key_pro500" class="asset-input" placeholder="Pro 500: 未配置" autocomplete="off">
-                            </div>
                         </div>
                         <div class="config-two-col" style="margin-top: 16px;">
                             <div class="form-group" style="margin: 0;">
@@ -609,20 +604,11 @@
                     </div>
                     <div id="orbitcard_usage_meta" class="orbitcard-usage-meta-bar">
                         <span id="orbitcard_mode_pill" class="orbitcard-mode-pill is-manual">手动开卡模式</span>
-                        <span id="orbitcard_usage_hint" class="orbitcard-usage-hint-text">同步未绑定 ACTIVE 新卡按余额自动推算 Plus 次数（不覆盖已绑定或 Pro 卡片）。</span>
+                        <span id="orbitcard_usage_hint" class="orbitcard-usage-hint-text">同步未绑定 ACTIVE 新卡按余额自动推算 Plus 次数（不覆盖已绑定卡片）。</span>
                     </div>
                     <div id="orbitcard_usage_quick_tabs" class="orbitcard-quick-tabs" role="tablist" aria-label="按卡片状态快速筛选"></div>
                     <form id="orbitcard_usage_filters" class="orbitcard-usage-filters" onsubmit="applyOrbitcardUsageFilters(event)">
                         <input id="orbitcard_usage_keyword" class="asset-input" type="search" maxlength="80" placeholder="搜索卡 ID / 尾号 / 产品码 / 邮箱 / 订单号" aria-label="搜索 Orbitcard 用卡记录">
-                        <select id="orbitcard_usage_plan" class="asset-input" aria-label="按套餐筛选" onchange="applyOrbitcardUsageFilters()">
-                            <option value="">全部套餐</option>
-                            <option value="plus">Plus</option>
-                            <option value="pro100">Pro 100</option>
-                            <option value="pro200">Pro 200</option>
-                            <option value="pro500">Pro 500</option>
-                            <option value="pro_5x">Pro 5x（历史）</option>
-                            <option value="pro_20x">Pro 20x（历史）</option>
-                        </select>
                         <select id="orbitcard_usage_card_status" class="asset-input" aria-label="按卡片状态筛选" onchange="applyOrbitcardUsageFilters()">
                             <option value="active" selected>有效卡（不含已删除）</option>
                             <option value="">全部卡片状态</option>
@@ -652,8 +638,8 @@
                                     <th style="width:124px;">套餐与次数</th>
                                     <th style="width:122px;">余额</th>
                                     <th style="width:98px; text-align:center;">状态</th>
-                                    <th style="min-width:240px;">充值记录</th>
-                                    <th style="width:214px; text-align:center;">操作</th>
+                                    <th style="min-width:260px;">充值记录</th>
+                                    <th style="width:154px; text-align:center;">操作</th>
                                 </tr>
                             </thead>
                             <tbody id="orbitcard_usage_body"></tbody>
@@ -706,11 +692,11 @@
                         </p>
                     </div>
                     <div style="margin-top:18px; max-width:820px; padding:16px; border:1px solid var(--border); border-radius:8px; background:var(--bg-secondary);">
-                        <div style="font-weight:700;">一卡几冲</div>
+                        <div style="font-weight:700;">Plus 一卡几冲与安全余量</div>
                         <p style="font-size:12px; color:var(--text-dim); margin:6px 0 14px;">
-                            设置后对后续新开的卡生效；已有卡继续按卡片记录中的上限执行。范围 1-20 次。
+                            设置后对后续新开卡及自动同步推算生效；已有卡继续按卡片记录中的上限执行。范围 1-20 次。
                         </p>
-                        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px;">
+                        <div style="max-width:320px;">
                             <div class="strategy-tier-card">
                                 <div class="strategy-tier-title">ChatGPT Plus</div>
                                 <label class="strategy-field-label">一卡几冲（次）
@@ -718,33 +704,6 @@
                                 </label>
                                 <label class="strategy-field-label">安全余量（USD）
                                     <input id="orbitcard_safety_margin_plus" class="asset-input" type="number" min="0" max="100" step="0.01" value="1">
-                                </label>
-                            </div>
-                            <div class="strategy-tier-card">
-                                <div class="strategy-tier-title">Pro 100</div>
-                                <label class="strategy-field-label">一卡几冲（次）
-                                    <input id="orbitcard_reuse_limit_pro100" class="asset-input" type="number" min="1" max="20" step="1" value="1">
-                                </label>
-                                <label class="strategy-field-label">安全余量（USD）
-                                    <input id="orbitcard_safety_margin_pro100" class="asset-input" type="number" min="0" max="100" step="0.01" value="1">
-                                </label>
-                            </div>
-                            <div class="strategy-tier-card">
-                                <div class="strategy-tier-title">Pro 200</div>
-                                <label class="strategy-field-label">一卡几冲（次）
-                                    <input id="orbitcard_reuse_limit_pro200" class="asset-input" type="number" min="1" max="20" step="1" value="1">
-                                </label>
-                                <label class="strategy-field-label">安全余量（USD）
-                                    <input id="orbitcard_safety_margin_pro200" class="asset-input" type="number" min="0" max="100" step="0.01" value="1">
-                                </label>
-                            </div>
-                            <div class="strategy-tier-card">
-                                <div class="strategy-tier-title">Pro 500</div>
-                                <label class="strategy-field-label">一卡几冲（次）
-                                    <input id="orbitcard_reuse_limit_pro500" class="asset-input" type="number" min="1" max="20" step="1" value="1">
-                                </label>
-                                <label class="strategy-field-label">安全余量（USD）
-                                    <input id="orbitcard_safety_margin_pro500" class="asset-input" type="number" min="0" max="100" step="0.01" value="1">
                                 </label>
                             </div>
                         </div>
@@ -839,17 +798,11 @@
                     <h2 class="panel-title">激活码列表</h2>
                     <div class="table-toolbar-actions">
                         <div class="cdk-generate-group">
-                            <select id="cdk_plan_type" class="asset-input" style="width: 118px;" aria-label="生成套餐">
-                                <option value="plus" selected>Plus</option>
-                                <option value="pro100">Pro 100</option>
-                                <option value="pro200">Pro 200</option>
-                                <option value="pro500">Pro 500</option>
-                            </select>
                             <input type="number" id="cdk_count" value="1" min="1" max="100" class="asset-input"
                                 style="width: 68px; text-align:center;" aria-label="生成数量">
                             <button class="btn btn-primary" onclick="generateCDKs(this)">
                                 <i data-lucide="sparkles"></i>
-                                生成
+                                生成 Plus
                             </button>
                         </div>
                         <button class="btn btn-secondary" onclick="toggleImportBox('cdk')">
@@ -891,19 +844,6 @@
                                 <button class="filter-option" onclick="selectFilter('cdk', 'used', '已使用')">已使用</button>
                                 <button class="filter-option" onclick="selectFilter('cdk', 'unshipped', '未出库')">未出库</button>
                                 <button class="filter-option" onclick="selectFilter('cdk', 'shipped', '已出库')">已出库</button>
-                            </div>
-                        </div>
-                        <div class="filter-dropdown" data-filter="cdk_plan_type_filter" style="min-width: 120px;">
-                            <button class="filter-trigger" onclick="toggleFilterMenu('cdk_plan_type_filter')"><span>全部套餐</span><i
-                                    data-lucide="chevron-down"></i></button>
-                            <div id="filter_menu_cdk_plan_type_filter" class="filter-menu">
-                                <button class="filter-option active" onclick="selectCdkPlanTypeFilter('all', '全部套餐')">全部套餐</button>
-                                <button class="filter-option" onclick="selectCdkPlanTypeFilter('plus', 'Plus')">Plus</button>
-                                <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro100', 'Pro 100')">Pro 100</button>
-                                <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro200', 'Pro 200')">Pro 200</button>
-                                <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro500', 'Pro 500')">Pro 500</button>
-                                <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro_5x', 'Pro 5x（历史）')">Pro 5x（历史）</button>
-                                <button class="filter-option" onclick="selectCdkPlanTypeFilter('pro_20x', 'Pro 20x（历史）')">Pro 20x（历史）</button>
                             </div>
                         </div>
                     </div>
@@ -1234,11 +1174,11 @@
         </div>
     </main>
 
-    <script src="/admin/assets/core.js?v=20261127-ui-polish"></script>
+    <script src="/admin/assets/core.js?v=20261127-plus-only"></script>
     <script src="/admin/assets/security.js?v=20261127-ui-polish"></script>
-    <script src="/admin/assets/config.js?v=20261127-ui-polish"></script>
-    <script src="/admin/assets/cards.js?v=20261127-auto-sync"></script>
-    <script src="/admin/assets/cdks.js?v=20261127-ui-polish"></script>
+    <script src="/admin/assets/config.js?v=20261127-plus-only"></script>
+    <script src="/admin/assets/cards.js?v=20261127-plus-only"></script>
+    <script src="/admin/assets/cdks.js?v=20261127-plus-only"></script>
     <script src="/admin/assets/sessions.js?v=20261127-ui-polish"></script>
     <script src="/admin/assets/tasks.js?v=20261127-ui-polish"></script>
     <script src="/admin/assets/main.js?v=20261127-ui-polish"></script>

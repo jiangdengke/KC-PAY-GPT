@@ -16,10 +16,7 @@ const GPT_API_CONFIG_KEYS = [
     'gpt_api_base_url',
     'gpt_api_key',
     'gpt_api_plan_key',
-    'gpt_api_plan_key_plus',
-    'gpt_api_plan_key_pro100',
-    'gpt_api_plan_key_pro200',
-    'gpt_api_plan_key_pro500',
+    ...CANONICAL_PLAN_TYPES.map((planType) => `gpt_api_plan_key_${planType}`),
     'gpt_api_country',
     'gpt_api_currency',
     'gpt_api_payment_region',
@@ -31,14 +28,10 @@ const GPT_API_CONFIG_KEYS = [
     'orbitcard_base_url',
     'orbitcard_api_key',
     'orbitcard_api_secret',
-    'orbitcard_reuse_limit_plus',
-    'orbitcard_reuse_limit_pro100',
-    'orbitcard_reuse_limit_pro200',
-    'orbitcard_reuse_limit_pro500',
-    'orbitcard_safety_margin_plus',
-    'orbitcard_safety_margin_pro100',
-    'orbitcard_safety_margin_pro200',
-    'orbitcard_safety_margin_pro500'
+    ...CANONICAL_PLAN_TYPES.flatMap((planType) => ([
+        `orbitcard_reuse_limit_${planType}`,
+        `orbitcard_safety_margin_${planType}`
+    ]))
 ];
 
 const DEFAULT_ORBITCARD_REUSE_LIMITS = Object.freeze(Object.fromEntries(
@@ -104,10 +97,10 @@ async function ensureDefaultConfigs() {
         ['gpt_api_base_url', config.defaults.gptApiBaseUrl],
         ['gpt_api_key', ''],
         ['gpt_api_plan_key', config.defaults.gptApiPlanKey],
-        ['gpt_api_plan_key_plus', config.defaults.gptApiPlanKey],
-        ['gpt_api_plan_key_pro100', ''],
-        ['gpt_api_plan_key_pro200', ''],
-        ['gpt_api_plan_key_pro500', ''],
+        ...CANONICAL_PLAN_TYPES.map((planType) => [
+            `gpt_api_plan_key_${planType}`,
+            planType === 'plus' ? config.defaults.gptApiPlanKey : ''
+        ]),
         ['gpt_api_country', 'PH'],
         ['gpt_api_currency', 'PHP'],
         ['gpt_api_payment_region', ''],

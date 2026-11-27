@@ -239,7 +239,13 @@ describe('Hardened security without Cloudflare Access', () => {
             listRecentAdminLoginIps: async () => [],
             saveIpBan: async () => {},
             insertAdminLoginLog: async () => {},
-            verifyCdkDetails: async () => null,
+            verifyCdkDetails: async (cdk) => (
+                cdk === 'KC-LEGACY-PRO200'
+                    ? { code: cdk, type: '自助', plan_type: 'pro200', used_at: null, cooldown_until: null }
+                    : null
+            ),
+            getRunningTaskByCdk: async () => null,
+            getActivationManualHold: async () => null,
             getTaskStatus: async () => null
         };
 
@@ -426,5 +432,41 @@ describe('Hardened security without Cloudflare Access', () => {
 
         totpEnabled = false;
         login2faMode = 'either';
+    });
+
+    it('rejects discontinued Pro plans on CDK verification, CDK generation, and Orbitcard binding', async () => {
+        const verifyRes = await fetch(`${baseUrl}/api/verify-cdk`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Real-IP': '203.0.113.56' },
+            body: JSON.stringify({ cdk: 'KC-LEGACY-PRO200' })
+        });
+        expect(verifyRes.status).toBe(400);
+        const verifyBody = await verifyRes.json();
+        expect(verifyBody.success).toBe(false);
+        expect(verifyBody.message).toContain('ChatGPT Plus');
+
+        const validToken = adminAuth.issueAdminToken(passwordVersion, 'owner@example.com').token;
+        const secToken = adminAuth.issueSecondaryToken(1).token;
+
+        const genRes = await fetch(`${baseUrl}/api/admin/cdks/generate`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${validToken}`
+            },
+            body: JSON.stringify({ count: 1, plan_type: 'pro200' })
+        });
+        expect(genRes.status).toBe(400);
+
+        const bindRes = await fetch(`${baseUrl}/api/admin/orbitcard/cards/101/plan`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${validToken}`,
+                'X-Admin-Secondary-Token': secToken
+            },
+            body: JSON.stringify({ plan_type: 'pro100', max_usage_count: 1 })
+        });
+        expect(bindRes.status).toBe(400);
     });
 });

@@ -73,7 +73,10 @@ function normalizeOpenPlanMappingConfig(config = {}) {
         ]));
     }
     const legacyPlus = String(config || '').trim();
-    return { plus: legacyPlus, pro100: '', pro200: '', pro500: '' };
+    return Object.fromEntries(CANONICAL_PLAN_TYPES.map((planType) => [
+        planType,
+        planType === 'plus' ? legacyPlus : ''
+    ]));
 }
 
 function resolveOpenPlanCode(planType, config = {}) {

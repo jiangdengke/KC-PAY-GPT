@@ -26,12 +26,12 @@ const statusMap = {
     manual: { class: 'status-warning', label: '需人工' },
     card_invalid: { class: 'status-warning', label: 'CARD_INVALID' }
 };
-const CANONICAL_PLAN_TYPES = Object.freeze(['plus', 'pro100', 'pro200', 'pro500']);
+const CANONICAL_PLAN_TYPES = Object.freeze(['plus']);
 const PLAN_LABELS = Object.freeze({
     plus: 'Plus',
-    pro100: 'Pro 100',
-    pro200: 'Pro 200',
-    pro500: 'Pro 500',
+    pro100: 'Pro 100（历史）',
+    pro200: 'Pro 200（历史）',
+    pro500: 'Pro 500（历史）',
     pro_5x: 'Pro 5x（历史）',
     pro_20x: 'Pro 20x（历史）'
 });

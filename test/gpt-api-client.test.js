@@ -433,7 +433,7 @@ describe('gpt api client', () => {
         expect(client.resolveOpenPlanCode('plus')).toBe('chatgptplusplan');
     });
 
-    it('reports all Desolate Open plan mappings during connection tests', async () => {
+    it('reports Plus Desolate Open plan mapping during connection tests', async () => {
         vi.spyOn(axios, 'request').mockResolvedValue({
             status: 200,
             data: { code: 0, message: '成功', data: { accountId: 'usr_1', availablePoints: 20 } }
@@ -444,23 +444,20 @@ describe('gpt api client', () => {
             plan_key: 'chatgptplusplan'
         });
         expect(out.planMappings).toEqual({
-            plus: 'chatgptplusplan',
-            pro100: null,
-            pro200: null,
-            pro500: null
+            plus: 'chatgptplusplan'
         });
-        expect(out.message).toContain('Pro 100=未配置');
-        expect(out.message).toContain('Pro 200=未配置');
-        expect(out.message).toContain('Pro 500=未配置');
+        expect(out.message).toContain('Plus=chatgptplusplan');
     });
 
-    it('requires explicit Desolate mappings for Pro tiers and rejects legacy or unknown plan types', () => {
-        expect(() => client.resolveOpenPlanCode('pro100')).toThrow(/Pro 100.*未配置/);
-        expect(client.resolveOpenPlanCode('pro100', {
-            plan_mappings: { pro100: 'operator-confirmed-pro100' }
-        })).toBe('operator-confirmed-pro100');
-        expect(() => client.resolveOpenPlanCode('pro_5x')).toThrow(/必须是 plus \/ pro100 \/ pro200 \/ pro500/);
-        expect(() => client.resolveOpenPlanCode('not-a-plan')).toThrow(/必须是 plus \/ pro100 \/ pro200 \/ pro500/);
+    it('allows Plus plan mapping and rejects discontinued Pro, legacy, or unknown plan types', () => {
+        expect(client.resolveOpenPlanCode('plus')).toBe('chatgptplusplan');
+        expect(client.resolveOpenPlanCode('plus', {
+            plan_mappings: { plus: 'custom-plus-code' }
+        })).toBe('custom-plus-code');
+        expect(() => client.resolveOpenPlanCode('pro100')).toThrow(/必须是 plus/);
+        expect(() => client.resolveOpenPlanCode('pro200')).toThrow(/必须是 plus/);
+        expect(() => client.resolveOpenPlanCode('pro_5x')).toThrow(/必须是 plus/);
+        expect(() => client.resolveOpenPlanCode('not-a-plan')).toThrow(/必须是 plus/);
     });
 
     it('maps the Desolate Open order fields and unwraps its response envelope', async () => {

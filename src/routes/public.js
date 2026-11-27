@@ -2,7 +2,7 @@
 
 const path = require('path');
 const express = require('express');
-const { requireReadablePlanType, getPlanLabel } = require('../config/plan-registry');
+const { requireCanonicalPlanType, getPlanLabel } = require('../config/plan-registry');
 const {
     parseSessionJson,
     normalizeSessionToken,
@@ -92,9 +92,12 @@ function createPublicRouter({
             const rawPlanType = String(cdkDetails.plan_type || 'plus').trim();
             let planType;
             try {
-                planType = requireReadablePlanType(rawPlanType, 'plan_type');
-            } catch (error) {
-                return res.status(400).json({ success: false, message: error.message });
+                planType = requireCanonicalPlanType(rawPlanType, 'plan_type');
+            } catch (_) {
+                return res.status(400).json({
+                    success: false,
+                    message: '当前仅支持 ChatGPT Plus 激活码开通，该卡密套餐已停售，请联系客服处理'
+                });
             }
 
             const cdkCooldownMinutes = getRemainingCooldownMinutes(cdkDetails.cooldown_until);
@@ -320,6 +323,15 @@ function createPublicRouter({
                 });
             }
             if (cdkData && !cdkData.used_at) {
+                const rawPlanType = String(cdkData.plan_type || 'plus').trim();
+                try {
+                    requireCanonicalPlanType(rawPlanType, 'plan_type');
+                } catch (_) {
+                    return res.status(400).json({
+                        success: false,
+                        message: '当前仅支持 ChatGPT Plus 激活码开通，该卡密套餐已停售，请联系客服处理'
+                    });
+                }
                 if (cdkData.type === '自助') {
                     const cdkCooldownMinutes = getRemainingCooldownMinutes(cdkData.cooldown_until);
                     if (cdkCooldownMinutes > 0) {

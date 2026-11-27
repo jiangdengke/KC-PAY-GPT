@@ -261,7 +261,7 @@ async function batchDeleteCDKs() {
 
 async function generateCDKs(btn) {
     const count = parseInt(document.getElementById('cdk_count').value, 10) || 1;
-    const planType = document.getElementById('cdk_plan_type').value || 'plus';
+    const planType = 'plus';
     const original = btn.innerHTML;
     btn.innerHTML = '<i data-lucide="loader" class="animate-spin"></i> 生成中...';
     lucide.createIcons();
@@ -298,7 +298,7 @@ async function importCDKs() {
         const res = await authFetch('/api/admin/cdks/import', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cdks: codes, plan_type: document.getElementById('cdk_plan_type')?.value || 'plus' })
+            body: JSON.stringify({ cdks: codes, plan_type: 'plus' })
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.message || '导入失败');

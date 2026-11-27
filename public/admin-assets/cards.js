@@ -31,8 +31,8 @@ let orbitcardStrategyProducts = [];
 let orbitcardStrategyAutomatic = {};
 let orbitcardStrategyAutoCreate = false;
 let orbitcardStrategyPlusUnitPrice = 20;
-let orbitcardStrategyReuseLimits = { plus: 4, pro100: 1, pro200: 1, pro500: 1 };
-let orbitcardStrategySafetyMargins = { plus: 1, pro100: 1, pro200: 1, pro500: 1 };
+let orbitcardStrategyReuseLimits = { plus: 4 };
+let orbitcardStrategySafetyMargins = { plus: 1 };
 
 function toggleCardPoolImportBox() {
     document.getElementById('card_pool_import_box')?.classList.toggle('active');
@@ -500,17 +500,11 @@ function renderOrbitcardPlanActions(card) {
     const status = String(card.status || '').toUpperCase();
     if (card.inUse || ['PROVIDER_DELETED', 'CANCELLED', 'RETIRED'].includes(status)) return '';
     const cardId = Number(card.cardId);
-    const options = CANONICAL_PLAN_TYPES
-        .map((value) => `<option value="${value}" ${card.planType === value ? 'selected' : ''}>${PLAN_LABELS[value]}</option>`)
-        .join('');
-    const usageLimit = card.planType ? Number(card.maxUsageCount || 1) : '';
+    const isPlusBound = card.planType === 'plus';
+    const usageLimit = isPlusBound ? Number(card.maxUsageCount || 1) : '';
     return `<div class="orbitcard-plan-actions">
-        <select id="orbitcard_plan_${cardId}" class="orbitcard-plan-select" aria-label="选择卡片套餐">
-            <option value="">选择套餐</option>
-            ${options}
-        </select>
-        <input id="orbitcard_limit_${cardId}" class="orbitcard-limit-input" type="number" min="1" max="20" step="1" value="${usageLimit}" placeholder="次数" title="单卡使用上限（留空按默认）" aria-label="单卡使用上限">
-        <button type="button" class="btn ${card.planType ? 'btn-secondary' : 'btn-primary'} orbitcard-plan-submit" onclick="setOrbitcardCardPlan(${cardId})">${card.planType ? '保存' : '绑定'}</button>
+        <input id="orbitcard_limit_${cardId}" class="orbitcard-limit-input" type="number" min="1" max="20" step="1" value="${usageLimit}" placeholder="次数" title="Plus 单卡使用上限（留空按默认）" aria-label="Plus 单卡使用上限">
+        <button type="button" class="btn ${isPlusBound ? 'btn-secondary' : 'btn-primary'} orbitcard-plan-submit" onclick="setOrbitcardCardPlan(${cardId})">${isPlusBound ? '保存' : '绑定 Plus'}</button>
     </div>`;
 }
 
@@ -838,14 +832,9 @@ async function loadOrbitcardUsage(showToast = false, refreshBalances = false, pa
 }
 
 async function setOrbitcardCardPlan(cardId) {
-    const select = document.getElementById(`orbitcard_plan_${Number(cardId)}`);
-    const planType = select?.value || '';
+    const planType = 'plus';
     const limitInput = document.getElementById(`orbitcard_limit_${Number(cardId)}`);
     const rawUsageLimit = limitInput?.value.trim() || '';
-    if (!planType) {
-        showMessage('请先选择套餐', 'warning');
-        return;
-    }
     if (rawUsageLimit && (!/^\d+$/.test(rawUsageLimit) || Number(rawUsageLimit) < 1 || Number(rawUsageLimit) > 20)) {
         showMessage('单卡使用上限必须是 1-20 的整数', 'warning');
         return;
@@ -859,11 +848,11 @@ async function setOrbitcardCardPlan(cardId) {
             body: JSON.stringify(requestBody)
         });
         const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.message || '绑定套餐失败');
-        showMessage(data.message || '套餐已绑定', 'success');
+        if (!res.ok || !data.success) throw new Error(data.message || '绑定 Plus 失败');
+        showMessage(data.message || '已绑定 Plus 套餐', 'success');
         await loadOrbitcardUsage(false, false);
     } catch (error) {
-        showMessage(error.message || '绑定套餐失败', 'error');
+        showMessage(error.message || '绑定 Plus 失败', 'error');
     }
 }
 

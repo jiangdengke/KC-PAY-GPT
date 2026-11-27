@@ -58,72 +58,47 @@ describe('orbitcard client', () => {
         expect(JSON.parse(spy.mock.calls[0][0].data)).toEqual({ page: 1, page_size: 100 });
     });
 
-    it('selects an available product and calculates a one-time card amount per plan', () => {
-        const selection = orbitcard.chooseProductForPlan({ list: [
+    it('selects an available product for Plus and rejects discontinued Pro plans', () => {
+        const data = { list: [
             {
                 product_code: 'visa-1',
                 remaining_open_card_num: 20,
                 min_initial_amount: '20',
                 min_retained_balance: '0.10',
                 gpt_plan_prices: [
-                    { id: 'plus', price: '15.78', currency: 'USD' },
-                    { id: 'pro', price: '95.57', currency: 'USD' },
-                    { id: 'pro_20x', price: '143.40', currency: 'USD' }
+                    { id: 'plus', name: 'ChatGPT Plus', price: '15.78', currency: 'USD' },
+                    { id: 'pro', name: 'Pro 100', price: '95.57', currency: 'USD' },
+                    { id: 'pro_20x', name: 'Pro 200', price: '143.40', currency: 'USD' }
                 ]
             }
-        ] }, 'pro_5x');
+        ] };
+        const selection = orbitcard.chooseProductForPlan(data, 'plus');
         expect(selection).toMatchObject({
             success: true,
-            amount: '100.00',
+            amount: '65.00',
             product: { productCode: 'visa-1' },
-            planPrice: { id: 'pro', price: 95.57 }
+            planPrice: { id: 'plus', price: 15.78 }
         });
-        expect(orbitcard.chooseProductForPlan({ list: [
-            { product_code: 'visa-1', remaining_open_card_num: 20, min_initial_amount: '20', min_retained_balance: '0.10', gpt_plan_prices: [{ id: 'pro_20x', price: '143.40' }] }
-        ] }, 'pro_20x').amount).toBe('145.00');
-    });
-
-    it('resolves canonical tiers from historical Orbitcard IDs and explicit price names', () => {
-        const data = { list: [{
-            product_code: 'visa-four-tier',
-            remaining_open_card_num: 20,
-            min_initial_amount: '20',
-            min_retained_balance: '0.10',
-            gpt_plan_prices: [
-                { id: 'plus', name: 'Plus', price: '15.69', currency: 'USD' },
-                { id: 'pro', name: 'Pro 100', price: '92.49', currency: 'USD' },
-                { id: 'pro_20x', name: 'Pro 200', price: '142.38', currency: 'USD' },
-                { id: 'pro500', name: 'Pro 500', price: '500.00', currency: 'USD' }
-            ]
-        }] };
-        const expected = {
-            plus: { id: 'plus', price: 15.69, amount: '65.00' },
-            pro100: { id: 'pro', price: 92.49, amount: '95.00' },
-            pro200: { id: 'pro_20x', price: 142.38, amount: '145.00' },
-            pro500: { id: 'pro500', price: 500, amount: '505.00' }
-        };
-
-        for (const [planType, result] of Object.entries(expected)) {
-            const selection = orbitcard.chooseProductForPlan(data, planType);
-            expect(selection).toMatchObject({
-                success: true,
-                amount: result.amount,
-                planPrice: { id: result.id, price: result.price }
+        for (const legacyPlan of ['pro100', 'pro200', 'pro500', 'pro_5x', 'pro_20x']) {
+            expect(orbitcard.chooseProductForPlan(data, legacyPlan)).toMatchObject({
+                success: false
             });
         }
     });
 
-    it('lets an explicit price name override a conflicting generic legacy ID', () => {
+    it('resolves Plus price from explicit price name even when ID uses an alias', () => {
         const data = { list: [{
-            product_code: 'named-pro500',
+            product_code: 'named-plus',
             remaining_open_card_num: 20,
             min_initial_amount: '20',
-            gpt_plan_prices: [{ id: 'pro', name: 'ChatGPT Pro 500', price: '500.00' }]
+            min_retained_balance: '0.10',
+            gpt_plan_prices: [{ id: 'chatgptplusplan', name: 'ChatGPT Plus', price: '15.69', currency: 'USD' }]
         }] };
 
-        expect(orbitcard.chooseProductForPlan(data, 'pro500')).toMatchObject({
+        expect(orbitcard.chooseProductForPlan(data, 'plus')).toMatchObject({
             success: true,
-            planPrice: { id: 'pro', name: 'ChatGPT Pro 500', price: 500 }
+            amount: '65.00',
+            planPrice: { id: 'chatgptplusplan', name: 'ChatGPT Plus', price: 15.69 }
         });
         expect(orbitcard.chooseProductForPlan(data, 'pro100')).toMatchObject({
             success: false
@@ -535,12 +510,10 @@ describe('orbitcard client', () => {
             product_code: 'P5556XV',
             remaining_open_card_num: 2035,
             plans: {
-                plus: { amount: '65.00', plan_price: 15.7, max_usage_count: 4 },
-                pro100: { amount: '95.00', plan_price: 92.61, max_usage_count: 1 },
-                pro200: { amount: '145.00', plan_price: 142.55, max_usage_count: 1 },
-                pro500: { amount: '505.00', plan_price: 499, max_usage_count: 1 }
+                plus: { amount: '65.00', plan_price: 15.7, max_usage_count: 4 }
             }
         });
+        expect(Object.keys(catalog.products[0].plans)).toEqual(['plus']);
         expect(catalog.automatic.plus).toMatchObject({
             product_code: 'P5556XV',
             amount: '65.00',
