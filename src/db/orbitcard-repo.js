@@ -416,7 +416,8 @@ async function getOrbitcardCardMetaByIds(cardIds = []) {
     if (!ids.length) return [];
     const placeholders = ids.map(() => '?').join(', ');
     const rows = await runQuery(
-        `SELECT card_id, status, plan_type, usage_count, max_usage_count, initial_amount, provider_balance
+        `SELECT card_id, status, plan_type, usage_count, max_usage_count, initial_amount, provider_balance,
+                card_number, card_expiry, card_cvc
          FROM orbitcard_card_usage
          WHERE card_id IN (${placeholders})`,
         ids
@@ -428,7 +429,12 @@ async function getOrbitcardCardMetaByIds(cardIds = []) {
         usageCount: Number(row.usage_count || 0),
         maxUsageCount: Math.max(1, Number(row.max_usage_count || 1)),
         initialAmount: row.initial_amount == null ? null : Number(row.initial_amount),
-        balance: row.provider_balance == null ? null : Number(row.provider_balance)
+        balance: row.provider_balance == null ? null : Number(row.provider_balance),
+        hasCardDetail: Boolean(
+            String(row.card_number || '').trim()
+            && String(row.card_expiry || '').trim()
+            && String(row.card_cvc || '').trim()
+        )
     }));
 }
 

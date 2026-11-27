@@ -278,9 +278,14 @@ describe('createOrbitcardAutoSync', () => {
         expect(mockOrbitcard.getCardList).not.toHaveBeenCalled();
     });
 
-    it('runs lightweight sync on startup delay and 3-minute interval without calling sensitive getCardDetail', async () => {
+    it('runs lightweight sync on startup delay and 3-minute interval, backfilling full card detail strictly once for brand-new cards', async () => {
         vi.useFakeTimers();
 
+        const syncedBatches = [];
+        const cardHasDetail = new Map([
+            [701, true],
+            [702, false]
+        ]);
         const store = {
             getGptApiConfig: vi.fn(async () => ({
                 card_source: 'orbitcard',
@@ -291,14 +296,28 @@ describe('createOrbitcardAutoSync', () => {
                 orbitcard_safety_margins: { plus: 1 },
                 orbitcard_plus_unit_price: 20
             })),
-            getOrbitcardCardMetaByIds: vi.fn(async () => []),
-            syncOrbitcardCards: vi.fn(async (cards) => ({
-                total: cards.length,
-                inserted: cards.length,
-                updated: 0,
-                autoAssigned: cards.filter((c) => c.autoPlanType).length,
-                autoAssignedCards: []
-            })),
+            getOrbitcardCardMetaByIds: vi.fn(async () => ([
+                ...(cardHasDetail.get(700)
+                    ? [{ cardId: 700, status: 'ACTIVE', planType: 'plus', usageCount: 0, maxUsageCount: 2, hasCardDetail: true }]
+                    : []),
+                { cardId: 701, status: 'ACTIVE', planType: 'plus', usageCount: 0, maxUsageCount: 2, hasCardDetail: true },
+                { cardId: 702, status: 'RETIRED', planType: 'plus', usageCount: 2, maxUsageCount: 2, hasCardDetail: false }
+            ])),
+            syncOrbitcardCards: vi.fn(async (cards) => {
+                syncedBatches.push(cards);
+                for (const card of cards) {
+                    if (card.cardNumber && card.cardExpiry && card.cardCvc) {
+                        cardHasDetail.set(card.cardId, true);
+                    }
+                }
+                return {
+                    total: cards.length,
+                    inserted: cards.some((c) => c.cardId === 700 && syncedBatches.length === 1) ? 1 : 0,
+                    updated: cards.length - (syncedBatches.length === 1 ? 1 : 0),
+                    autoAssigned: cards.filter((c) => c.autoPlanType).length,
+                    autoAssignedCards: []
+                };
+            }),
             markMissingOrbitcardCards: vi.fn(async () => 0)
         };
 
@@ -306,10 +325,26 @@ describe('createOrbitcardAutoSync', () => {
             ...orbitcard,
             getCardList: vi.fn(async () => ({
                 success: true,
-                data: [{ cardId: 700, status: 'ACTIVE', balance: 45, currency: 'USD', last4: '7000' }]
+                data: [
+                    { cardId: 700, status: 'ACTIVE', balance: 45, currency: 'USD', last4: '' },
+                    { cardId: 701, status: 'ACTIVE', balance: 25, currency: 'USD', last4: '7011' },
+                    { cardId: 702, status: 'ACTIVE', balance: 0.05, currency: 'USD', last4: '7022' }
+                ]
             })),
             getProductCode: vi.fn(async () => ({ success: true, data: SAMPLE_CATALOG })),
-            getCardDetail: vi.fn(),
+            getCardDetail: vi.fn(async (_cfg, cardId) => ({
+                success: true,
+                data: {
+                    cardId,
+                    cardNumber: '4466190707817000',
+                    expiry: '11/29',
+                    cvc: '888',
+                    holder: 'ORBITCARD USER',
+                    balance: 45,
+                    currency: 'USD',
+                    productCode: 'amzkeys:55565979'
+                }
+            })),
             getCardSummary: vi.fn()
         };
 
@@ -333,13 +368,37 @@ describe('createOrbitcardAutoSync', () => {
         await vi.advanceTimersByTimeAsync(15_000);
         expect(mockOrbitcard.getCardList).toHaveBeenCalledTimes(1);
         expect(mockOrbitcard.getCardList).toHaveBeenCalledWith(expect.any(Object), { status: 'ACTIVE' });
-        expect(mockOrbitcard.getCardDetail).not.toHaveBeenCalled();
+        // Brand-new active card 700 fetches full detail ONCE; already-detailed card 701 & retired card 702 are skipped
+        expect(mockOrbitcard.getCardDetail).toHaveBeenCalledTimes(1);
+        expect(mockOrbitcard.getCardDetail).toHaveBeenCalledWith(expect.any(Object), 700);
+        expect(syncedBatches[0].find((c) => c.cardId === 700)).toMatchObject({
+            cardNumber: '4466190707817000',
+            cardExpiry: '11/29',
+            cardCvc: '888',
+            autoPlanType: 'plus',
+            autoMaxUsageCount: 2
+        });
         expect(store.markMissingOrbitcardCards).not.toHaveBeenCalled();
-        expect(scheduler.getStatus().lastResult).toEqual({ total: 1, inserted: 1, updated: 0, autoAssigned: 1 });
+        expect(scheduler.getStatus().lastResult).toEqual({
+            total: 3,
+            inserted: 1,
+            updated: 2,
+            autoAssigned: 1,
+            detailsFetched: 1
+        });
         expect(scheduler.getStatus().lastError).toBe('');
 
+        // Second 3-minute tick: card 700 now has details stored, so getCardDetail MUST NOT be called again
         await vi.advanceTimersByTimeAsync(180_000);
         expect(mockOrbitcard.getCardList).toHaveBeenCalledTimes(2);
+        expect(mockOrbitcard.getCardDetail).toHaveBeenCalledTimes(1);
+        expect(scheduler.getStatus().lastResult).toEqual({
+            total: 3,
+            inserted: 0,
+            updated: 3,
+            autoAssigned: 0,
+            detailsFetched: 0
+        });
 
         scheduler.stop();
         await vi.advanceTimersByTimeAsync(360_000);

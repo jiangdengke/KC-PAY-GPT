@@ -8,8 +8,9 @@ const DEFAULT_ORBITCARD_AUTO_SYNC_INITIAL_DELAY_MS = 15 * 1000;
 
 /**
  * 同步 Orbitcard 卡片列表，并为未绑定套餐的 ACTIVE 非禁用卡按余额自动推算可充 Plus 次数。
- * - admin 同步（fetchDetails = true）：拉全量状态、拉卡详情（含敏感卡资料）与余额、标记上游已删卡。
- * - 下单兜底 / 定时轻量同步（fetchDetails = false）：拉上游 ACTIVE 列表，不碰明文卡号/CVV，仅对本地未绑定且缺余额的卡补查摘要余额。
+ * - admin 全量同步（fetchDetails = true）：拉全量状态、拉每张卡详情（含敏感卡资料）与余额、标记上游已删卡。
+ * - 后端定时轻量同步（fetchDetails = false, fetchMissingDetails = true）：拉上游 ACTIVE 列表；仅对首次入池/缺少完整卡资料的活跃卡补拉 1 次卡详情，已有完整资料的卡不再重复拉敏感接口。
+ * - 下单兜底同步（fetchDetails = false, fetchMissingDetails = false）：复用上游 ACTIVE 列表，仅对未绑定且缺余额的卡补查摘要余额。
  */
 async function syncAndAutoAssignOrbitcardCards({
     store,
@@ -17,6 +18,7 @@ async function syncAndAutoAssignOrbitcardCards({
     cfg,
     providerCards = null,
     fetchDetails = true,
+    fetchMissingDetails = false,
     markMissing = fetchDetails
 }) {
     const orbitCfg = {
@@ -70,6 +72,7 @@ async function syncAndAutoAssignOrbitcardCards({
 
     const syncedCards = [];
     const detailFailures = [];
+    let detailsFetched = 0;
     for (const providerCard of list) {
         const cardId = Number(providerCard?.cardId ?? providerCard?.card_id ?? providerCard?.id);
         if (!Number.isInteger(cardId) || cardId <= 0) continue;
@@ -84,11 +87,16 @@ async function syncAndAutoAssignOrbitcardCards({
         let currency = providerCard.currency || '';
         let productCode = providerCard.productCode || '';
 
-        if (fetchDetails) {
+        const shouldFetchDetail = Boolean(
+            fetchDetails
+            || (fetchMissingDetails && isActive && !existingRetired && !existing?.hasCardDetail)
+        );
+        if (shouldFetchDetail) {
             try {
                 const detailResult = await orbitcard.getCardDetail(orbitCfg, cardId);
                 if (detailResult.success) {
                     detail = detailResult.data;
+                    detailsFetched += 1;
                     if (balance == null && detail.balance != null) balance = detail.balance;
                     if (!currency && detail.currency) currency = detail.currency;
                     if (!productCode && detail.productCode) productCode = detail.productCode;
@@ -173,6 +181,7 @@ async function syncAndAutoAssignOrbitcardCards({
         updated: syncResult.updated,
         autoAssigned: syncResult.autoAssigned || 0,
         autoAssignedCards: syncResult.autoAssignedCards || [],
+        detailsFetched,
         detailFailures
     };
 }
@@ -240,6 +249,7 @@ function createOrbitcardAutoSync({
                 orbitcard,
                 cfg,
                 fetchDetails: false,
+                fetchMissingDetails: true,
                 markMissing: false
             });
             if (!result.success) {
@@ -256,11 +266,13 @@ function createOrbitcardAutoSync({
                 total: result.total,
                 inserted: result.inserted,
                 updated: result.updated,
-                autoAssigned: result.autoAssigned
+                autoAssigned: result.autoAssigned,
+                detailsFetched: result.detailsFetched || 0
             };
-            if (result.inserted > 0 || result.autoAssigned > 0) {
+            if (result.inserted > 0 || result.autoAssigned > 0 || result.detailsFetched > 0) {
+                const detailPart = result.detailsFetched > 0 ? `，补全卡资料 ${result.detailsFetched} 张` : '';
                 logger?.log?.(
-                    `[OrbitcardAutoSync] 轻量同步完成 (${trigger}): 共 ${result.total} 张，新入库 ${result.inserted} 张，自动绑定 Plus ${result.autoAssigned} 张`
+                    `[OrbitcardAutoSync] 轻量同步完成 (${trigger}): 共 ${result.total} 张，新入库 ${result.inserted} 张，自动绑定 Plus ${result.autoAssigned} 张${detailPart}`
                 );
             }
             return { skipped: false, ...result };
@@ -293,7 +305,7 @@ function createOrbitcardAutoSync({
         }, effectiveIntervalMs);
         intervalTimer.unref?.();
         logger?.log?.(
-            `[OrbitcardAutoSync] 已启用后端定时轻量同步（每 ${Math.round(effectiveIntervalMs / 1000)} 秒，仅活跃卡/不拉明文卡号）`
+            `[OrbitcardAutoSync] 已启用后端定时轻量同步（每 ${Math.round(effectiveIntervalMs / 1000)} 秒，仅活跃卡；新卡首次入池自动补全卡资料）`
         );
         return true;
     }
