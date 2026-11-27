@@ -349,7 +349,10 @@ async function getAdminData() {
         runQuery(
             `SELECT COUNT(*) AS active_count
              FROM orbitcard_card_usage
-             WHERE status = 'ACTIVE' AND usage_count < max_usage_count`
+             WHERE status NOT IN ('PROVIDER_DELETED', 'RETIRED', 'CANCELLED')
+               AND in_use = 0
+               AND plan_type IS NOT NULL
+               AND usage_count < max_usage_count`
         ),
         listActivationManualHolds(200),
         getTelegramConfig()
