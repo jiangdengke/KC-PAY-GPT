@@ -1,6 +1,6 @@
 'use strict';
 
-const ipBan = require('../ip-ban');
+const ipBan = require('../src/security/ip-ban');
 
 describe('normalizeBanCidr', () => {
     it('normalizes single IPs and networks to their network address', () => {

@@ -1,43 +1,11 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-const vm = require('vm');
-const { buildGptApiFailureDiagnostic } = require('../gpt-api-failure');
-const { formatTelegramMessage } = require('../telegram-notify');
-
-const GENERIC_FAILURE_MESSAGE = '本次开通未完成，已转人工确认，请联系客服处理后再试';
-const TIMEOUT_FAILURE_MESSAGE = '订单处理超时，已转人工确认，请联系客服处理后再试';
-
-function sliceSource(source, startMarker, endMarker) {
-    const start = source.indexOf(startMarker);
-    const end = source.indexOf(endMarker, start);
-    if (start < 0 || end < 0) {
-        throw new Error(`无法从 server.js 提取 Worker 代码: ${startMarker} -> ${endMarker}`);
-    }
-    return source.slice(start, end);
-}
-
-function loadWorker(context) {
-    const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-    const manualReviewSource = sliceSource(
-        serverSource,
-        'function getManualReviewMessage(message)',
-        'async function getSystemMetrics()'
-    );
-    const workerSource = sliceSource(
-        serverSource,
-        'const LEGACY_GPT_API_PLAN_MAP',
-        'function spawnActivationWorker('
-    );
-    const sandbox = vm.createContext(context);
-    vm.runInContext(
-        `${manualReviewSource}\n${workerSource}\nthis.__runGptApiWorker = runGptApiWorker;`,
-        sandbox,
-        { filename: 'server-worker-extract.js' }
-    );
-    return sandbox.__runGptApiWorker;
-}
+const { createGptApiWorker } = require('../src/services/gpt-api-worker');
+const { formatTelegramMessage } = require('../src/services/telegram-notify');
+const {
+    GPT_API_CUSTOMER_FAILURE_MESSAGE: GENERIC_FAILURE_MESSAGE,
+    GPT_API_CUSTOMER_TIMEOUT_MESSAGE: TIMEOUT_FAILURE_MESSAGE
+} = require('../src/utils/task-messages');
 
 function createHarness({
     openProtocol = true,
@@ -139,24 +107,7 @@ function createHarness({
         formatProgressMessage: () => '订单正在处理中'
     };
 
-    const context = {
-        console: {
-            error: vi.fn(),
-            warn: vi.fn(),
-            log: vi.fn()
-        },
-        process: {
-            env: {
-                GPT_API_MAX_POLLS: String(maxPolls),
-                GPT_API_POLL_INTERVAL_MS: '0'
-            }
-        },
-        CANONICAL_PLAN_TYPES: ['plus', 'pro100', 'pro200', 'pro500'],
-        requireReadablePlanType: (value) => String(value || ''),
-        getPlanLabel: (value) => String(value || ''),
-        getPlanTypeLabel: (value) => String(value || ''),
-        extractEmailFromSession: (session) => String(session?.user?.email || ''),
-        getActivationAccountKey: (session) => `email:${String(session?.user?.email || '').toLowerCase()}`,
+    const runGptApiWorker = createGptApiWorker({
         store,
         gptApi,
         orbitcard: {},
@@ -164,13 +115,20 @@ function createHarness({
         broadcastToTask: (_jobKey, update) => broadcasts.push({ ...update }),
         notifyTaskOutcome: (payload) => notifications.push({ ...payload }),
         logTask: vi.fn(),
-        sleep: async () => null,
-        buildGptApiFailureDiagnostic,
         releaseForegroundSlot: vi.fn(),
-        getTotalActiveJobs: () => 1
-    };
+        getTotalActiveJobs: () => 1,
+        sleep: async () => null,
+        env: {
+            GPT_API_MAX_POLLS: String(maxPolls),
+            GPT_API_POLL_INTERVAL_MS: '0'
+        },
+        logger: {
+            error: vi.fn(),
+            warn: vi.fn(),
+            log: vi.fn()
+        }
+    });
 
-    const runGptApiWorker = loadWorker(context);
     const run = () => runGptApiWorker({
         task: { jobKey },
         token: 'synthetic-token',
@@ -301,8 +259,6 @@ describe('runGptApiWorker failure notification wiring', () => {
         expect(formatTelegramMessage('failure', harness.notifications[0]))
             .toContain('详情: Account has an existing subscription or recent payment.');
 
-        // The worker records the concrete first hold, then the final duplicate
-        // call receives the existing row and must not overwrite its reason.
         expect(harness.holdCalls).toHaveLength(2);
         expect(harness.holdRows).toHaveLength(1);
         expect(harness.holdRows[0].reason).toContain('Account has an existing subscription or recent payment.');

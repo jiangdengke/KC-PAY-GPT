@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const adminAuth = require('../admin-auth');
+const adminAuth = require('../src/security/admin-auth');
 
 // 2026-10 之前的回退密钥：仓库公开，任何人都能算出
 function legacyDerivedSecret(cwd) {
@@ -101,8 +101,8 @@ describe('findSavedSecretRedirect', () => {
 });
 
 function freshAdminAuth() {
-    delete require.cache[require.resolve('../admin-auth')];
-    return require('../admin-auth');
+    delete require.cache[require.resolve('../src/security/admin-auth')];
+    return require('../src/security/admin-auth');
 }
 
 describe('client IP and login throttling', () => {
@@ -245,5 +245,19 @@ describe('login failure accounting', () => {
         const fresh = freshAdminAuth();
         fresh.restoreLoginFailures(Array.from({ length: 100 }, (_, i) => ({ ip: `10.3.${Math.floor(i / 4)}.${i % 4}`, at: at + i, countGlobal: true })));
         expect(fresh.checkLoginRateLimit('192.0.2.202')).toMatchObject({ allowed: false, reason: 'global_locked' });
+    });
+});
+
+describe('async scrypt password hashing and verification', () => {
+    it('creates hashes compatible between sync and async helpers without blocking', async () => {
+        const asyncHash = await adminAuth.createPasswordHashAsync('S3cure-Pass!2026');
+        expect(asyncHash.startsWith('scrypt$')).toBe(true);
+        expect(await adminAuth.verifyPasswordAsync('S3cure-Pass!2026', asyncHash)).toBe(true);
+        expect(adminAuth.verifyPassword('S3cure-Pass!2026', asyncHash)).toBe(true);
+        expect(await adminAuth.verifyPasswordAsync('wrong-pass', asyncHash)).toBe(false);
+
+        const syncHash = adminAuth.createPasswordHash('Legacy-Sync-Pass');
+        expect(await adminAuth.verifyPasswordAsync('Legacy-Sync-Pass', syncHash)).toBe(true);
+        expect(await adminAuth.verifyPasswordAsync('Legacy-Sync-Pass', 'malformed-hash')).toBe(false);
     });
 });

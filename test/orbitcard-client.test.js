@@ -1,7 +1,7 @@
 'use strict';
 
 const axios = require('axios');
-const orbitcard = require('../orbitcard-client');
+const orbitcard = require('../src/services/orbitcard-client');
 
 describe('orbitcard client', () => {
     afterEach(() => vi.restoreAllMocks());

@@ -4,8 +4,8 @@ const {
     MAX_REASON_LENGTH,
     buildGptApiFailureDiagnostic,
     redactSensitiveText
-} = require('../gpt-api-failure');
-const { formatTelegramMessage } = require('../telegram-notify');
+} = require('../src/services/gpt-api-failure');
+const { formatTelegramMessage } = require('../src/services/telegram-notify');
 
 describe('GPT API admin failure diagnostics', () => {
     it('uses the Open provider reason as Telegram detail while keeping diagnostic metadata', () => {

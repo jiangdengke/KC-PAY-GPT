@@ -1,7 +1,7 @@
 'use strict';
 
-const registry = require('../plan-registry');
-const subscription = require('../subscription-check');
+const registry = require('../src/config/plan-registry');
+const subscription = require('../src/services/subscription-check');
 
 describe('four-tier plan registry', () => {
     it('defines exactly the canonical write tiers and keeps legacy values readable only', () => {

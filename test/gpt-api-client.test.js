@@ -1,7 +1,7 @@
 'use strict';
 
 const axios = require('axios');
-const client = require('../gpt-api-client');
+const client = require('../src/services/gpt-api-client');
 
 function createDesolateOrderInput(overrides = {}) {
     return {

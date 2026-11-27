@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const cfAccess = require('../cf-access');
+const cfAccess = require('../src/security/cf-access');
 
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 const other = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -152,5 +152,22 @@ describe('createAccessGuard', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    it('accepts a valid CF_Authorization cookie when the assertion header is absent', async () => {
+        const fetchCerts = vi.fn(async () => ({ keys: [jwk] }));
+        const guard = guardWith(fetchCerts);
+        const token = sign();
+        const result = { nexted: false, status: null, body: null };
+        const req = {
+            get: (name) => (name.toLowerCase() === 'cookie' ? `foo=bar; CF_Authorization=${encodeURIComponent(token)}; other=1` : undefined)
+        };
+        const res = {
+            status(code) { result.status = code; return this; },
+            json(body) { result.body = body; return this; }
+        };
+        await guard(req, res, () => { result.nexted = true; });
+        expect(result.nexted).toBe(true);
+        expect(req.cfAccess).toEqual({ email: 'me@example.com' });
     });
 });

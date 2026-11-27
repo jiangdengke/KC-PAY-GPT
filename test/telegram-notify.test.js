@@ -1,7 +1,7 @@
 'use strict';
 
-const { formatTelegramMessage } = require('../telegram-notify');
-const { extractEmailFromSession } = require('../session-auth');
+const { formatTelegramMessage } = require('../src/services/telegram-notify');
+const { extractEmailFromSession } = require('../src/utils/session-parser');
 
 describe('telegram task notifications', () => {
     it('includes the account and selected plan in task messages', () => {
