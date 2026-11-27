@@ -68,14 +68,10 @@
         const state = { challengeToken: '', methods: [], selectedMethod: '' };
         let adminPanelPath = '/admin';
 
-        async function loadAdminPaths() {
-            try {
-                const response = await fetch('/api/public/admin-paths');
-                const data = await response.json();
-                if (data.success) {
-                    adminPanelPath = data.panelUrl || `/${data.panelPath || 'admin'}`;
-                }
-            } catch (_) { }
+        function resolvePanelUrl(data) {
+            if (data?.panelUrl) return data.panelUrl;
+            if (data?.panelPath) return `/${String(data.panelPath).replace(/^\/+/, '')}`;
+            return adminPanelPath;
         }
 
         function goToAdminPanel() {
@@ -173,7 +169,8 @@
                 if (data.refreshed && data.token) {
                     localStorage.setItem(TOKEN_KEY, data.token);
                 }
-                location.href = adminPanelPath;
+                adminPanelPath = resolvePanelUrl(data);
+                goToAdminPanel();
             } catch (_) {
                 localStorage.removeItem(TOKEN_KEY);
                 localStorage.removeItem(SECONDARY_TOKEN_KEY);
@@ -215,7 +212,7 @@
                 if (data.token) {
                     localStorage.setItem(TOKEN_KEY, data.token);
                     localStorage.removeItem(SECONDARY_TOKEN_KEY);
-                    adminPanelPath = data.panelPath || adminPanelPath;
+                    adminPanelPath = resolvePanelUrl(data);
                     goToAdminPanel();
                 }
             } catch (_) {
@@ -278,7 +275,7 @@
                 }
                 localStorage.setItem(TOKEN_KEY, data.token);
                 localStorage.removeItem(SECONDARY_TOKEN_KEY);
-                adminPanelPath = data.panelPath || adminPanelPath;
+                adminPanelPath = resolvePanelUrl(data);
                 goToAdminPanel();
             } catch (_) {
                 setMessage('验证请求失败');
@@ -294,7 +291,7 @@
         document.getElementById('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
         document.getElementById('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') verify2fa(); });
 
-        loadAdminPaths().then(() => verifyExistingToken());
+        verifyExistingToken();
     </script>
 </body>
 </html>

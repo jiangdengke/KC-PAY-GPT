@@ -41,8 +41,6 @@
             </div>
         </header>
 
-        <p id="paymentRegionHint" class="region-hint">当前账单地区：菲律宾，结算币种：PHP</p>
-
         <main class="recharge-card">
             <div class="card-head">
                 <div>
@@ -1041,20 +1039,7 @@
             statusMsg.style.display = 'block';
         }
 
-        async function loadPaymentRegionHint() {
-            const hint = document.getElementById('paymentRegionHint');
-            if (!hint) return;
-            try {
-                const res = await fetch('/api/public/payment-region');
-                const data = await res.json();
-                if (data.success) {
-                    hint.textContent = `当前账单地区：${data.label || data.region}，结算币种：${data.currency || 'USD'}`;
-                }
-            } catch (_) { }
-        }
-
         updateFlowUI(1, 'pending');
-        loadPaymentRegionHint();
     </script>
 </body>
 

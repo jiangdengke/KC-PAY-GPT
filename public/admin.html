@@ -4,11 +4,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!--__ADMIN_META__-->
     <title>KC GPT自动充值系统 | 控制台</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="stylesheet" href="/admin.css?v=20261007-orbitcard-usage-filters">
+    <link rel="stylesheet" href="/admin/assets/admin.css?v=20261127-refactor">
 </head>
 
 <body>
@@ -77,10 +78,6 @@
                 <i data-lucide="globe"></i>
                 <span>代理池</span>
             </div>
-            <div class="nav-item" onclick="switchPage('tax_addresses', this)" data-page="tax_addresses">
-                <i data-lucide="map-pin"></i>
-                <span>免税地址</span>
-            </div>
 
             <div class="nav-group" id="nav_group_business">
                 <div class="nav-item nav-group-toggle" onclick="toggleNavGroup('nav_group_business', event)">
@@ -89,9 +86,6 @@
                     <i data-lucide="chevron-down" class="nav-chevron"></i>
                 </div>
                 <div class="nav-subitems">
-                    <div class="nav-item nav-subitem" onclick="switchPage('checkout_debug', this)" data-page="checkout_debug">
-                        <span>支付链接调试</span>
-                    </div>
                     <div class="nav-item nav-subitem" onclick="switchPage('cards', this)" data-page="cards">
                         <span>银行卡池</span>
                     </div>
@@ -139,7 +133,7 @@
         <div id="dashboard" class="page-view active">
             <div class="page-header">
                 <h1>概览中心</h1>
-                <p>实时监控任务执行状态与资源分配情况</p>
+                <p>实时监控第三方代充任务执行状态与资源分配情况</p>
             </div>
 
             <div class="stat-grid">
@@ -239,31 +233,21 @@
                 </div>
                 <div class="stat-card">
                     <div class="stat-header">
-                        <span class="stat-label">银行卡数量</span>
+                        <span class="stat-label">Orbitcard 可复用卡</span>
                         <div class="stat-icon" style="background: rgba(168, 85, 247, 0.1); color: #c084fc;">
                             <i data-lucide="credit-card"></i>
                         </div>
                     </div>
-                    <div id="stat_card_total" class="stat-value" style="color: #d8b4fe;">0</div>
+                    <div id="stat_orbitcard_reusable" class="stat-value" style="color: #d8b4fe;">0</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-header">
-                        <span class="stat-label">成功收款</span>
-                        <div class="stat-icon" style="background: rgba(16, 185, 129, 0.1); color: var(--success);">
+                        <span class="stat-label">本地卡池数量</span>
+                        <div class="stat-icon" style="background: rgba(45, 212, 191, 0.1); color: #5eead4;">
                             <i data-lucide="wallet"></i>
                         </div>
                     </div>
-                    <div id="stat_billing_revenue" class="stat-value" style="color: var(--success); font-size: 28px;">0</div>
-                    <div id="stat_billing_revenue_meta" style="font-size: 13px; color: var(--text-dim);">成功账单累计</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <span class="stat-label">成功支付笔数</span>
-                        <div class="stat-icon" style="background: rgba(45, 212, 191, 0.1); color: #5eead4;">
-                            <i data-lucide="receipt"></i>
-                        </div>
-                    </div>
-                    <div id="stat_billing_paid_count" class="stat-value" style="color: #99f6e4;">0</div>
+                    <div id="stat_card_total" class="stat-value" style="color: #99f6e4;">0</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-header">
@@ -276,25 +260,23 @@
                     <div id="stat_foreground_slots_meta" style="font-size: 13px; color: var(--text-dim);">前台占用/最大前台并发</div>
                 </div>
             </div>
-
         </div>
 
-        <!-- 配置 -->
+        <!-- 系统配置 -->
         <div id="config" class="page-view">
             <div class="page-header">
                 <h1>系统配置</h1>
-                <p>自助开通并发与维护模式（保存后立即生效，无需重启服务）。Telegram / hCaptcha 需分别点各自区域的「保存」按钮；配置写入 MySQL，重启容器不会丢失（请勿使用 <code>docker compose down -v</code>）。</p>
+                <p>第三方代充 API、并发与维护模式及安全设置（保存后立即生效，配置持久化于 MySQL）。</p>
             </div>
 
             <!-- 第三方代充 API 设置 -->
             <div class="panel">
                 <h2 class="panel-title">第三方代充 API（协议对接）</h2>
                 <p style="font-size: 13px; color: var(--text-dim); margin-top: 10px;">
-                    開啟後，前台兌換開通將呼叫第三方 GPT 代充平台提交訂單並輪詢狀態；將不再使用本地開通流程。
-                    銀行卡與代理會從「銀行卡池」「代理池」自動取得並隨訂單提交。
+                    前台兑换开通统一调用第三方 GPT 代充平台提交订单并轮询状态。卡源可选择 Orbitcard 卡台自动开卡复用或本地银行卡池。
                 </p>
                 <div class="toggle-field" style="margin-top: 18px;">
-                    <div class="toggle-label"><span>啟用第三方代充 API（開啟後不再使用本地開通）</span></div>
+                    <div class="toggle-label"><span>启用第三方代充 API</span></div>
                     <label class="toggle-control">
                         <input type="checkbox" id="gpt_api_enabled" class="toggle-input">
                         <span class="toggle-switch"></span>
@@ -325,7 +307,7 @@
                     <label for="gpt_api_payment_region">Desolate 支付地区（可选）</label>
                     <input type="text" id="gpt_api_payment_region" class="asset-input" placeholder="留空由供应商选择默认地区" maxlength="2" pattern="[A-Za-z]{2}" autocomplete="off">
                     <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
-                        仅在明确配置时发送两位大写地区代码；留空会省略 paymentRegion，由 Desolate 按文档默认地区选择。不会从国家设置自动推导。
+                        仅在明确配置时发送两位大写地区代码；留空会省略 paymentRegion，由 Desolate 按文档默认地区选择。
                     </p>
                 </div>
                 <div class="form-group" style="margin-top: 16px;">
@@ -335,7 +317,7 @@
                         <option value="orbitcard">Orbitcard 卡台</option>
                     </select>
                     <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
-                        第三方代充每笔订单从这里选择卡源；本地卡池沿用现有卡片，Orbitcard 会实时查询产品目录并创建一张新卡。
+                        第三方代充每笔订单从这里选择卡源；本地卡池沿用现有卡片，Orbitcard 会优先复用可用卡，不足时自动查询产品目录开新卡。
                     </p>
                 </div>
                 <div id="orbitcard_config_fields" style="display:none;">
@@ -359,14 +341,14 @@
                 </p>
                 <div id="gpt_api_status" style="margin-top: 18px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary);">
                     <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
-                        <strong>供應商帳戶狀態</strong>
-                        <button type="button" class="btn btn-secondary" onclick="refreshGptApiStatus()"><i data-lucide="refresh-cw"></i>重新整理</button>
+                        <strong>供应商账户状态</strong>
+                        <button type="button" class="btn btn-secondary" onclick="refreshGptApiStatus()"><i data-lucide="refresh-cw"></i>刷新</button>
                     </div>
                     <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-top:14px;">
-                        <div><div style="font-size:12px;color:var(--text-dim)">可用積分</div><div id="gpt_api_credits" style="font-size:22px;font-weight:700">—</div></div>
-                        <div><div style="font-size:12px;color:var(--text-dim)">USD 餘額</div><div id="gpt_api_balance_usd" style="font-size:22px;font-weight:700">—</div></div>
+                        <div><div style="font-size:12px;color:var(--text-dim)">可用积分</div><div id="gpt_api_credits" style="font-size:22px;font-weight:700">—</div></div>
+                        <div><div style="font-size:12px;color:var(--text-dim)">USD 余额</div><div id="gpt_api_balance_usd" style="font-size:22px;font-weight:700">—</div></div>
                         <div><div style="font-size:12px;color:var(--text-dim)">可用 GPT 套餐</div><div id="gpt_api_plans" style="font-size:13px;margin-top:5px">—</div></div>
-                        <div><div style="font-size:12px;color:var(--text-dim)">積分套餐</div><div id="gpt_api_credit_plans" style="font-size:13px;margin-top:5px">—</div></div>
+                        <div><div style="font-size:12px;color:var(--text-dim)">积分套餐</div><div id="gpt_api_credit_plans" style="font-size:13px;margin-top:5px">—</div></div>
                     </div>
                     <div id="gpt_api_status_hint" style="font-size:12px;color:var(--text-dim); margin-top:10px"></div>
                 </div>
@@ -383,7 +365,6 @@
             </div>
 
             <div class="config-grid">
-                <!-- 左：并发与维护 -->
                 <div class="panel">
                     <h2 class="panel-title">并发与维护</h2>
                     <div class="form-group" style="margin-top: 24px;">
@@ -407,7 +388,7 @@
             </div>
 
             <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end;">
-                <button class="btn btn-primary" onclick="saveAllConfigs()">
+                <button class="btn btn-primary" onclick="saveAllConfigs(event)">
                     <i data-lucide="save"></i>
                     保存全局配置
                 </button>
@@ -416,7 +397,7 @@
             <div class="panel" style="margin-top: 24px;">
                 <h2 class="panel-title">Telegram 通知</h2>
                 <p style="font-size: 13px; color: var(--text-dim); margin-top: 8px;">
-                    开通成功、失败或卡池耗尽时可推送到管理员私聊和/或群组。消息包含邮箱与 CDK。
+                    开通成功、失败、卡池耗尽或后台安全告警时推送到管理员私聊和/或群组。
                 </p>
                 <div class="form-group" style="margin-top: 20px;">
                     <label>Bot Token</label>
@@ -485,106 +466,6 @@
             </div>
 
             <div class="panel" style="margin-top: 24px;">
-                <h2 class="panel-title">hCaptcha 自动求解</h2>
-                <p style="font-size: 13px; color: var(--text-dim); margin-top: 8px;">
-                    支付时遇到 Stripe「One more step」人机验证：优先使用打码平台（createTask/getTaskResult）兜底 passive checkbox；
-                    图片题可继续尝试内置视觉求解器（VLM + CLIP/OpenCV）。
-                </p>
-                <div style="margin-top: 20px; display: grid; gap: 14px;">
-                    <div class="toggle-field">
-                        <div class="toggle-label"><span>启用自动求解</span></div>
-                        <label class="toggle-control">
-                            <input type="checkbox" id="hcaptcha_enabled" class="toggle-input" checked>
-                            <span class="toggle-switch"></span>
-                        </label>
-                    </div>
-                    <div class="toggle-field">
-                        <div class="toggle-label">
-                            <span>禁用 VLM（仅用 CLIP/OpenCV）</span>
-                            <p style="font-size: 12px; color: var(--text-dim); margin-top: 4px;">无 API Key 或想省费用时可开启，成功率较低</p>
-                        </div>
-                        <label class="toggle-control">
-                            <input type="checkbox" id="hcaptcha_no_vlm" class="toggle-input">
-                            <span class="toggle-switch"></span>
-                        </label>
-                    </div>
-                </div>
-                <div class="form-group" style="margin-top: 20px;">
-                    <label>打码平台 API Key（推荐）</label>
-                    <input type="password" id="hcaptcha_captcha_platform_api_key" class="asset-input" placeholder="Capsolver / 2Captcha clientKey" autocomplete="off">
-                    <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px;">
-                        与 <a href="https://anti-captcha.com/zh/apidoc/methods/createTask" target="_blank" rel="noopener">Anti-Captcha API</a>
-                        相同协议（createTask / getTaskResult / getBalance）。程序请求
-                        <code>https://api.anti-captcha.com</code>，不是官网首页。
-                        填错 Capsolver 地址时会根据 Key 自动纠正。
-                    </p>
-                </div>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 16px;">
-                    <div class="form-group">
-                        <label>打码平台 API URL</label>
-                        <input type="text" id="hcaptcha_captcha_platform_api_url" class="asset-input" placeholder="https://api.anti-captcha.com">
-                    </div>
-                    <div class="form-group">
-                        <label>打码平台超时（秒）</label>
-                        <input type="number" id="hcaptcha_captcha_platform_timeout" min="30" step="10" class="asset-input" value="180">
-                    </div>
-                </div>
-                <div class="form-group" style="margin-top: 20px;">
-                    <label>VLM API Key（可选）</label>
-                    <input type="password" id="hcaptcha_vlm_api_key" class="asset-input" placeholder="sk-..." autocomplete="off">
-                </div>
-                <div class="form-group" style="margin-top: 16px;">
-                    <label>VLM Base URL</label>
-                    <input type="text" id="hcaptcha_vlm_base_url" class="asset-input" placeholder="https://api.openai.com/v1">
-                </div>
-                <div class="form-group" style="margin-top: 16px;">
-                    <label>VLM 模型</label>
-                    <input type="text" id="hcaptcha_vlm_model" class="asset-input" placeholder="gpt-5.5">
-                </div>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-top: 16px;">
-                    <div class="form-group">
-                        <label>VLM 超时（秒）</label>
-                        <input type="number" id="hcaptcha_vlm_timeout" min="10" step="1" class="asset-input" value="45">
-                    </div>
-                    <div class="form-group">
-                        <label>求解总超时（秒）</label>
-                        <input type="number" id="hcaptcha_solver_timeout" min="60" step="10" class="asset-input" value="240">
-                    </div>
-                    <div class="form-group">
-                        <label>CDP 调试端口</label>
-                        <input type="number" id="hcaptcha_cdp_port" min="1024" max="65535" step="1" class="asset-input" value="9222">
-                    </div>
-                </div>
-                <p id="hcaptcha_status_hint" style="font-size: 13px; color: var(--text-dim); margin-top: 14px;"></p>
-                <div id="hcaptcha_log_panel" style="margin-top: 16px; display: none;">
-                    <label style="font-size: 13px; color: var(--text-dim);">验证 / Solver 日志</label>
-                    <pre id="hcaptcha_log_output" style="margin-top: 8px; max-height: 220px; overflow: auto; background: rgba(0,0,0,0.35); padding: 12px; border-radius: 8px; font-size: 12px; line-height: 1.5; white-space: pre-wrap;"></pre>
-                </div>
-                <div style="margin-top: 24px; display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
-                    <button type="button" class="btn btn-secondary" onclick="refreshHcaptchaLogs()">
-                        <i data-lucide="scroll-text"></i>
-                        刷新验证日志
-                    </button>
-                    <button type="button" class="btn btn-secondary" onclick="testHcaptchaSolver()">
-                        <i data-lucide="activity"></i>
-                        检测 Solver 环境
-                    </button>
-                    <button type="button" class="btn btn-secondary" onclick="testHcaptchaVlm()">
-                        <i data-lucide="brain"></i>
-                        测试 VLM 连通性
-                    </button>
-                    <button type="button" class="btn btn-secondary" onclick="testHcaptchaCaptchaPlatform()">
-                        <i data-lucide="shield-check"></i>
-                        测试打码平台
-                    </button>
-                    <button type="button" class="btn btn-primary" onclick="saveHcaptchaConfig()">
-                        <i data-lucide="save"></i>
-                        保存 hCaptcha 配置
-                    </button>
-                </div>
-            </div>
-
-            <div class="panel" style="margin-top: 24px;">
                 <h2 class="panel-title">修改后台密码</h2>
                 <div class="form-group" style="margin-top: 24px;">
                     <label>原密码</label>
@@ -596,7 +477,7 @@
                     <input type="password" id="new_password" placeholder="请输入新密码，至少 6 位" class="asset-input"
                         autocomplete="new-password">
                 </div>
-                <button class="btn btn-primary" style="margin-top: 16px;" onclick="changeAdminPassword()">
+                <button class="btn btn-primary" style="margin-top: 16px;" onclick="changeAdminPassword(event)">
                     <i data-lucide="key-round"></i>
                     修改密码
                 </button>
@@ -656,37 +537,13 @@
                     </div>
                 </div>
             </div>
-
-            <!-- 支付地区设置 -->
-            <div class="panel" style="margin-top: 24px;">
-                <h2 class="panel-title">支付地区设置</h2>
-                <p style="font-size: 13px; color: var(--text-dim); margin-top: 10px;">
-                    选择支付地区后，系统将使用对应的币种进行 Stripe 支付。账单地址请在左侧「免税地址」页面管理。
-                </p>
-                <div style="display: flex; align-items: center; gap: 12px; margin-top: 18px; flex-wrap: wrap;">
-                    <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 180px; max-width: 280px;">
-                        <label style="margin-bottom: 6px;">当前支付地区</label>
-                        <select id="region_selector" class="asset-input">
-                            <option value="PH">菲律宾 (PH) — PHP</option>
-                            <option value="US">美国 (US) — USD</option>
-                            <option value="SG">新加坡 (SG) — SGD</option>
-                            <option value="MY">马来西亚 (MY) — MYR</option>
-                        </select>
-                    </div>
-                    <button class="btn btn-primary" style="margin-top: 20px;" onclick="savePaymentRegion()">
-                        <i data-lucide="save"></i>
-                        保存地区
-                    </button>
-                    <span id="region_current_badge" class="status-badge status-success" style="margin-top: 20px;"></span>
-                </div>
-            </div>
         </div>
 
         <!-- 代理池 -->
         <div id="proxies" class="page-view">
             <div class="page-header">
                 <h1>代理池</h1>
-                <p>管理 Playwright 自动化使用的代理。一行一条 URL，支持 http(s) / socks5；用户名可含 <code>{session}</code> 占位符走 sticky session。每次任务从「启用」的代理中随机抽取。</p>
+                <p>管理代充协议与订阅查询使用的可选代理池。一行一条 URL，支持 http(s) / socks5；用户名可含 <code>{session}</code> 占位符走 sticky session。池为空时默认使用平台代理或直连。</p>
             </div>
 
             <div class="panel" style="margin-bottom: 24px;">
@@ -750,384 +607,210 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             </div>
         </div>
 
-        <!-- 免税地址管理 -->
-        <div id="tax_addresses" class="page-view">
-            <div class="page-header">
-                <h1>免税地址</h1>
-                <p>管理美国免税州账单地址池（Oregon / Delaware / Montana / New Hampshire / Alaska）。支付时随机选取；州名使用完整英文（如 Oregon）以匹配结账下拉框。</p>
-            </div>
-
-            <div class="panel">
-                <div class="panel-header">
-                    <h2 class="panel-title">美国免税地址池</h2>
-                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                        <button type="button" class="btn btn-primary" id="btn_generate_us_addresses" onclick="generateRandomUsAddresses()">
-                            <i data-lucide="shuffle"></i>
-                            批量生成（10 条）
-                        </button>
-                        <button type="button" class="btn btn-secondary" onclick="clearUnboundAddresses()" title="删除所有从未支付成功绑定过的地址">
-                            <i data-lucide="eraser"></i>
-                            清空未绑定
-                        </button>
-                        <button class="btn btn-success" onclick="showAddressForm()">
-                            <i data-lucide="plus"></i>
-                            手动新增
-                        </button>
-                    </div>
-                </div>
-                <p style="font-size: 13px; color: var(--text-dim); margin-bottom: 16px;">
-                    支付结账时优先从地址池随机选取；池为空则系统自动即时生成。持卡人姓名由前台自动化随机生成，无需在此配置。
-                </p>
-
-                <!-- 地址表单（新增/编辑） -->
-                <div id="address_form_box" class="import-box" style="margin-bottom: 16px;">
-                    <div class="import-box-header">
-                        <div class="import-box-title" id="address_form_title">新增地址模板</div>
-                        <button type="button" class="btn-delete" onclick="hideAddressForm()">
-                            <i data-lucide="x"></i>
-                        </button>
-                    </div>
-                    <input type="hidden" id="address_edit_id" value="">
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label>街道地址 (line1) <span style="color:var(--error)">*</span></label>
-                            <input type="text" id="addr_line1" class="asset-input" placeholder="182 Highland Ave" maxlength="200">
-                            <span id="addr_line1_err" style="font-size:12px; color:var(--error); display:none;"></span>
-                        </div>
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label>城市 (city) <span style="color:var(--error)">*</span></label>
-                            <input type="text" id="addr_city" class="asset-input" placeholder="Salem" maxlength="100">
-                            <span id="addr_city_err" style="font-size:12px; color:var(--error); display:none;"></span>
-                        </div>
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label>州 (state，完整英文名) <span style="color:var(--error)">*</span></label>
-                            <input type="text" id="addr_state" class="asset-input" placeholder="Oregon" maxlength="100">
-                            <span id="addr_state_err" style="font-size:12px; color:var(--error); display:none;"></span>
-                        </div>
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label>邮编 (postal_code) <span style="color:var(--error)">*</span></label>
-                            <input type="text" id="addr_postal_code" class="asset-input" placeholder="97301" maxlength="20">
-                            <span id="addr_postal_code_err" style="font-size:12px; color:var(--error); display:none;"></span>
-                        </div>
-                        <div class="form-group" style="margin-bottom: 0;">
-                            <label>国家代码 (country) <span style="color:var(--error)">*</span></label>
-                            <input type="text" id="addr_country" class="asset-input" placeholder="US" maxlength="2" style="text-transform: uppercase;" value="US">
-                            <span id="addr_country_err" style="font-size:12px; color:var(--error); display:none;"></span>
-                        </div>
-                    </div>
-                    <div class="import-actions" style="margin-top: 14px;">
-                        <button class="btn btn-success" onclick="hideAddressForm()">取消</button>
-                        <button class="btn btn-primary" onclick="submitAddressForm()">
-                            <i data-lucide="check"></i>
-                            <span id="address_form_submit_label">保存</span>
-                        </button>
-                    </div>
-                </div>
-
-                <div class="table-container">
-                    <table class="admin-action-table address-pool-table">
-                        <thead>
-                            <tr>
-                                <th>街道地址</th>
-                                <th width="120px">城市</th>
-                                <th width="140px">州</th>
-                                <th width="100px">邮编</th>
-                                <th width="80px">国家</th>
-                                <th width="90px" style="text-align:center">状态</th>
-                                <th width="120px" style="text-align:center">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="address_list_body"></tbody>
-                    </table>
-                </div>
-                <p id="address_empty_hint" style="display:none; margin-top:16px; color: var(--text-dim); text-align:center;">地址池为空，请点击「批量生成」或「手动新增」。</p>
-            </div>
-        </div>
-
-        <!-- 支付链接调试 -->
-        <div id="checkout_debug" class="page-view">
-            <div class="page-header">
-                <h1>支付链接调试</h1>
-                <p>启动 Playwright 浏览器，注入 Session 后调用 Checkout API 生成支付链接（不执行填卡/订阅，正式开通请走前台 CDK）</p>
-            </div>
-
-            <div class="panel">
-                <h2 class="panel-title">生成参数</h2>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 16px;">
-                    <div class="form-group" style="margin-bottom: 0;">
-                        <label style="margin-bottom: 6px;">套餐类型</label>
-                        <select id="checkout_plan_type" class="asset-input" onchange="syncCheckoutPlanName()">
-                            <option value="plus">Plus — chatgptplusplan</option>
-                            <option value="pro100">Pro 100 — 需配置 plan_name</option>
-                            <option value="pro200">Pro 200 — 需配置 plan_name</option>
-                            <option value="pro500">Pro 500 — 需配置 plan_name</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="margin-bottom: 0;">
-                        <label style="margin-bottom: 6px;">plan_name（自动跟随套餐，可手动改）</label>
-                        <input type="text" id="checkout_plan_name" class="asset-input" placeholder="chatgptplusplan" autocomplete="off">
-                    </div>
-                    <div class="form-group" style="margin-bottom: 0;">
-                        <label style="margin-bottom: 6px;">支付地区</label>
-                        <select id="checkout_region_selector" class="asset-input" onchange="onCheckoutRegionChange()">
-                            <option value="PH">菲律宾 (PH) — PHP</option>
-                            <option value="US">美国 (US) — USD</option>
-                            <option value="SG">新加坡 (SG) — SGD</option>
-                            <option value="MY">马来西亚 (MY) — MYR</option>
-                        </select>
-                    </div>
-                </div>
-                <p id="checkout_region_hint" style="font-size: 12px; color: var(--text-dim); margin-top: 10px;"></p>
-
-                <div class="form-group" style="margin-top: 16px; margin-bottom: 0;">
-                    <label style="margin-bottom: 6px;">Session JSON</label>
-                    <textarea id="checkout_session_input" class="asset-input" rows="8" placeholder='粘贴完整 Session JSON（从 chatgpt.com/api/auth/session 复制）' style="font-family: ui-monospace, monospace; font-size: 12px; resize: vertical;"></textarea>
-                </div>
-
-                <div style="display: flex; align-items: center; gap: 12px; margin-top: 16px; flex-wrap: wrap;">
-                    <button class="btn btn-primary" onclick="startCheckoutDebug()" id="checkout_generate_btn">
-                        <i data-lucide="play"></i>
-                        启动浏览器调试
-                    </button>
-                    <button type="button" class="btn btn-secondary" onclick="clearCheckoutDebugForm()">
-                        清空
-                    </button>
-                    <span id="checkout_job_hint" style="font-size: 12px; color: var(--text-dim);"></span>
-                </div>
-            </div>
-
-            <div id="checkout_result_box" class="panel" style="display: none; margin-top: 24px;">
-                <h2 class="panel-title">任务状态</h2>
-                <div id="checkout_result_status" style="font-weight: 600; margin-top: 12px; margin-bottom: 8px;"></div>
-                <div id="checkout_result_email" style="font-size: 13px; color: var(--text-dim); margin-bottom: 8px;"></div>
-                <div id="checkout_result_url_wrap" style="margin-bottom: 12px; word-break: break-all;"></div>
-                <div id="checkout_screenshot_wrap" style="margin-bottom: 12px;"></div>
-            </div>
-
-            <div class="panel" style="margin-top: 24px;">
-                <div class="runtime-log-toolbar">
-                    <h2 class="panel-title" style="margin: 0;">运行日志</h2>
-                    <label class="runtime-log-toggle">
-                        <input type="checkbox" id="checkout_log_autoscroll" checked>
-                        <span>自动滚动</span>
-                    </label>
-                    <button type="button" class="btn btn-primary" onclick="refreshCheckoutDebugLogs()">
-                        <i data-lucide="refresh-cw"></i> 刷新
-                    </button>
-                    <button type="button" class="btn btn-secondary" onclick="switchPage('runtime_logs', document.querySelector('.nav-item[onclick*=\'runtime_logs\']'))">
-                        打开完整运行日志
-                    </button>
-                </div>
-                <p style="font-size: 12px; color: var(--text-dim); margin: 8px 0 12px;">仅显示当前调试任务的 Playwright 子进程输出；失败时会自动保存截图。</p>
-                <div class="runtime-log-pre-wrap">
-                    <pre id="checkout_debug_log_pre" class="runtime-log-pre" spellcheck="false"></pre>
-                </div>
-            </div>
-        </div>
-
         <!-- 银行卡池 -->
         <div id="cards" class="page-view">
             <div class="page-header">
                 <h1>银行卡池管理</h1>
-                <p>管理 Stripe 支付使用的银行卡资源（通过 API 导入与维护）</p>
+                <p>管理 Orbitcard 卡台记录、开卡策略及备用本地银行卡池</p>
             </div>
 
             <div class="admin-switcher" data-switcher="card-assets">
                 <div class="admin-switcher-tabs" role="tablist" aria-label="卡池类型">
-                    <button type="button" class="admin-switcher-tab is-active" role="tab" aria-selected="true" data-switcher-tab="local" onclick="switchAdminSection('card-assets', 'local')">银行卡列表</button>
-                    <button type="button" class="admin-switcher-tab" role="tab" aria-selected="false" data-switcher-tab="orbitcard" onclick="switchAdminSection('card-assets', 'orbitcard')">Orbitcard 用卡记录</button>
+                    <button type="button" class="admin-switcher-tab is-active" role="tab" aria-selected="true" data-switcher-tab="orbitcard" onclick="switchAdminSection('card-assets', 'orbitcard')">Orbitcard 用卡记录</button>
                     <button type="button" class="admin-switcher-tab" role="tab" aria-selected="false" data-switcher-tab="orbitcard-strategy" onclick="switchAdminSection('card-assets', 'orbitcard-strategy')">Orbitcard 开卡策略</button>
-                </div>
-            <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="local">
-                <div class="panel-header">
-                    <h2 class="panel-title">银行卡列表</h2>
-                    <button class="btn btn-success" onclick="toggleCardPoolImportBox()">
-                        <i data-lucide="upload"></i>
-                        批量导入
-                    </button>
+                    <button type="button" class="admin-switcher-tab" role="tab" aria-selected="false" data-switcher-tab="local" onclick="switchAdminSection('card-assets', 'local')">本地卡池</button>
                 </div>
 
-                <div id="card_pool_import_box" class="import-box">
-                    <div class="import-box-header">
-                        <div class="import-box-title">批量导入银行卡</div>
+                <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="orbitcard">
+                    <div class="panel-header">
+                        <h2 class="panel-title">Orbitcard 用卡记录</h2>
+                        <div class="table-toolbar-actions">
+                            <button type="button" class="btn btn-primary" id="orbitcard_sync_btn" onclick="syncOrbitcardCards()">
+                                <i data-lucide="cloud-download"></i>
+                                同步卡台卡片
+                            </button>
+                            <button type="button" class="btn btn-secondary" onclick="loadOrbitcardUsage(true, true)">
+                                <i data-lucide="refresh-cw"></i>
+                                刷新记录
+                            </button>
+                        </div>
                     </div>
-                    <div class="import-box-tip">
-                        每行一条，格式：<code>卡号|有效期|CVC|持卡人</code>（持卡人可选）。有效期支持 <code>MM/YY</code> 或 <code>MMYY</code>。
+                    <p id="orbitcard_usage_hint" style="font-size:13px; color:var(--text-dim); margin:0 0 12px;">
+                        开卡优先渠道 3 Mastercard（BIN 55565979），再使用渠道 3 Visa 4004；使用渠道 1 时仅创建 Mastercard 5556 卡头。4002 系列暂不新开也不复用。同步卡台卡片后，请在每张卡的“操作”列手动绑定套餐；可同时填写单卡使用上限（1-20），留空则使用该套餐默认上限。
+                    </p>
+                    <form id="orbitcard_usage_filters" class="orbitcard-usage-filters" onsubmit="applyOrbitcardUsageFilters(event)">
+                        <input id="orbitcard_usage_keyword" class="asset-input" type="search" maxlength="80" placeholder="搜索卡 ID / 后四位 / 产品编码 / 账号邮箱 / 订单号" aria-label="搜索 Orbitcard 用卡记录">
+                        <select id="orbitcard_usage_plan" class="asset-input" aria-label="按套餐筛选">
+                            <option value="">全部套餐</option>
+                            <option value="plus">Plus</option>
+                            <option value="pro100">Pro 100</option>
+                            <option value="pro200">Pro 200</option>
+                            <option value="pro500">Pro 500</option>
+                            <option value="pro_5x">Pro 5x（历史）</option>
+                            <option value="pro_20x">Pro 20x（历史）</option>
+                        </select>
+                        <select id="orbitcard_usage_card_status" class="asset-input" aria-label="按卡片状态筛选">
+                            <option value="">全部卡片状态</option>
+                            <option value="reusable">可复用</option>
+                            <option value="in_use">使用中</option>
+                            <option value="unassigned">未绑定套餐</option>
+                            <option value="retired">已退役</option>
+                            <option value="provider_deleted">上游已删除</option>
+                            <option value="cancelled">已取消</option>
+                        </select>
+                        <select id="orbitcard_usage_recharge_status" class="asset-input" aria-label="按充值结果筛选">
+                            <option value="">全部充值状态</option>
+                            <option value="success">成功</option>
+                            <option value="processing">处理中</option>
+                            <option value="failed">失败</option>
+                        </select>
+                        <div class="orbitcard-usage-filter-actions">
+                            <button type="submit" class="btn btn-primary">查询</button>
+                            <button type="button" class="btn btn-secondary" onclick="resetOrbitcardUsageFilters()">重置</button>
+                        </div>
+                    </form>
+                    <div class="table-container">
+                        <table class="admin-action-table orbitcard-usage-table">
+                            <thead>
+                                <tr>
+                                    <th width="110px">卡 ID</th>
+                                    <th width="260px">卡片资料</th>
+                                    <th width="90px">后四位</th>
+                                    <th width="100px">套餐</th>
+                                    <th width="110px" style="text-align:center">已用/上限</th>
+                                    <th width="110px">首充金额</th>
+                                    <th width="120px">当前余额</th>
+                                    <th width="100px">状态</th>
+                                    <th width="300px">充值账号与订单</th>
+                                    <th width="150px">最近使用</th>
+                                    <th width="100px" style="text-align:center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="orbitcard_usage_body"></tbody>
+                        </table>
                     </div>
-                    <textarea id="card_pool_import_text" class="import-textarea"
-                        placeholder="5349336392059744|04/31|738|John Doe&#10;5349336383247282|04/31|937"></textarea>
-                    <p id="card_pool_import_result" style="font-size: 13px; color: var(--text-dim); margin-top: 10px;"></p>
-                    <div class="import-actions">
-                        <button id="card_pool_import_btn" class="btn btn-success" onclick="importCardPool()">
-                            <i data-lucide="check-check"></i>
-                            解析并导入
-                        </button>
-                    </div>
+                    <div id="orbitcard_usage_pagination" class="table-footer"></div>
                 </div>
 
-                <div class="table-container">
-                    <table class="admin-action-table card-pool-table">
-                        <thead>
-                            <tr>
-                                <th width="200px">卡号</th>
-                                <th width="90px">有效期</th>
-                                <th width="70px">CVC</th>
-                                <th width="100px">导入持卡人</th>
-                                <th width="110px">支付姓名</th>
-                                <th>绑定地址</th>
-                                <th width="90px" style="text-align:center">状态</th>
-                                <th width="80px" style="text-align:center">次数</th>
-                                <th width="140px" style="text-align:center">最近使用</th>
-                                <th width="80px" style="text-align:center">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="card_pool_list_body"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="orbitcard" hidden>
-                <div class="panel-header">
-                    <h2 class="panel-title">Orbitcard 用卡记录</h2>
-                    <div class="table-toolbar-actions">
-                        <button type="button" class="btn btn-primary" id="orbitcard_sync_btn" onclick="syncOrbitcardCards()">
-                            <i data-lucide="cloud-download"></i>
-                            同步卡台卡片
-                        </button>
-                        <button type="button" class="btn btn-secondary" onclick="loadOrbitcardUsage(true, true)">
+                <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="orbitcard-strategy" hidden>
+                    <div class="panel-header">
+                        <div>
+                            <h2 class="panel-title">Orbitcard 开卡策略</h2>
+                            <p style="font-size:13px; color:var(--text-dim); margin:8px 0 0;">
+                                指定后续新开卡持续使用的产品；已有可复用卡时仍优先复用，不会重复开卡。
+                            </p>
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="loadOrbitcardProductStrategy(true)">
                             <i data-lucide="refresh-cw"></i>
-                            刷新记录
+                            刷新上游库存
                         </button>
                     </div>
-                </div>
-                <p id="orbitcard_usage_hint" style="font-size:13px; color:var(--text-dim); margin:0 0 12px;">
-                    开卡优先渠道 3 Mastercard（BIN 55565979），再使用渠道 3 Visa 4004；使用渠道 1 时仅创建 Mastercard 5556 卡头。4002 系列暂不新开也不复用。同步卡台卡片后，请在每张卡的“操作”列手动绑定套餐；可同时填写单卡使用上限（1-20），留空则使用该套餐默认上限。绑定后，卡片会按单卡上限参与自动选卡。点击“刷新记录”会查询余额并对照 Orbitcard 卡列表；上游列表中缺失的卡会标记为“上游已删除”，失败卡在确认未扣款后可手动恢复。
-                </p>
-                <form id="orbitcard_usage_filters" class="orbitcard-usage-filters" onsubmit="applyOrbitcardUsageFilters(event)">
-                    <input id="orbitcard_usage_keyword" class="asset-input" type="search" maxlength="80" placeholder="搜索卡 ID / 后四位 / 产品编码 / 账号邮箱 / 订单号" aria-label="搜索 Orbitcard 用卡记录">
-                    <select id="orbitcard_usage_plan" class="asset-input" aria-label="按套餐筛选">
-                        <option value="">全部套餐</option>
-                        <option value="plus">Plus</option>
-                        <option value="pro100">Pro 100</option>
-                        <option value="pro200">Pro 200</option>
-                        <option value="pro500">Pro 500</option>
-                        <option value="pro_5x">Pro 5x（历史）</option>
-                        <option value="pro_20x">Pro 20x（历史）</option>
-                    </select>
-                    <select id="orbitcard_usage_card_status" class="asset-input" aria-label="按卡片状态筛选">
-                        <option value="">全部卡片状态</option>
-                        <option value="reusable">可复用</option>
-                        <option value="in_use">使用中</option>
-                        <option value="unassigned">未绑定套餐</option>
-                        <option value="retired">已退役</option>
-                        <option value="provider_deleted">上游已删除</option>
-                        <option value="cancelled">已取消</option>
-                    </select>
-                    <select id="orbitcard_usage_recharge_status" class="asset-input" aria-label="按充值结果筛选">
-                        <option value="">全部充值状态</option>
-                        <option value="success">成功</option>
-                        <option value="processing">处理中</option>
-                        <option value="failed">失败</option>
-                    </select>
-                    <div class="orbitcard-usage-filter-actions">
-                        <button type="submit" class="btn btn-primary">查询</button>
-                        <button type="button" class="btn btn-secondary" onclick="resetOrbitcardUsageFilters()">重置</button>
-                    </div>
-                </form>
-                <div class="table-container">
-                    <table class="admin-action-table orbitcard-usage-table">
-                        <thead>
-                            <tr>
-                                <th width="110px">卡 ID</th>
-                                <th width="260px">卡片资料</th>
-                                <th width="90px">后四位</th>
-                                <th width="100px">套餐</th>
-                                <th width="110px" style="text-align:center">已用/上限</th>
-                                <th width="110px">首充金额</th>
-                                <th width="120px">当前余额</th>
-                                <th width="100px">状态</th>
-                                <th width="300px">充值账号与订单</th>
-                                <th width="150px">最近使用</th>
-                                <th width="100px" style="text-align:center">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="orbitcard_usage_body"></tbody>
-                    </table>
-                </div>
-                <div id="orbitcard_usage_pagination" class="table-footer"></div>
-            </div>
-
-            <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="orbitcard-strategy" hidden>
-                <div class="panel-header">
-                    <div>
-                        <h2 class="panel-title">Orbitcard 开卡策略</h2>
-                        <p style="font-size:13px; color:var(--text-dim); margin:8px 0 0;">
-                            指定后续新开卡持续使用的产品；已有可复用卡时仍优先复用，不会重复开卡。
+                    <div class="form-group" style="margin-top:18px; max-width:820px;">
+                        <label for="orbitcard_strategy_product_code">后续新开卡产品</label>
+                        <select id="orbitcard_strategy_product_code" class="asset-input" onchange="renderOrbitcardStrategyDetails()">
+                            <option value="">自动按优先级选择</option>
+                        </select>
+                        <p id="orbitcard_strategy_inventory_hint" style="font-size:12px; color:var(--text-dim); margin-top:7px;">
+                            打开此页后读取上游实时产品目录。
                         </p>
                     </div>
-                    <button type="button" class="btn btn-secondary" onclick="loadOrbitcardProductStrategy(true)">
-                        <i data-lucide="refresh-cw"></i>
-                        刷新上游库存
-                    </button>
-                </div>
-                <div class="form-group" style="margin-top:18px; max-width:820px;">
-                    <label for="orbitcard_strategy_product_code">后续新开卡产品</label>
-                    <select id="orbitcard_strategy_product_code" class="asset-input" onchange="renderOrbitcardStrategyDetails()">
-                        <option value="">自动按优先级选择</option>
-                    </select>
-                    <p id="orbitcard_strategy_inventory_hint" style="font-size:12px; color:var(--text-dim); margin-top:7px;">
-                        打开此页后读取上游实时产品目录。
-                    </p>
-                </div>
-                <div style="margin-top:18px; max-width:820px; padding:16px; border:1px solid var(--border); border-radius:8px; background:var(--bg-secondary);">
-                    <div style="font-weight:700;">一卡几冲</div>
-                    <p style="font-size:12px; color:var(--text-dim); margin:6px 0 14px;">
-                        设置后对后续新开的卡生效；已有卡继续按卡片记录中的上限执行。范围 1-20 次。
-                    </p>
-                    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px;">
-                        <label style="font-size:13px; color:var(--text-secondary);">ChatGPT Plus
-                            <input id="orbitcard_reuse_limit_plus" class="asset-input" type="number" min="1" max="20" step="1" value="4" style="margin-top:6px;">
-                            <input id="orbitcard_safety_margin_plus" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
-                        </label>
-                        <label style="font-size:13px; color:var(--text-secondary);">Pro 100
-                            <input id="orbitcard_reuse_limit_pro100" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
-                            <input id="orbitcard_safety_margin_pro100" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
-                        </label>
-                        <label style="font-size:13px; color:var(--text-secondary);">Pro 200
-                            <input id="orbitcard_reuse_limit_pro200" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
-                            <input id="orbitcard_safety_margin_pro200" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
-                        </label>
-                        <label style="font-size:13px; color:var(--text-secondary);">Pro 500
-                            <input id="orbitcard_reuse_limit_pro500" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
-                            <input id="orbitcard_safety_margin_pro500" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
-                        </label>
+                    <div style="margin-top:18px; max-width:820px; padding:16px; border:1px solid var(--border); border-radius:8px; background:var(--bg-secondary);">
+                        <div style="font-weight:700;">一卡几冲</div>
+                        <p style="font-size:12px; color:var(--text-dim); margin:6px 0 14px;">
+                            设置后对后续新开的卡生效；已有卡继续按卡片记录中的上限执行。范围 1-20 次。
+                        </p>
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px;">
+                            <label style="font-size:13px; color:var(--text-secondary);">ChatGPT Plus
+                                <input id="orbitcard_reuse_limit_plus" class="asset-input" type="number" min="1" max="20" step="1" value="4" style="margin-top:6px;">
+                                <input id="orbitcard_safety_margin_plus" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
+                            </label>
+                            <label style="font-size:13px; color:var(--text-secondary);">Pro 100
+                                <input id="orbitcard_reuse_limit_pro100" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
+                                <input id="orbitcard_safety_margin_pro100" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
+                            </label>
+                            <label style="font-size:13px; color:var(--text-secondary);">Pro 200
+                                <input id="orbitcard_reuse_limit_pro200" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
+                                <input id="orbitcard_safety_margin_pro200" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
+                            </label>
+                            <label style="font-size:13px; color:var(--text-secondary);">Pro 500
+                                <input id="orbitcard_reuse_limit_pro500" class="asset-input" type="number" min="1" max="20" step="1" value="1" style="margin-top:6px;">
+                                <input id="orbitcard_safety_margin_pro500" class="asset-input" type="number" min="0" max="100" step="0.01" value="1" style="margin-top:6px;" placeholder="安全余量 USD">
+                            </label>
+                        </div>
+                    </div>
+                    <div id="orbitcard_strategy_summary" style="margin-top:18px;"></div>
+                    <div class="table-container" style="margin-top:16px;">
+                        <table style="min-width:860px;">
+                            <thead>
+                                <tr>
+                                    <th>套餐</th>
+                                    <th>上游套餐价</th>
+                                    <th>使用上限</th>
+                                    <th>最低首充</th>
+                                    <th>最低留存</th>
+                                    <th>后续新卡首充</th>
+                                </tr>
+                            </thead>
+                            <tbody id="orbitcard_strategy_plan_body">
+                                <tr><td colspan="6" style="text-align:center; color:var(--text-dim); padding:28px 0;">请刷新上游库存</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="display:flex; justify-content:flex-end; margin-top:18px;">
+                        <button type="button" class="btn btn-primary" onclick="saveOrbitcardProductStrategy()">
+                            <i data-lucide="save"></i>
+                            保存开卡策略
+                        </button>
                     </div>
                 </div>
-                <div id="orbitcard_strategy_summary" style="margin-top:18px;"></div>
-                <div class="table-container" style="margin-top:16px;">
-                    <table style="min-width:860px;">
-                        <thead>
-                            <tr>
-                                <th>套餐</th>
-                                <th>上游套餐价</th>
-                                <th>使用上限</th>
-                                <th>最低首充</th>
-                                <th>最低留存</th>
-                                <th>后续新卡首充</th>
-                            </tr>
-                        </thead>
-                        <tbody id="orbitcard_strategy_plan_body">
-                            <tr><td colspan="6" style="text-align:center; color:var(--text-dim); padding:28px 0;">请刷新上游库存</td></tr>
-                        </tbody>
-                    </table>
+
+                <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="local" hidden>
+                    <div class="panel-header">
+                        <h2 class="panel-title">本地银行卡列表</h2>
+                        <button class="btn btn-success" onclick="toggleCardPoolImportBox()">
+                            <i data-lucide="upload"></i>
+                            批量导入
+                        </button>
+                    </div>
+
+                    <div id="card_pool_import_box" class="import-box">
+                        <div class="import-box-header">
+                            <div class="import-box-title">批量导入银行卡</div>
+                        </div>
+                        <div class="import-box-tip">
+                            每行一条，格式：<code>卡号|有效期|CVC|持卡人</code>（持卡人可选）。有效期支持 <code>MM/YY</code> 或 <code>MMYY</code>。
+                        </div>
+                        <textarea id="card_pool_import_text" class="import-textarea"
+                            placeholder="5349336392059744|04/31|738|John Doe&#10;5349336383247282|04/31|937"></textarea>
+                        <p id="card_pool_import_result" style="font-size: 13px; color: var(--text-dim); margin-top: 10px;"></p>
+                        <div class="import-actions">
+                            <button id="card_pool_import_btn" class="btn btn-success" onclick="importCardPool()">
+                                <i data-lucide="check-check"></i>
+                                解析并导入
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="table-container">
+                        <table class="admin-action-table card-pool-table">
+                            <thead>
+                                <tr>
+                                    <th width="200px">卡号</th>
+                                    <th width="90px">有效期</th>
+                                    <th width="70px">CVC</th>
+                                    <th width="100px">导入持卡人</th>
+                                    <th width="110px">支付姓名</th>
+                                    <th>绑定地址</th>
+                                    <th width="90px" style="text-align:center">状态</th>
+                                    <th width="80px" style="text-align:center">次数</th>
+                                    <th width="140px" style="text-align:center">最近使用</th>
+                                    <th width="80px" style="text-align:center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="card_pool_list_body"></tbody>
+                        </table>
+                    </div>
                 </div>
-                <div style="display:flex; justify-content:flex-end; margin-top:18px;">
-                    <button type="button" class="btn btn-primary" onclick="saveOrbitcardProductStrategy()">
-                        <i data-lucide="save"></i>
-                        保存开卡策略
-                    </button>
-                </div>
-            </div>
             </div>
         </div>
 
@@ -1245,10 +928,11 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             </div>
         </div>
 
+        <!-- Session 管理 -->
         <div id="sessions" class="page-view">
             <div class="page-header">
                 <h1>Session 管理</h1>
-                <p>集中查看已提交任务的 Session，支持检索、复制和导出。</p>
+                <p>集中查看已提交任务的 Session，支持检索、复制、导出和续费管理。</p>
             </div>
             <div class="panel">
                 <div class="panel-header">
@@ -1288,6 +972,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             </div>
         </div>
 
+        <!-- 续费管理 -->
         <div id="cancel_renewal" class="page-view">
             <div class="page-header">
                 <h1>续费管理</h1>
@@ -1324,6 +1009,7 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
             </div>
         </div>
 
+        <!-- 任务管理 -->
         <div id="logs" class="page-view">
             <div class="page-header">
                 <h1>任务管理</h1>
@@ -1334,71 +1020,72 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                     <button type="button" class="admin-switcher-tab is-active" role="tab" aria-selected="true" data-switcher-tab="tasks" onclick="switchAdminSection('task-records', 'tasks')">任务管理</button>
                     <button type="button" class="admin-switcher-tab" role="tab" aria-selected="false" data-switcher-tab="holds" onclick="switchAdminSection('task-records', 'holds')">待人工确认</button>
                 </div>
-            <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="tasks">
-                <div class="runtime-log-toolbar log-page-toolbar">
-                    <button type="button" class="btn btn-success" id="admin_refresh_pause_btn" onclick="toggleAdminDataRefresh()">
-                        <i data-lucide="pause"></i>
-                        <span id="admin_refresh_pause_label">停止自动刷新</span>
-                    </button>
-                    <button type="button" class="btn btn-primary" onclick="loadTaskLogs(true)">
-                        <i data-lucide="refresh-cw"></i>
-                        立即刷新
-                    </button>
-                    <span class="log-page-toolbar-hint">默认每 3 秒自动拉取概览与下方表格；停止后仅在你点击「立即刷新」时更新。可在表格中删除单条任务记录。前台自助开通由子进程执行，无法在此强制杀进程，可开维护模式拒绝新单。</span>
-                </div>
-                <div class="table-container">
-                    <table class="admin-action-table task-records-table">
-                        <thead>
-                            <tr>
-                                <th>执行时间</th>
-                                <th>激活码</th>
-                                <th>Token 摘要</th>
-                                <th>任务信息</th>
-                                <th width="150px">进度</th>
-                                <th>状态</th>
-                                <th width="150px" style="text-align:center">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="log_body"></tbody>
-                    </table>
-                </div>
-                <div id="log_pagination" class="table-footer"></div>
-            </div>
-            <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="holds" hidden>
-                <div class="runtime-log-toolbar log-page-toolbar">
-                    <div>
-                        <h2 style="margin:0 0 4px;">待人工确认</h2>
-                        <span class="log-page-toolbar-hint">失败后该卡密会被锁定，任何账号都不能再次使用；确认处理后在这里解除。</span>
+                <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="tasks">
+                    <div class="runtime-log-toolbar log-page-toolbar">
+                        <button type="button" class="btn btn-success" id="admin_refresh_pause_btn" onclick="toggleAdminDataRefresh()">
+                            <i data-lucide="pause"></i>
+                            <span id="admin_refresh_pause_label">停止自动刷新</span>
+                        </button>
+                        <button type="button" class="btn btn-primary" onclick="loadTaskLogs(true)">
+                            <i data-lucide="refresh-cw"></i>
+                            立即刷新
+                        </button>
+                        <span class="log-page-toolbar-hint">默认每 3 秒自动拉取概览与下方表格；停止后仅在你点击「立即刷新」时更新。</span>
                     </div>
-                    <button type="button" class="btn btn-secondary" onclick="loadActivationManualHolds(true)">
-                        <i data-lucide="refresh-cw"></i>
-                        刷新
-                    </button>
+                    <div class="table-container">
+                        <table class="admin-action-table task-records-table">
+                            <thead>
+                                <tr>
+                                    <th>执行时间</th>
+                                    <th>激活码</th>
+                                    <th>Token 摘要</th>
+                                    <th>任务信息</th>
+                                    <th width="150px">进度</th>
+                                    <th>状态</th>
+                                    <th width="150px" style="text-align:center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="log_body"></tbody>
+                        </table>
+                    </div>
+                    <div id="log_pagination" class="table-footer"></div>
                 </div>
-                <div class="table-container">
-                    <table class="admin-action-table manual-holds-table">
-                        <thead>
-                            <tr>
-                                <th>账号</th>
-                                <th>套餐</th>
-                                <th>失败任务</th>
-                                <th>激活码</th>
-                                <th>失败原因</th>
-                                <th>时间</th>
-                                <th width="100px" style="text-align:center">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="activation_manual_hold_body"></tbody>
-                    </table>
+                <div class="panel admin-switcher-panel" role="tabpanel" data-switch-panel="holds" hidden>
+                    <div class="runtime-log-toolbar log-page-toolbar">
+                        <div>
+                            <h2 style="margin:0 0 4px;">待人工确认</h2>
+                            <span class="log-page-toolbar-hint">失败后该卡密会被锁定，任何账号都不能再次使用；确认处理后在这里解除。</span>
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="loadActivationManualHolds(true)">
+                            <i data-lucide="refresh-cw"></i>
+                            刷新
+                        </button>
+                    </div>
+                    <div class="table-container">
+                        <table class="admin-action-table manual-holds-table">
+                            <thead>
+                                <tr>
+                                    <th>账号</th>
+                                    <th>套餐</th>
+                                    <th>失败任务</th>
+                                    <th>激活码</th>
+                                    <th>失败原因</th>
+                                    <th>时间</th>
+                                    <th width="100px" style="text-align:center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="activation_manual_hold_body"></tbody>
+                        </table>
+                    </div>
                 </div>
-            </div>
             </div>
         </div>
 
+        <!-- 运行日志 -->
         <div id="runtime_logs" class="page-view">
             <div class="page-header">
                 <h1>运行日志</h1>
-                <p>子进程标准输出、注册/开通脚本详情与任务节点日志（内存环形缓冲，重启后清空）</p>
+                <p>第三方代充任务流水与服务端实时日志（内存环形缓冲，重启后清空）</p>
             </div>
             <div class="panel">
                 <div class="runtime-log-toolbar">
@@ -1417,17 +1104,18 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
                         <i data-lucide="trash-2"></i> 清空日志
                     </button>
                 </div>
-                <p class="runtime-log-hint">与「任务管理」中的数据库记录不同：此处为实时流水，便于排查 Playwright / 子进程输出；筛选 Job 可在文本内搜索。</p>
+                <p class="runtime-log-hint">此处为内存实时流水，便于排查上游 API 请求与轮询过程。</p>
                 <div class="runtime-log-pre-wrap">
                     <pre id="runtime_log_pre" class="runtime-log-pre" spellcheck="false"></pre>
                 </div>
             </div>
         </div>
 
+        <!-- 登录日志 & IP 封禁 -->
         <div id="admin_login_logs" class="page-view">
             <div class="page-header">
                 <h1>后台登录日志</h1>
-                <p>记录后台登录、二次验证等安全事件（IP、浏览器指纹）</p>
+                <p>记录后台登录、二次验证等安全事件（IP、浏览器指纹）与 IP 封禁规则</p>
             </div>
             <div class="panel" style="margin-bottom: 24px;">
                 <div class="panel-header">
@@ -1513,7 +1201,15 @@ http://USER-session-{session}:PASS@proxy.example.com:1000"></textarea>
         </div>
     </main>
 
-    <script src="/admin.js?v=20261102-cf-access"></script>
+    <script src="/admin/assets/core.js?v=20261127-refactor"></script>
+    <script src="/admin/assets/security.js?v=20261127-refactor"></script>
+    <script src="/admin/assets/config.js?v=20261127-refactor"></script>
+    <script src="/admin/assets/proxies.js?v=20261127-refactor"></script>
+    <script src="/admin/assets/cards.js?v=20261127-refactor"></script>
+    <script src="/admin/assets/cdks.js?v=20261127-refactor"></script>
+    <script src="/admin/assets/sessions.js?v=20261127-refactor"></script>
+    <script src="/admin/assets/tasks.js?v=20261127-refactor"></script>
+    <script src="/admin/assets/main.js?v=20261127-refactor"></script>
 </body>
 
 </html>
