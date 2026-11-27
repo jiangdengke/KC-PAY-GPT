@@ -55,6 +55,31 @@ function verifyAccessToken(token, { keys, issuer, audience, now = Date.now() }) 
     return { ok: true, email: payload.email };
 }
 
+function extractAccessToken(req) {
+    const headerToken = req.get?.('Cf-Access-Jwt-Assertion');
+    if (headerToken) {
+        return String(headerToken).trim();
+    }
+    const cookieHeader = String(req.get?.('Cookie') || '');
+    if (!cookieHeader) {
+        return '';
+    }
+    for (const part of cookieHeader.split(';')) {
+        const eqIndex = part.indexOf('=');
+        if (eqIndex <= 0) continue;
+        const name = part.slice(0, eqIndex).trim();
+        if (name === 'CF_Authorization') {
+            const raw = part.slice(eqIndex + 1).trim();
+            try {
+                return decodeURIComponent(raw);
+            } catch (_) {
+                return raw;
+            }
+        }
+    }
+    return '';
+}
+
 /**
  * 生成 Express 中间件。teamDomain 和 audience 都留空时不启用；只填一个视为配置错误，直接拒绝。
  * fetchCerts(url) 返回证书接口的 JSON；onReject(reason, req) 在每次拒绝时调用。
@@ -103,15 +128,19 @@ function createAccessGuard({ teamDomain, audience, certsUrl, fetchCerts, onRejec
         if (keys.length === 0) {
             return reject(req, res, 503, 'certs_unavailable', '暂时无法校验 Cloudflare Access，请稍后再试');
         }
-        const verify = () => verifyAccessToken(req.get('Cf-Access-Jwt-Assertion'), { keys, issuer, audience: aud, now });
+        const token = extractAccessToken(req);
+        const verify = () => verifyAccessToken(token, { keys, issuer, audience: aud, now });
         let result = verify();
         if (result.reason === 'unknown_kid') {
             await refreshKeys(now);
             result = verify();
         }
-        if (result.ok) return next();
+        if (result.ok) {
+            req.cfAccess = { email: result.email || '' };
+            return next();
+        }
         return reject(req, res, 403, result.reason, '请先通过 Cloudflare Access 验证');
     };
 }
 
-module.exports = { normalizeTeamDomain, verifyAccessToken, createAccessGuard };
+module.exports = { normalizeTeamDomain, extractAccessToken, verifyAccessToken, createAccessGuard };

@@ -101,8 +101,25 @@ function safeEqualString(left, right) {
     return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+function scryptAsync(password, salt, keylen) {
+    return new Promise((resolve, reject) => {
+        crypto.scrypt(String(password), String(salt), keylen, (err, derivedKey) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+            resolve(derivedKey);
+        });
+    });
+}
+
 function createPasswordHash(password, salt = crypto.randomBytes(16).toString('hex')) {
     const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
+    return `scrypt$${salt}$${hash}`;
+}
+
+async function createPasswordHashAsync(password, salt = crypto.randomBytes(16).toString('hex')) {
+    const hash = (await scryptAsync(password, salt, 64)).toString('hex');
     return `scrypt$${salt}$${hash}`;
 }
 
@@ -113,6 +130,16 @@ function verifyPassword(password, storedHash) {
     }
     const [, salt, expectedHash] = parts;
     const actualHash = crypto.scryptSync(String(password), salt, 64).toString('hex');
+    return safeEqualString(actualHash, expectedHash);
+}
+
+async function verifyPasswordAsync(password, storedHash) {
+    const parts = String(storedHash || '').split('$');
+    if (parts.length !== 3 || parts[0] !== 'scrypt') {
+        return false;
+    }
+    const [, salt, expectedHash] = parts;
+    const actualHash = (await scryptAsync(password, salt, 64)).toString('hex');
     return safeEqualString(actualHash, expectedHash);
 }
 
@@ -558,7 +585,7 @@ function pickDefaultLogin2faMethod(methods = [], preferred = '') {
     return list[0] || '';
 }
 
-function createRequireSecondaryAuth(store, ensureStoreReady) {
+function createRequireSecondaryAuth(_store, _ensureStoreReady) {
     // 已取消后台二级密码：直接放行，仅保留管理员登录鉴权（authenticateAdmin）
     return async function requireSecondaryAuth(req, res, next) {
         req.secondaryAuth = { bypassed: true };
@@ -576,7 +603,9 @@ module.exports = {
     issueSignedToken,
     verifySignedToken,
     createPasswordHash,
+    createPasswordHashAsync,
     verifyPassword,
+    verifyPasswordAsync,
     issueAdminToken,
     verifyAdminToken,
     issueLoginChallenge,
