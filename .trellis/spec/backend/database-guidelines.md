@@ -4,7 +4,7 @@
 
 ## Overview
 
-The project uses `mysql2` through the helpers in `mysql-store.js`. Database-facing features keep user input in query parameters and normalize bounded values before constructing SQL.
+The project uses `mysql2` through the modular repository layer under `src/db/` (aggregated by `src/db/index.js`, with connection pooling and schema setup in `src/db/pool.js`). Database-facing features keep user input in query parameters and normalize bounded values before constructing SQL.
 
 ## Query Patterns
 
@@ -53,7 +53,7 @@ The project uses `mysql2` through the helpers in `mysql-store.js`. Database-faci
 
 ## Migrations
 
-Schema additions are applied at startup through `ensureColumn` and table creation helpers in `mysql-store.js`; existing databases must remain compatible with this path.
+Schema additions are applied at startup through `ensureColumn` and `ensureActiveSchema` in `src/db/pool.js`; existing databases must remain compatible with this path. Never issue `DROP TABLE` against legacy tables during startup or migration.
 
 ## Naming Conventions
 

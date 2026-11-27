@@ -3,9 +3,13 @@ node_modules
 .env
 .env.*
 !.env.example
-debug_screenshots
-product_files
-data/browser-pool
+.trellis
+.pi
+test
+docs
+deploy
+artifacts
+scripts
 *.sql.gz
 .DS_Store
 .vscode

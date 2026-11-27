@@ -4,7 +4,7 @@
 
 ## Overview
 
-The admin frontend is server-rendered HTML with vanilla JavaScript in `public/admin.js`. State for a table workflow stays in a small local state object and is sent explicitly with every request.
+The admin frontend is server-rendered HTML (`public/admin.html`) with modular vanilla JavaScript under `public/admin-assets/*.js` (served at `/admin/assets/*` behind Cloudflare Access). State for a table workflow stays in a small local state object and is sent explicitly with every request.
 
 ## Required Patterns
 
@@ -62,9 +62,9 @@ Elements whose visibility the scripts toggle via `el.style.display = 'block'` ca
 
 ## Testing Requirements
 
-- Run `node --check public/admin.js` after changing the admin script.
+- Run `npm run lint` and `npm run check` after changing any script under `public/admin-assets/` or inline `<script>` block in `public/*.html`.
 - Run `npm test` and `git diff --check` before committing.
-- For front page changes, check the inline scripts parse (extract `<script>` blocks and run `node --check`) and screenshot desktop/mobile in both light and dark color schemes.
+- For front page changes, screenshot desktop/mobile in both light and dark color schemes when visual styling changes.
 - For cross-layer changes, verify that the UI parameter names match the Express route and the store filter names.
 
 ## Code Review Checklist

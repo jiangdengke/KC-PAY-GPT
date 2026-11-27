@@ -2,7 +2,7 @@
 
 ## Overview
 
-GPT provider failures have separate customer and administrator outputs. `server.js` owns task state and customer messages; `gpt-api-failure.js` builds bounded administrator diagnostics; `telegram-notify.js` formats the Telegram notification. This prevents a customer-friendly message from hiding the cause an operator needs to investigate.
+GPT provider failures have separate customer and administrator outputs. `src/services/gpt-api-worker.js` and `src/utils/task-messages.js` own task state and customer messages; `src/services/gpt-api-failure.js` builds bounded administrator diagnostics; `src/services/telegram-notify.js` formats the Telegram notification. This prevents a customer-friendly message from hiding the cause an operator needs to investigate.
 
 ## GPT Failure Notification Contract
 
@@ -32,7 +32,7 @@ Apply when changing `runGptApiWorker`, `notifyTaskOutcome`, GPT provider error e
 - Apply `skipPanHeuristic: true` to `code`, `orderId`, `status`, and `requestId` in both builder and formatter so numeric identifiers are not mistaken for card numbers. Explicit credential fields still get masked in those strings. Free-form reasons retain the PAN heuristic; ordinary URLs are protected while text redaction runs. Ignore object-valued diagnostics and HTML-escape retained text.
 - Existing manual-hold, CDK release, card lifecycle, success, and polling semantics remain in place. `createActivationManualHold` returns an existing hold before insertion, so a later duplicate call does not overwrite the first concrete reason.
 - No new database columns or environment settings are introduced. `GPT_API_MAX_POLLS` remains an explicit poll-cap override.
-- `gpt-api-failure.js` is bind-mounted in Compose alongside its consumers. Publish through local verification, commit/push, server `git pull --ff-only`, and `docker compose up -d --build --force-recreate app`; newly added mounts require container recreation.
+- All backend modules under `src/` are mounted read-only via `./src:/app/src:ro` in `docker-compose.yml`. Publish through local verification (`npm run lint`, `npm run check`, `npm test`), commit/push, server `git pull --ff-only`, and `docker compose up -d --build --force-recreate app`.
 
 ### 4. Validation & Error Matrix
 
@@ -59,9 +59,9 @@ Apply when changing `runGptApiWorker`, `notifyTaskOutcome`, GPT provider error e
 ### 6. Tests Required
 
 - `test/gpt-api-client.test.js` asserts transient create business codes recover within the same `submitPay` call, persistent failures exhaust the bounded default policy, every attempt reuses the same idempotency key/body/request ID, and `40013` remains non-retryable.
-- `test/gpt-api-worker-failure.test.js` executes isolated worker source with mocked provider/store/broadcast/notification dependencies: assert real notification payload wiring and customer task/WebSocket messages for Open failure, legacy failure, timeout, catch-after-processing, missing cause/code, and success. No external provider or Telegram requests.
+- `test/gpt-api-worker-failure.test.js` imports `createGptApiWorker` directly from `src/services/gpt-api-worker.js` with mocked provider/store/broadcast/notification dependencies: assert real notification payload wiring and customer task/WebSocket messages for Open failure, legacy failure, timeout, catch-after-processing, missing cause/code, and success. No external provider or Telegram requests.
 - `test/gpt-api-failure.test.js` asserts formatter detail precedence, code/context preservation, HTML escaping, actual credential redaction (Bearer/Basic, Cookie, quoted values, tokens, PAN/security codes), serialized-dump removal, and bracketed exception retention. Verify 1000-character reasons survive builder/formatter, reasons longer than 1600 are clipped consistently, numeric identifiers remain intact, ordinary URLs with numeric IDs/`errorCode` survive, and credential/captcha URLs—including encoded query and hash pairs—remain hidden. Assert a bounded representative notification remains under Telegram's 4096-character limit.
-- Run `npm test`, `node --check` for every changed JavaScript file, `docker compose config --quiet`, and `git diff --check` before publishing.
+- Run `npm run lint`, `npm run check`, `npm test`, `docker compose config --quiet`, and `git diff --check` before publishing.
 
 ### 7. Wrong vs Correct
 
