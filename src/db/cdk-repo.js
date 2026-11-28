@@ -6,6 +6,9 @@ const {
 } = require('../config/plan-registry');
 const { getPool, runQuery, runExecute } = require('./pool');
 
+const ACTIVATION_FAILURE_THRESHOLD = 3;
+const ACTIVATION_COOLDOWN_MINUTES = 30;
+
 function normalizeCdks(cdks) {
     return [...new Set((cdks || []).filter(Boolean).map((item) => String(item).trim()))];
 }
@@ -13,6 +16,7 @@ function normalizeCdks(cdks) {
 async function listCdks() {
     const rows = await runQuery(
         `SELECT c.cdk_code, c.shipped_at, c.used_at, c.type, c.plan_type, c.created_at,
+                c.fail_count, c.cooldown_until,
                 (
                     SELECT l.token_preview
                     FROM task_logs l
@@ -45,27 +49,37 @@ async function listCdks() {
          GROUP BY cdk_code`
     );
     const runningSet = new Set(runningRows.map((row) => String(row.cdk_code || '').trim()).filter(Boolean));
+    const now = Date.now();
 
-    return rows.map((row) => ({
-        code: row.cdk_code,
-        status: runningSet.has(String(row.cdk_code || '').trim())
-            ? 'processing'
-            : (row.used_at ? 'used' : 'unused'),
-        type: row.type || '自助',
-        plan_type: row.plan_type || 'plus',
-        shipped: Boolean(row.shipped_at),
-        shipped_at: row.shipped_at
-            ? new Date(row.shipped_at).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
-            : null,
-        used_at: row.used_at
-            ? new Date(row.used_at).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
-            : null,
-        created_at: row.created_at
-            ? new Date(row.created_at).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
-            : null,
-        session_preview: row.session_preview || null,
-        session_job_key: row.session_job_key || null
-    }));
+    return rows.map((row) => {
+        const cooldownUntilMs = row.cooldown_until ? new Date(row.cooldown_until).getTime() : 0;
+        const cooldownRemainingMinutes = cooldownUntilMs > now
+            ? Math.ceil((cooldownUntilMs - now) / 60000)
+            : 0;
+        return {
+            code: row.cdk_code,
+            status: runningSet.has(String(row.cdk_code || '').trim())
+                ? 'processing'
+                : (row.used_at ? 'used' : 'unused'),
+            type: row.type || '自助',
+            plan_type: row.plan_type || 'plus',
+            shipped: Boolean(row.shipped_at),
+            shipped_at: row.shipped_at
+                ? new Date(row.shipped_at).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+                : null,
+            used_at: row.used_at
+                ? new Date(row.used_at).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+                : null,
+            created_at: row.created_at
+                ? new Date(row.created_at).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+                : null,
+            fail_count: Number(row.fail_count || 0),
+            cooldown_until: cooldownUntilMs ? new Date(cooldownUntilMs).toISOString() : null,
+            cooldown_remaining_minutes: cooldownRemainingMinutes,
+            session_preview: row.session_preview || null,
+            session_job_key: row.session_job_key || null
+        };
+    });
 }
 
 async function markCdkShipped(cdk) {
@@ -137,10 +151,10 @@ async function recordCdkFailure(cdk) {
     );
 
     const cdkDetails = await verifyCdkDetails(cdk);
-    if (cdkDetails && cdkDetails.fail_count >= 3) {
+    if (cdkDetails && cdkDetails.fail_count >= ACTIVATION_FAILURE_THRESHOLD) {
         await runExecute(
             `UPDATE cdk_codes
-             SET cooldown_until = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 10 MINUTE),
+             SET cooldown_until = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL ${ACTIVATION_COOLDOWN_MINUTES} MINUTE),
                  fail_count = 0
              WHERE cdk_code = ?`,
             [String(cdk)]
@@ -202,10 +216,10 @@ async function recordActivationAttemptFailure(scopeType, scopeKey) {
     );
 
     const limit = await getActivationAttemptLimit(scopeType, scopeKey);
-    if (limit && Number(limit.fail_count || 0) >= 3) {
+    if (limit && Number(limit.fail_count || 0) >= ACTIVATION_FAILURE_THRESHOLD) {
         await runExecute(
             `UPDATE activation_attempt_limits
-             SET cooldown_until = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 10 MINUTE),
+             SET cooldown_until = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL ${ACTIVATION_COOLDOWN_MINUTES} MINUTE),
                  fail_count = 0
              WHERE scope_type = ?
                AND scope_key = ?`,
@@ -214,6 +228,30 @@ async function recordActivationAttemptFailure(scopeType, scopeKey) {
         return true;
     }
     return false;
+}
+
+async function listActiveActivationCooldowns(limit = 100) {
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 300));
+    const rows = await runQuery(
+        `SELECT scope_type, scope_key, fail_count, cooldown_until
+         FROM activation_attempt_limits
+         WHERE cooldown_until IS NOT NULL
+           AND cooldown_until > CURRENT_TIMESTAMP
+         ORDER BY cooldown_until DESC
+         LIMIT ?`,
+        [safeLimit]
+    );
+    const now = Date.now();
+    return rows.map((row) => {
+        const untilMs = row.cooldown_until ? new Date(row.cooldown_until).getTime() : 0;
+        return {
+            scopeType: String(row.scope_type || 'ip'),
+            scopeKey: String(row.scope_key || ''),
+            failCount: Number(row.fail_count || 0),
+            cooldownUntil: untilMs ? new Date(untilMs).toISOString() : null,
+            remainingMinutes: untilMs > now ? Math.ceil((untilMs - now) / 60000) : 0
+        };
+    });
 }
 
 async function resetActivationAttemptFailure(scopeType, scopeKey) {
@@ -307,6 +345,8 @@ async function resolveActivationManualHold(id, resolvedBy = '') {
 }
 
 module.exports = {
+    ACTIVATION_FAILURE_THRESHOLD,
+    ACTIVATION_COOLDOWN_MINUTES,
     listCdks,
     markCdkShipped,
     insertCdks,
@@ -320,6 +360,7 @@ module.exports = {
     getActivationAttemptLimit,
     recordActivationAttemptFailure,
     resetActivationAttemptFailure,
+    listActiveActivationCooldowns,
     getActivationManualHold,
     createActivationManualHold,
     listActivationManualHolds,

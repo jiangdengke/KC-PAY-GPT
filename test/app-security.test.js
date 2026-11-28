@@ -6,6 +6,8 @@ const WebSocket = require('ws');
 const { createApp } = require('../src/app');
 const adminAuth = require('../src/security/admin-auth');
 const ipBan = require('../src/security/ip-ban');
+const { PUBLIC_CDK_QUOTAS } = require('../src/security/security-manager');
+const { ACTIVATION_COOLDOWN_MINUTES, ACTIVATION_FAILURE_THRESHOLD } = require('../src/db/cdk-repo');
 
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'app-sec-key-1', alg: 'RS256' };
@@ -201,6 +203,10 @@ describe('Hardened security without Cloudflare Access', () => {
     let totpSecret = '';
     let totpEnabled = false;
     let login2faMode = 'either';
+    const clearedCdks = [];
+    const activeIpCooldowns = [
+        { scopeType: 'ip', scopeKey: '203.0.113.88', failCount: 0, cooldownUntil: '2099-01-01T00:00:00.000Z', remainingMinutes: 29 }
+    ];
     const originalSecret = process.env.ADMIN_TOKEN_SECRET;
 
     beforeAll(async () => {
@@ -239,11 +245,24 @@ describe('Hardened security without Cloudflare Access', () => {
             listRecentAdminLoginIps: async () => [],
             saveIpBan: async () => {},
             insertAdminLoginLog: async () => {},
-            verifyCdkDetails: async (cdk) => (
-                cdk === 'KC-LEGACY-PRO200'
-                    ? { code: cdk, type: '自助', plan_type: 'pro200', used_at: null, cooldown_until: null }
-                    : null
-            ),
+            verifyCdkDetails: async (cdk) => {
+                if (cdk === 'KC-LEGACY-PRO200') {
+                    return { code: cdk, type: '自助', plan_type: 'pro200', used_at: null, cooldown_until: null };
+                }
+                if (cdk === 'KC-COOLED-PLUS01') {
+                    return { code: cdk, type: '自助', plan_type: 'plus', used_at: null, cooldown_until: '2099-01-01T00:00:00.000Z' };
+                }
+                return null;
+            },
+            resetCdkFailure: async (cdk) => {
+                clearedCdks.push(cdk);
+            },
+            listActiveActivationCooldowns: async () => [...activeIpCooldowns],
+            resetActivationAttemptFailure: async (scopeType, scopeKey) => {
+                const idx = activeIpCooldowns.findIndex((item) => item.scopeType === scopeType && item.scopeKey === scopeKey);
+                if (idx >= 0) activeIpCooldowns.splice(idx, 1);
+            },
+            getActivationAttemptLimit: async () => null,
             getRunningTaskByCdk: async () => null,
             getActivationManualHold: async () => null,
             getTaskStatus: async () => null
@@ -468,5 +487,76 @@ describe('Hardened security without Cloudflare Access', () => {
             body: JSON.stringify({ plan_type: 'pro100', max_usage_count: 1 })
         });
         expect(bindRes.status).toBe(400);
+    });
+
+    it('tightens per-IP activation quota to 10 per 10 minutes and exposes admin cooldown inspection and clear endpoints', async () => {
+        expect(ACTIVATION_FAILURE_THRESHOLD).toBe(3);
+        expect(ACTIVATION_COOLDOWN_MINUTES).toBe(30);
+        expect(PUBLIC_CDK_QUOTAS.activation).toEqual({ max: 10, windowMs: 10 * 60 * 1000 });
+
+        // 10 activation requests from one IP consume the 10-min quota; 11th must return 429
+        const ip = '203.0.113.211';
+        for (let i = 0; i < 10; i += 1) {
+            const res = await fetch(`${baseUrl}/api/run-process`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Real-IP': ip },
+                body: JSON.stringify({ cdk: '' })
+            });
+            expect(res.status).toBe(400);
+        }
+        const throttled = await fetch(`${baseUrl}/api/run-process`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Real-IP': ip },
+            body: JSON.stringify({ cdk: '' })
+        });
+        expect(throttled.status).toBe(429);
+        expect(Number(throttled.headers.get('retry-after'))).toBeGreaterThan(0);
+
+        // Cooldown admin routes reject unauthenticated requests
+        const unauthRes = await fetch(`${baseUrl}/api/admin/activation-cooldowns`);
+        expect(unauthRes.status).toBe(401);
+
+        const validToken = adminAuth.issueAdminToken(passwordVersion, 'owner@example.com').token;
+
+        // List active IP cooldowns
+        const listRes = await fetch(`${baseUrl}/api/admin/activation-cooldowns`, {
+            headers: { Authorization: `Bearer ${validToken}` }
+        });
+        expect(listRes.status).toBe(200);
+        const listBody = await listRes.json();
+        expect(listBody.success).toBe(true);
+        expect(listBody.cooldowns).toHaveLength(1);
+        expect(listBody.cooldowns[0].scopeKey).toBe('203.0.113.88');
+
+        // Clear IP cooldown rejects invalid payload
+        const badIpClear = await fetch(`${baseUrl}/api/admin/activation-cooldowns/clear`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${validToken}` },
+            body: JSON.stringify({ scope_type: 'ip', scope_key: '' })
+        });
+        expect(badIpClear.status).toBe(400);
+
+        // Clear IP cooldown succeeds
+        const okIpClear = await fetch(`${baseUrl}/api/admin/activation-cooldowns/clear`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${validToken}` },
+            body: JSON.stringify({ scope_type: 'ip', scope_key: '203.0.113.88' })
+        });
+        expect(okIpClear.status).toBe(200);
+        expect(activeIpCooldowns).toHaveLength(0);
+
+        // Clear CDK cooldown returns 404 for unknown CDK and 200 for existing CDK
+        const missingCdkClear = await fetch(`${baseUrl}/api/admin/cdks/KC-NO-SUCH-CODE/clear-cooldown`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${validToken}` }
+        });
+        expect(missingCdkClear.status).toBe(404);
+
+        const okCdkClear = await fetch(`${baseUrl}/api/admin/cdks/KC-COOLED-PLUS01/clear-cooldown`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${validToken}` }
+        });
+        expect(okCdkClear.status).toBe(200);
+        expect(clearedCdks).toContain('KC-COOLED-PLUS01');
     });
 });

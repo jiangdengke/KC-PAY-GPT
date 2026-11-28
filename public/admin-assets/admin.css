@@ -2903,6 +2903,94 @@
             font-variant-numeric: tabular-nums;
         }
 
+        .cdk-cooldown-banner {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 12px 14px;
+            margin-bottom: 14px;
+            border-radius: 12px;
+            background: var(--warning-soft);
+            border: 1px solid rgba(245, 158, 11, 0.32);
+            color: #92400e;
+        }
+
+        .cdk-cooldown-banner-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .cdk-cooldown-banner-title svg {
+            width: 16px;
+            height: 16px;
+            color: var(--warning);
+            flex-shrink: 0;
+        }
+
+        .cdk-cooldown-chips {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .cdk-cooldown-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 6px 4px 10px;
+            border-radius: 999px;
+            background: #ffffff;
+            border: 1px solid rgba(245, 158, 11, 0.38);
+            font-size: 12px;
+            color: var(--text-main);
+        }
+
+        .cdk-cooldown-chip code {
+            font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+            color: var(--text-main);
+        }
+
+        .cdk-cooldown-mins {
+            color: #b45309;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .cdk-row-actions {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
+
+        .btn-unlock-cooldown {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 4px 9px;
+            border-radius: 999px;
+            border: 1px solid rgba(245, 158, 11, 0.45);
+            background: #fffbeb;
+            color: #b45309;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+            white-space: nowrap;
+        }
+
+        .btn-unlock-cooldown:hover {
+            background: #fef3c7;
+            border-color: #d97706;
+            color: #92400e;
+        }
+
         .cdk-table {
             width: 100%;
             min-width: 0;

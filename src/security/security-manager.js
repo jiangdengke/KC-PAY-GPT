@@ -14,7 +14,7 @@ const {
 
 const PUBLIC_CDK_QUOTAS = {
     lookup: { max: 600, windowMs: 10 * 60 * 1000 },
-    activation: { max: 30, windowMs: 10 * 60 * 1000 },
+    activation: { max: 10, windowMs: 10 * 60 * 1000 },
     subscription: { max: 30, windowMs: 10 * 60 * 1000 },
     external_cards: { max: 60, windowMs: 10 * 60 * 1000 }
 };

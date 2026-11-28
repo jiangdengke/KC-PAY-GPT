@@ -82,13 +82,14 @@ function createGptApiWorker({
 }) {
     const getPlanTypeLabel = (planType) => getPlanLabel(planType, { full: true });
 
-    return async function runGptApiWorker({ task, token, session, cdk, planType }) {
+    return async function runGptApiWorker({ task, token, session, cdk, planType, clientIp = '' }) {
         const { jobKey } = task;
         let sessionPayload = session && typeof session === 'object'
             ? session
             : { access_token: token };
         const accountEmail = extractEmailFromSession(sessionPayload) || '';
         const accountKey = getActivationAccountKey(sessionPayload, token);
+        const normalizedClientIp = String(clientIp || '').trim();
         let shouldRollbackCdk = true;
         let reservedCard = null;
         let reservedOrbitcard = null;
@@ -104,6 +105,26 @@ function createGptApiWorker({
         let failureDiagnostic = null;
         const failedOrbitcardIds = new Set();
         const failedLocalCardIds = new Set();
+
+        const recordClientFailureCooldown = async (tag = '') => {
+            let cdkCooledDown = false;
+            let ipCooledDown = false;
+            if (typeof store.recordCdkFailure === 'function') {
+                cdkCooledDown = Boolean(await store.recordCdkFailure(cdk).catch(() => false));
+            }
+            if (normalizedClientIp && typeof store.recordActivationAttemptFailure === 'function') {
+                ipCooledDown = Boolean(await store.recordActivationAttemptFailure('ip', normalizedClientIp).catch(() => false));
+            }
+            const cooledDown = cdkCooledDown || ipCooledDown;
+            if (cooledDown) {
+                logTask(
+                    jobKey,
+                    `客户侧失败累计达上限，已触发 30 分钟冷静期（${tag || 'failure'}；cdk=${cdkCooledDown ? '已冷却' : '未触发'} ip=${ipCooledDown ? '已冷却' : '未触发'}）`,
+                    'warn'
+                );
+            }
+            return { cdkCooledDown, ipCooledDown, cooledDown };
+        };
 
         const releaseOrRetireCurrentCard = async ({ retire = false } = {}) => {
             if (reservedOrbitcard) {
@@ -705,6 +726,9 @@ function createGptApiWorker({
                 if (finalStatus === 'success') {
                     shouldRollbackCdk = false;
                     await store.resetCdkFailure(cdk);
+                    if (normalizedClientIp && typeof store.resetActivationAttemptFailure === 'function') {
+                        await store.resetActivationAttemptFailure('ip', normalizedClientIp).catch(() => { });
+                    }
                     if (reservedOrbitcard) {
                         const orbitcardId = reservedOrbitcard.orbitcard_id;
                         const usage = await store.recordOrbitcardCardUsage(orbitcardId);
@@ -773,7 +797,10 @@ function createGptApiWorker({
 
                 if (classification.category === 'customer_definite') {
                     await releaseOrRetireCurrentCard({ retire: false });
-                    finalMessage = classification.customerMessage;
+                    const cooldown = await recordClientFailureCooldown(classification.summaryTag);
+                    finalMessage = cooldown.cooledDown
+                        ? `${classification.customerMessage}（连续失败已达 3 次，请冷静 30 分钟后再试）`
+                        : classification.customerMessage;
                     logTask(jobKey, `明确为账号/验证类失败（${classification.summaryTag}），已释放卡片回池并退回 CDK，无需转人工`, 'warn');
                     await setProgress('failed', 99, finalMessage, terminalRawExtra);
                     if (orbitcardRechargeRecorded) {
@@ -876,7 +903,17 @@ function createGptApiWorker({
                 status: error?.status,
                 businessCode: error?.businessCode
             });
-            const customerFailureMessage = catchClassification.customerMessage;
+            let customerFailureMessage = catchClassification.customerMessage;
+            const httpStatus = Number(error?.status);
+            const shouldCountClientFailure = catchClassification.category === 'pre_submit_definite'
+                && (catchClassification.summaryTag === 'inspect_failed'
+                    || (catchStage === 'submit_rejected' && (httpStatus === 400 || httpStatus === 422)));
+            if (shouldCountClientFailure) {
+                const cooldown = await recordClientFailureCooldown(catchClassification.summaryTag);
+                if (cooldown.cooledDown) {
+                    customerFailureMessage = `${customerFailureMessage}（连续失败已达 3 次，请冷静 30 分钟后再试）`;
+                }
+            }
 
             if (catchClassification.requiresManualHold) {
                 const manualReviewMessage = getManualReviewMessage(error.message);

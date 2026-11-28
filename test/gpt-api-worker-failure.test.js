@@ -1044,4 +1044,161 @@ describe('runGptApiWorker failure notification wiring', () => {
         expect([...http422.taskUpdates].reverse().find((u) => u.status === 'failed')?.message)
             .toContain('Session');
     });
+
+    it('records CDK and IP cooldown counts only on client-side failures, appends 30-minute notice when triggered, and resets both on success', async () => {
+        const runScenario = async ({
+            inspectResult = { success: true },
+            submitResult = null,
+            queryResult = null,
+            cdkTriggersCooldown = false,
+            ipTriggersCooldown = false
+        }) => {
+            const taskUpdates = [];
+            const broadcasts = [];
+            const cdkFailures = [];
+            const ipFailures = [];
+            const cdkResets = [];
+            const ipResets = [];
+
+            const store = {
+                getGptApiConfig: async () => ({
+                    enabled: true,
+                    api_key: 'synthetic-api-key',
+                    card_source: 'local',
+                    country: 'US',
+                    currency: 'USD'
+                }),
+                reserveCard: async () => ({
+                    id: 11,
+                    card_number: '4111111111111111',
+                    card_expiry: '12/30',
+                    card_cvc: '123',
+                    card_holder: 'Synthetic User'
+                }),
+                updateTaskLog: async (_jobKey, update) => taskUpdates.push({ ...update }),
+                updateOrbitcardRecharge: async () => null,
+                createActivationManualHold: async (input) => input,
+                recordCdkFailure: async (cdk) => {
+                    cdkFailures.push(cdk);
+                    return cdkTriggersCooldown;
+                },
+                recordActivationAttemptFailure: async (scopeType, scopeKey) => {
+                    ipFailures.push({ scopeType, scopeKey });
+                    return ipTriggersCooldown;
+                },
+                resetCdkFailure: async (cdk) => cdkResets.push(cdk),
+                resetActivationAttemptFailure: async (scopeType, scopeKey) => ipResets.push({ scopeType, scopeKey }),
+                recordCardUsage: async () => null,
+                releaseCard: async () => null,
+                markCardExhausted: async () => null,
+                markCdkUnused: async () => null,
+                getMaintenanceModeState: async () => ({ enabled: false, drain: false }),
+                setMaintenanceModeState: async () => null
+            };
+
+            const runWorker = createGptApiWorker({
+                store,
+                gptApi: {
+                    isDesolateOpenProtocol: () => true,
+                    resolveOpenPlanCode: () => 'chatgptplusplan',
+                    inspectPay: async () => inspectResult,
+                    submitPay: async () => submitResult || {
+                        success: true,
+                        orderId: 'ord-cooldown',
+                        data: { orderId: 'ord-cooldown', status: 'pending' }
+                    },
+                    queryTask: async () => ({ success: false }),
+                    queryOrder: async () => queryResult,
+                    getGptOrderPollDelayMs: () => 0,
+                    extractProviderMessage: (d) => d?.failureMessage || d?.message || '',
+                    extractCaptcha: () => null,
+                    normalizeOpenOrderSummary: (d) => d,
+                    extractTopupCode: () => null,
+                    formatProgressMessage: () => '处理中'
+                },
+                orbitcard: {},
+                activeTaskCaptchas: new Map(),
+                broadcastToTask: (_jobKey, update) => broadcasts.push({ ...update }),
+                notifyTaskOutcome: vi.fn(),
+                logTask: vi.fn(),
+                releaseForegroundSlot: vi.fn(),
+                getTotalActiveJobs: () => 1,
+                sleep: async () => null,
+                env: { GPT_API_MAX_POLLS: '2', GPT_API_POLL_INTERVAL_MS: '0' },
+                logger: { error: vi.fn(), warn: vi.fn(), log: vi.fn() }
+            });
+
+            await runWorker({
+                task: { jobKey: 'job-cooldown-case' },
+                token: 'synthetic-token',
+                session: { user: { email: 'user@example.com' }, accessToken: 'synthetic-access-token' },
+                cdk: 'KC-COOLDOWN-1',
+                planType: 'plus',
+                clientIp: '203.0.113.88'
+            });
+
+            return { taskUpdates, broadcasts, cdkFailures, ipFailures, cdkResets, ipResets };
+        };
+
+        // 1. customer_definite triggers failure counters and appends 30-min notice on 3rd failure
+        const existingSub = await runScenario({
+            queryResult: {
+                success: true,
+                data: { status: 'failed', failureCode: 'EXISTING_SUBSCRIPTION_NOT_OURS', failureMessage: 'Account already has subscription' },
+                rawStatus: 'failed'
+            },
+            cdkTriggersCooldown: true,
+            ipTriggersCooldown: true
+        });
+        expect(existingSub.cdkFailures).toEqual(['KC-COOLDOWN-1']);
+        expect(existingSub.ipFailures).toEqual([{ scopeType: 'ip', scopeKey: '203.0.113.88' }]);
+        expect([...existingSub.taskUpdates].reverse().find((u) => u.status === 'failed')?.message)
+            .toContain('连续失败已达 3 次，请冷静 30 分钟后再试');
+
+        // 2. inspect_failed counts as client-side failure
+        const inspectFail = await runScenario({
+            inspectResult: { success: false, status: 400, error: 'session_invalid' },
+            cdkTriggersCooldown: false
+        });
+        expect(inspectFail.cdkFailures).toEqual(['KC-COOLDOWN-1']);
+        expect(inspectFail.ipFailures).toEqual([{ scopeType: 'ip', scopeKey: '203.0.113.88' }]);
+        expect([...inspectFail.taskUpdates].reverse().find((u) => u.status === 'failed')?.message)
+            .not.toContain('冷静 30 分钟');
+
+        // 3. submit HTTP 401 (upstream API auth problem) must NOT penalize customer CDK/IP
+        const submit401 = await runScenario({
+            submitResult: {
+                success: false,
+                status: 401,
+                error: 'Invalid API key',
+                data: { message: 'Invalid API key' }
+            }
+        });
+        expect(submit401.cdkFailures).toHaveLength(0);
+        expect(submit401.ipFailures).toHaveLength(0);
+
+        // 4. card_declined must NOT penalize customer CDK/IP
+        const declined = await runScenario({
+            queryResult: {
+                success: true,
+                data: { status: 'failed', failureCode: 'CARD_DECLINED', failureMessage: '银行卡支付未获通过' },
+                rawStatus: 'failed'
+            }
+        });
+        expect(declined.cdkFailures).toHaveLength(0);
+        expect(declined.ipFailures).toHaveLength(0);
+
+        // 5. success resets both CDK and IP failure counters
+        const ok = await runScenario({
+            queryResult: {
+                success: true,
+                data: { status: 'succeeded', subscriptionCancelled: true },
+                rawStatus: 'succeeded'
+            }
+        });
+        expect(ok.cdkFailures).toHaveLength(0);
+        expect(ok.ipFailures).toHaveLength(0);
+        expect(ok.cdkResets).toEqual(['KC-COOLDOWN-1']);
+        expect(ok.ipResets).toEqual([{ scopeType: 'ip', scopeKey: '203.0.113.88' }]);
+    });
 });

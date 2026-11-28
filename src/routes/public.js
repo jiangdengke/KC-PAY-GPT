@@ -104,7 +104,7 @@ function createPublicRouter({
             if (cdkCooldownMinutes > 0) {
                 return res.status(403).json({
                     success: false,
-                    message: `该卡密连续无资格尝试过多，请冷静 ${cdkCooldownMinutes} 分钟后再试`
+                    message: `该卡密连续失败次数过多，请冷静 ${cdkCooldownMinutes} 分钟后再试`
                 });
             }
 
@@ -114,7 +114,7 @@ function createPublicRouter({
                 if (ipCooldownMinutes > 0) {
                     return res.status(403).json({
                         success: false,
-                        message: `当前 IP 连续无资格尝试过多，请冷静 ${ipCooldownMinutes} 分钟后再试`
+                        message: `当前 IP 连续失败次数过多，请冷静 ${ipCooldownMinutes} 分钟后再试`
                     });
                 }
             }
@@ -167,7 +167,8 @@ function createPublicRouter({
                 token,
                 session: JSON.parse(storedSession),
                 cdk,
-                planType
+                planType,
+                clientIp
             }).catch((error) => {
                 console.error(`[GPT API Worker] ${task.jobKey}:`, error);
             });
@@ -337,7 +338,7 @@ function createPublicRouter({
                     if (cdkCooldownMinutes > 0) {
                         return res.status(403).json({
                             success: false,
-                            message: `该卡密连续无资格尝试过多，请冷静 ${cdkCooldownMinutes} 分钟后再试`
+                            message: `该卡密连续失败次数过多，请冷静 ${cdkCooldownMinutes} 分钟后再试`
                         });
                     }
                     if (clientIp) {
@@ -346,7 +347,7 @@ function createPublicRouter({
                         if (ipCooldownMinutes > 0) {
                             return res.status(403).json({
                                 success: false,
-                                message: `当前 IP 连续无资格尝试过多，请冷静 ${ipCooldownMinutes} 分钟后再试`
+                                message: `当前 IP 连续失败次数过多，请冷静 ${ipCooldownMinutes} 分钟后再试`
                             });
                         }
                     }

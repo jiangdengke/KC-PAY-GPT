@@ -146,6 +146,55 @@ function createAdminAssetsRouter({ store, ensureStoreReady, requireSecondaryAuth
         }
     });
 
+    router.get('/activation-cooldowns', requireSecondaryAuth, async (req, res) => {
+        try {
+            await ensureStoreReady();
+            const cooldowns = typeof store.listActiveActivationCooldowns === 'function'
+                ? await store.listActiveActivationCooldowns()
+                : [];
+            return res.json({ success: true, cooldowns });
+        } catch (error) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
+    router.post('/activation-cooldowns/clear', requireSecondaryAuth, async (req, res) => {
+        try {
+            await ensureStoreReady();
+            const scopeType = String(req.body?.scope_type || 'ip').trim().toLowerCase();
+            const scopeKey = String(req.body?.scope_key || '').trim();
+            if (!['ip'].includes(scopeType) || !scopeKey) {
+                return res.status(400).json({ success: false, message: '请提供有效的冷却对象' });
+            }
+            if (typeof store.resetActivationAttemptFailure === 'function') {
+                await store.resetActivationAttemptFailure(scopeType, scopeKey);
+            }
+            return res.json({ success: true, message: `已解除 ${scopeKey} 的冷却限制` });
+        } catch (error) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
+    router.post('/cdks/:cdk/clear-cooldown', requireSecondaryAuth, async (req, res) => {
+        try {
+            await ensureStoreReady();
+            const cdkCode = String(req.params.cdk || '').trim();
+            if (!cdkCode) {
+                return res.status(400).json({ success: false, message: '缺少 CDK 参数' });
+            }
+            const existing = typeof store.verifyCdkDetails === 'function'
+                ? await store.verifyCdkDetails(cdkCode)
+                : { cdk_code: cdkCode };
+            if (!existing) {
+                return res.status(404).json({ success: false, message: 'CDK 不存在' });
+            }
+            await store.resetCdkFailure(cdkCode);
+            return res.json({ success: true, message: `已解除 ${cdkCode} 的冷却限制` });
+        } catch (error) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
     router.post('/cdks/:cdk/ship', requireSecondaryAuth, async (req, res) => {
         try {
             await ensureStoreReady();

@@ -9,7 +9,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="stylesheet" href="/admin/assets/admin.css?v=20261127-plus-only">
+    <link rel="stylesheet" href="/admin/assets/admin.css?v=20261128-cooldown">
 </head>
 
 <body>
@@ -831,6 +831,7 @@
                         </button>
                     </div>
                 </div>
+                <div id="cdk_ip_cooldown_banner" class="cdk-cooldown-banner" style="display:none;"></div>
                 <div id="cdk_quick_tabs" class="orbitcard-quick-tabs" role="tablist" aria-label="按 CDK 状态快速筛选"></div>
                 <div class="cdk-toolbar-bar">
                     <div class="cdk-toolbar-filters">
@@ -876,9 +877,9 @@
                                 <th style="width:82px; text-align:center;">套餐</th>
                                 <th>Session 记录</th>
                                 <th style="width:66px; text-align:center;">出库</th>
-                                <th style="width:84px; text-align:center;">状态</th>
+                                <th style="width:96px; text-align:center;">状态</th>
                                 <th style="width:136px;">使用时间</th>
-                                <th style="width:64px; text-align:center;">操作</th>
+                                <th style="width:124px; text-align:center;">操作</th>
                             </tr>
                         </thead>
                         <tbody id="cdk_body"></tbody>
@@ -1178,7 +1179,7 @@
     <script src="/admin/assets/security.js?v=20261127-ui-polish"></script>
     <script src="/admin/assets/config.js?v=20261127-plus-only"></script>
     <script src="/admin/assets/cards.js?v=20261127-plus-only"></script>
-    <script src="/admin/assets/cdks.js?v=20261127-plus-only"></script>
+    <script src="/admin/assets/cdks.js?v=20261128-cooldown"></script>
     <script src="/admin/assets/sessions.js?v=20261127-ui-polish"></script>
     <script src="/admin/assets/tasks.js?v=20261127-ui-polish"></script>
     <script src="/admin/assets/main.js?v=20261127-ui-polish"></script>

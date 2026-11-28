@@ -3,10 +3,11 @@
    tableSearch, paginationState, pruneSelection, loadData */
 /* exported loadCdkList, renderCDKTable, setFilter, selectCdkQuickFilter, updateCdkSelectedBadge, handleCdkSearch, selectCdkPlanTypeFilter,
    toggleImportBox, togglePageSelection, selectUnusedOnPage, generateCDKs, importCDKs,
-   copyCDK, batchCopyCDKs, batchDeleteCDKs, deleteCDK */
+   copyCDK, batchCopyCDKs, batchDeleteCDKs, deleteCDK, clearCdkCooldown, clearIpCooldown */
 'use strict';
 
 let cdkPool = [];
+let activeIpCooldowns = [];
 let cdkPlanTypeFilter = 'all';
 
 function getCdkCode(item) {
@@ -150,9 +151,37 @@ function selectUnusedOnPage(type) {
     showMessage(count > 0 ? `已选中本页 ${count} 个未使用 CDK` : '本页没有未使用的 CDK', count > 0 ? 'success' : 'warning');
 }
 
+function renderIpCooldownBanner() {
+    const banner = document.getElementById('cdk_ip_cooldown_banner');
+    if (!banner) return;
+    if (!activeIpCooldowns.length) {
+        banner.style.display = 'none';
+        banner.innerHTML = '';
+        return;
+    }
+    banner.style.display = 'flex';
+    banner.innerHTML = `
+        <div class="cdk-cooldown-banner-title">
+            <i data-lucide="clock"></i>
+            <span>当前有 <strong>${activeIpCooldowns.length}</strong> 个 IP 因连续失败处于 30 分钟冷静期：</span>
+        </div>
+        <div class="cdk-cooldown-chips">
+            ${activeIpCooldowns.map((item) => {
+                const ip = escapeHtml(item.scopeKey || '');
+                const mins = Math.max(1, Number(item.remainingMinutes || 1));
+                return `<span class="cdk-cooldown-chip">
+                    <code>${ip}</code>
+                    <span class="cdk-cooldown-mins">剩 ${mins} 分钟</span>
+                    <button type="button" class="btn-unlock-cooldown" onclick="clearIpCooldown('${ip}')">解除冷却</button>
+                </span>`;
+            }).join('')}
+        </div>`;
+}
+
 function renderCDKTable() {
     const tbody = document.getElementById('cdk_body');
     if (!tbody) return;
+    renderIpCooldownBanner();
     renderCdkQuickTabs();
     updateCdkSelectedBadge();
     const pageData = getPageItems(getFilteredCdks(), 'cdk');
@@ -169,13 +198,21 @@ function renderCDKTable() {
         const planType = typeof cdk === 'string' ? 'plus' : String(cdk.plan_type || 'unknown').trim().toLowerCase();
         const usedAt = typeof cdk === 'string' ? null : cdk.used_at;
         const sessionPreview = typeof cdk === 'string' ? null : (cdk.session_preview || null);
+        const failCount = typeof cdk === 'string' ? 0 : Number(cdk.fail_count || 0);
+        const cooldownMinutes = typeof cdk === 'string' ? 0 : Number(cdk.cooldown_remaining_minutes || 0);
         const [planTypeColor, planTypeBg] = getPlanColors(planType);
         const planTypeLabel = formatPlanLabel(planType);
+        const failTitle = failCount > 0 ? ` title="近期客户侧失败 ${failCount}/3 次"` : '';
         const statusBadge = status === 'processing'
             ? '<span class="status-badge status-warning">开通中</span>'
             : (status === 'used'
                 ? '<span class="status-badge status-success">已使用</span>'
-                : '<span class="status-badge status-running">未使用</span>');
+                : (cooldownMinutes > 0
+                    ? `<span class="status-badge status-warning" title="连续失败 3 次冷却中，剩余约 ${cooldownMinutes} 分钟">冷静中 ${cooldownMinutes}m</span>`
+                    : `<span class="status-badge status-running"${failTitle}>未使用</span>`));
+        const unlockBtn = cooldownMinutes > 0 || failCount > 0
+            ? `<button type="button" class="btn-unlock-cooldown" onclick="clearCdkCooldown('${escapeHtml(code)}')" title="清零失败计数并解除冷却">解除冷却</button>`
+            : '';
         return `
             <tr>
                 <td class="select-cell"><input type="checkbox" ${selectedItems.cdk.has(code) ? 'checked' : ''} onchange="toggleSelection('cdk', '${escapeHtml(code)}', this.checked); updateCdkSelectedBadge();"></td>
@@ -186,9 +223,12 @@ function renderCDKTable() {
                 <td style="text-align:center">${statusBadge}</td>
                 <td style="white-space:nowrap; font-size:12.5px; color:var(--text-dim);">${usedAt ? escapeHtml(formatTimeShort(usedAt)) : '-'}</td>
                 <td style="text-align:center">
-                    <button class="btn-delete" onclick="deleteCDK('${escapeHtml(code)}')" title="删除">
-                        <i data-lucide="trash-2"></i>
-                    </button>
+                    <div class="cdk-row-actions">
+                        ${unlockBtn}
+                        <button class="btn-delete" onclick="deleteCDK('${escapeHtml(code)}')" title="删除">
+                            <i data-lucide="trash-2"></i>
+                        </button>
+                    </div>
                 </td>
             </tr>`;
     }).join('');
@@ -197,7 +237,10 @@ function renderCDKTable() {
 }
 
 async function loadCdkList() {
-    const cdkRes = await authFetch('/api/admin/cdks');
+    const [cdkRes, cooldownRes] = await Promise.all([
+        authFetch('/api/admin/cdks'),
+        authFetch('/api/admin/activation-cooldowns').catch(() => null)
+    ]);
     let cdkData = [];
     try {
         cdkData = await cdkRes.json();
@@ -208,8 +251,43 @@ async function loadCdkList() {
         throw new Error(cdkData?.message || `加载 CDK 失败（${cdkRes.status}）`);
     }
     cdkPool = Array.isArray(cdkData) ? cdkData : (Array.isArray(cdkData?.cdks) ? cdkData.cdks : []);
+    activeIpCooldowns = [];
+    if (cooldownRes && cooldownRes.ok) {
+        const cooldownData = await cooldownRes.json().catch(() => null);
+        if (cooldownData?.success && Array.isArray(cooldownData.cooldowns)) {
+            activeIpCooldowns = cooldownData.cooldowns;
+        }
+    }
     pruneSelection('cdk', cdkPool, getCdkCode);
     renderCDKTable();
+}
+
+async function clearCdkCooldown(cdk) {
+    try {
+        const res = await authFetch(`/api/admin/cdks/${encodeURIComponent(cdk)}/clear-cooldown`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.message || '解除冷却失败');
+        showMessage(data.message || `已解除 ${cdk} 的冷却`, 'success');
+        await loadCdkList();
+    } catch (error) {
+        showMessage(error.message || '解除 CDK 冷却失败', 'error');
+    }
+}
+
+async function clearIpCooldown(ip) {
+    try {
+        const res = await authFetch('/api/admin/activation-cooldowns/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scope_type: 'ip', scope_key: ip })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.message || '解除 IP 冷却失败');
+        showMessage(data.message || `已解除 ${ip} 的冷却`, 'success');
+        await loadCdkList();
+    } catch (error) {
+        showMessage(error.message || '解除 IP 冷却失败', 'error');
+    }
 }
 
 async function markCDKShipped(cdk) {
