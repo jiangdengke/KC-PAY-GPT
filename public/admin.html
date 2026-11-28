@@ -548,11 +548,15 @@
                             <div style="margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--divider);">
                                 <div id="totp_status_text" class="admin-subbox" style="font-size: 13px; color: var(--text-secondary); margin-bottom: 14px; padding: 10px 12px;">2FA 状态加载中...</div>
                                 <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                                    <button class="btn btn-primary" onclick="setupAdmin2fa()">
+                                    <button type="button" id="totp_setup_btn" class="btn btn-primary" onclick="setupAdmin2fa()">
                                         <i data-lucide="smartphone"></i>
-                                        绑定 Google Authenticator
+                                        <span>绑定 Google Authenticator</span>
                                     </button>
-                                    <button class="btn btn-danger" onclick="disableAdmin2fa()">
+                                    <button type="button" id="totp_rotate_btn" class="btn btn-secondary" style="display:none;" onclick="rotateAdmin2fa()">
+                                        <i data-lucide="refresh-cw"></i>
+                                        更换新密钥
+                                    </button>
+                                    <button type="button" class="btn btn-danger" onclick="disableAdmin2fa()">
                                         <i data-lucide="shield-off"></i>
                                         关闭 2FA
                                     </button>
@@ -561,7 +565,10 @@
                                     <img id="totp_qr_img" alt="Google Authenticator QR" style="display:block; width:220px; height:220px; margin:0 auto 12px; border-radius:8px; background:#fff;">
                                     <div style="font-size: 12px; word-break: break-all; margin-bottom: 10px;" id="totp_secret_text"></div>
                                     <input type="text" id="totp_confirm_code" class="asset-input" placeholder="输入 Authenticator 6 位码确认" inputmode="numeric" maxlength="6">
-                                    <button class="btn btn-primary" style="margin-top: 10px; width: 100%; justify-content: center;" onclick="confirmAdmin2fa()">确认启用</button>
+                                    <div style="margin-top: 10px; display: flex; gap: 8px;">
+                                        <button type="button" id="totp_confirm_btn" class="btn btn-primary" style="flex: 1; justify-content: center;" onclick="confirmAdmin2fa()">确认启用</button>
+                                        <button type="button" id="totp_hide_btn" class="btn btn-secondary" onclick="hideAdmin2faSetupBox()">收起</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1176,7 +1183,7 @@
     </main>
 
     <script src="/admin/assets/core.js?v=20261127-plus-only"></script>
-    <script src="/admin/assets/security.js?v=20261127-ui-polish"></script>
+    <script src="/admin/assets/security.js?v=20261128-2fa-share"></script>
     <script src="/admin/assets/config.js?v=20261127-plus-only"></script>
     <script src="/admin/assets/cards.js?v=20261127-plus-only"></script>
     <script src="/admin/assets/cdks.js?v=20261128-cooldown"></script>

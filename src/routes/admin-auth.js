@@ -418,24 +418,65 @@ function createAdminAuthRouters({
         try {
             await ensureStoreReady();
             const authConfig = await store.getAdminAuthConfig();
-            let secret = String(authConfig.totpSecret || '').trim();
-            if (!secret || authConfig.totpEnabled) {
+            const reset = Boolean(req.body?.reset);
+            const currentSecret = String(authConfig.totpSecret || '').trim();
+            const alreadyEnabled = Boolean(authConfig.totpEnabled && currentSecret);
+            let secret = currentSecret;
+            let pendingRotation = false;
+
+            if (reset) {
                 secret = adminAuth.generateTotpSecret();
-                await store.saveAdminTotpConfig({ secret, enabled: false });
+                if (alreadyEnabled) {
+                    if (typeof store.saveAdminTotpPendingSecret === 'function') {
+                        await store.saveAdminTotpPendingSecret(secret);
+                    } else {
+                        await store.saveAdminTotpConfig({
+                            secret: currentSecret,
+                            enabled: true,
+                            pendingSecret: secret
+                        });
+                    }
+                    pendingRotation = true;
+                } else {
+                    await store.saveAdminTotpConfig({ secret, enabled: false, pendingSecret: '' });
+                }
+            } else if (!secret) {
+                secret = adminAuth.generateTotpSecret();
+                await store.saveAdminTotpConfig({ secret, enabled: false, pendingSecret: '' });
             }
+
             const otpauthUrl = adminAuth.getTotpUri(authConfig.email, secret);
             const qrCodeUrl = await QRCode.toDataURL(otpauthUrl, {
                 width: 220,
                 margin: 2,
                 errorCorrectionLevel: 'M'
             });
+            const message = pendingRotation
+                ? '已生成新密钥（确认前旧设备仍有效）：请扫码并输入新 6 位验证码完成替换'
+                : (alreadyEnabled
+                    ? '当前 2FA 已启用：新设备直接扫码即可共同使用，原有设备不受影响'
+                    : '请使用 Google Authenticator 扫码后输入验证码确认启用（支持多人同时扫描同一二维码）');
             return res.json({
                 success: true,
                 secret,
                 otpauthUrl,
                 qrCodeUrl,
-                message: '请使用 Google Authenticator 扫码后输入验证码确认启用'
+                alreadyEnabled,
+                pendingRotation,
+                message
             });
+        } catch (error) {
+            return res.status(500).json({ success: false, message: error.message });
+        }
+    });
+
+    protectedAuthRouter.post('/2fa/cancel-rotate', async (req, res) => {
+        try {
+            await ensureStoreReady();
+            if (typeof store.saveAdminTotpPendingSecret === 'function') {
+                await store.saveAdminTotpPendingSecret('');
+            }
+            return res.json({ success: true, message: '已取消更换密钥，原有 2FA 保持生效' });
         } catch (error) {
             return res.status(500).json({ success: false, message: error.message });
         }
@@ -443,19 +484,56 @@ function createAdminAuthRouters({
 
     protectedAuthRouter.post('/2fa/confirm', async (req, res) => {
         const code = String(req.body?.code || '').trim();
+        const mode = String(req.body?.mode || '').trim().toLowerCase();
         if (!code) {
             return res.status(400).json({ success: false, message: '请输入 Authenticator 验证码' });
         }
         try {
             await ensureStoreReady();
             const authConfig = await store.getAdminAuthConfig();
-            if (!authConfig.totpSecret) {
+            const currentSecret = String(authConfig.totpSecret || '').trim();
+            const pendingSecret = String(authConfig.totpPendingSecret || '').trim();
+
+            if (mode === 'rotate') {
+                if (!pendingSecret) {
+                    return res.status(400).json({ success: false, message: '当前没有待确认的新密钥，请先点击「更换新密钥」' });
+                }
+                if (!adminAuth.verifyTotpCode(pendingSecret, code)) {
+                    return res.status(400).json({ success: false, message: '新密钥验证码错误，请重试（原 2FA 仍保持有效）' });
+                }
+                await store.saveAdminTotpConfig({ secret: pendingSecret, enabled: true, pendingSecret: '' });
+                return res.json({
+                    success: true,
+                    rotated: true,
+                    message: '已更换为新 Google Authenticator 密钥并启用（旧设备已失效）'
+                });
+            }
+
+            if (pendingSecret && mode !== 'share' && adminAuth.verifyTotpCode(pendingSecret, code)) {
+                await store.saveAdminTotpConfig({ secret: pendingSecret, enabled: true, pendingSecret: '' });
+                return res.json({
+                    success: true,
+                    rotated: true,
+                    message: '已更换为新 Google Authenticator 密钥并启用（旧设备已失效）'
+                });
+            }
+
+            if (!currentSecret) {
                 return res.status(400).json({ success: false, message: '请先发起 2FA 绑定' });
             }
-            if (!adminAuth.verifyTotpCode(authConfig.totpSecret, code)) {
-                return res.status(400).json({ success: false, message: '验证码错误，请重试' });
+            if (!adminAuth.verifyTotpCode(currentSecret, code)) {
+                return res.status(400).json({ success: false, message: '验证码错误，请检查设备时间同步后重试' });
             }
-            await store.saveAdminTotpConfig({ secret: authConfig.totpSecret, enabled: true });
+
+            if (authConfig.totpEnabled) {
+                return res.json({
+                    success: true,
+                    verifiedOnly: true,
+                    message: '验证通过！新设备已与当前 2FA 同步，可直接用于登录'
+                });
+            }
+
+            await store.saveAdminTotpConfig({ secret: currentSecret, enabled: true, pendingSecret: '' });
             return res.json({ success: true, message: 'Google Authenticator 已启用' });
         } catch (error) {
             return res.status(500).json({ success: false, message: error.message });
@@ -474,7 +552,7 @@ function createAdminAuthRouters({
             if (authConfig.totpEnabled && !adminAuth.verifyTotpCode(authConfig.totpSecret, code)) {
                 return res.status(400).json({ success: false, message: 'Authenticator 验证码错误' });
             }
-            await store.saveAdminTotpConfig({ secret: '', enabled: false });
+            await store.saveAdminTotpConfig({ secret: '', enabled: false, pendingSecret: '' });
             return res.json({ success: true, message: 'Google Authenticator 已关闭' });
         } catch (error) {
             return res.status(500).json({ success: false, message: error.message });

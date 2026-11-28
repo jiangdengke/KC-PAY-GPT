@@ -1,8 +1,10 @@
 /* global lucide, authFetch, showMessage, showAdminConfirm, escapeHtml, formatTimeShort, redirectToLogin, setAdminLoginPath, ADMIN_LOGIN_EVENT_LABELS */
 /* exported updateAdminPathPreview, loadAdminSecurityStatus, saveAdminPaths, saveAdmin2faLoginMode,
-   setupAdmin2fa, confirmAdmin2fa, disableAdmin2fa, changeAdminPassword,
+   setupAdmin2fa, rotateAdmin2fa, confirmAdmin2fa, hideAdmin2faSetupBox, disableAdmin2fa, changeAdminPassword,
    loadAdminLoginLogs, loadIpBans, submitIpBan, removeIpBan, prefillIpBan */
 'use strict';
+
+let totpBoxMode = 'enable';
 
 function updateAdminPathPreview() {
     const origin = location.origin;
@@ -50,6 +52,16 @@ async function loadAdminSecurityStatus() {
                 telegram: '仅 Telegram'
             }[data.login2faMode] || '登录时可切换';
             statusEl.textContent = `当前账号 ${data.email || '-'} · 2FA: ${data.totpEnabled ? '已启用' : '未启用'} · 已配置: ${available} · 策略: ${modeLabel}`;
+        }
+        const setupBtnLabel = document.querySelector('#totp_setup_btn span');
+        if (setupBtnLabel) {
+            setupBtnLabel.textContent = data.totpEnabled
+                ? '查看绑定二维码（多人扫码）'
+                : '绑定 Google Authenticator';
+        }
+        const rotateBtn = document.getElementById('totp_rotate_btn');
+        if (rotateBtn) {
+            rotateBtn.style.display = data.totpEnabled ? 'inline-flex' : 'none';
         }
     } catch (_) { /* ignore */ }
 }
@@ -101,14 +113,19 @@ async function saveAdmin2faLoginMode() {
     }
 }
 
-async function setupAdmin2fa() {
+async function setupAdmin2fa(reset = false) {
     try {
-        const res = await authFetch('/api/admin/2fa/setup', { method: 'POST' });
+        const res = await authFetch('/api/admin/2fa/setup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reset: Boolean(reset) })
+        });
         const data = await res.json();
         if (!res.ok || !data.success) {
             showMessage(data.message || '绑定失败', 'error');
             return;
         }
+        totpBoxMode = data.pendingRotation ? 'rotate' : (data.alreadyEnabled ? 'share' : 'enable');
         document.getElementById('totp_setup_box').style.display = 'block';
         const qrImg = document.getElementById('totp_qr_img');
         if (qrImg) {
@@ -120,13 +137,54 @@ async function setupAdmin2fa() {
                 qrImg.style.display = 'none';
             }
         }
+        const confirmInput = document.getElementById('totp_confirm_code');
+        const confirmBtn = document.getElementById('totp_confirm_btn');
+        const hideBtn = document.getElementById('totp_hide_btn');
+        if (confirmInput) confirmInput.value = '';
+        let hintHtml = '请用 Google Authenticator 扫描上方二维码（支持多人同时扫描同一二维码）';
+        if (totpBoxMode === 'share') {
+            hintHtml = '<strong>当前 2FA 已启用</strong>：其他人直接用 Google Authenticator 扫码即可共用，原有已绑定设备不会失效。';
+            if (confirmInput) confirmInput.placeholder = '可选：输入新设备 6 位码验证是否同步';
+            if (confirmBtn) confirmBtn.textContent = '验证新设备码';
+            if (hideBtn) hideBtn.textContent = '收起二维码';
+        } else if (totpBoxMode === 'rotate') {
+            hintHtml = '<strong style="color:#b45309;">正在更换新密钥</strong>：输入下方新 6 位验证码确认前，旧设备继续有效；确认替换后，旧设备将全部失效。';
+            if (confirmInput) confirmInput.placeholder = '输入新密钥生成的 6 位验证码';
+            if (confirmBtn) confirmBtn.textContent = '确认替换为新密钥';
+            if (hideBtn) hideBtn.textContent = '取消更换';
+        } else {
+            if (confirmInput) confirmInput.placeholder = '输入 Authenticator 6 位码确认';
+            if (confirmBtn) confirmBtn.textContent = '确认启用';
+            if (hideBtn) hideBtn.textContent = '收起';
+        }
         document.getElementById('totp_secret_text').innerHTML = `
-            <div style="margin-bottom:6px;">请用 Google Authenticator 扫描上方二维码</div>
+            <div style="margin-bottom:6px; line-height:1.5;">${hintHtml}</div>
             <div>手动密钥：<code style="word-break:break-all;">${escapeHtml(data.secret || '')}</code></div>
         `;
-        showMessage('扫码后输入 6 位验证码确认启用', 'success');
+        showMessage(data.message || '扫码后输入 6 位验证码确认', 'success');
     } catch (error) {
         showMessage(error.message || '绑定失败', 'error');
+    }
+}
+
+async function rotateAdmin2fa() {
+    const ok = await showAdminConfirm(
+        '确定要生成新的 2FA 密钥吗？\n在输入新 6 位验证码确认前，现有设备仍可正常使用；确认替换后，所有旧设备都将失效，需要所有人重新扫码绑定。',
+        '更换 2FA 密钥'
+    );
+    if (!ok) return;
+    await setupAdmin2fa(true);
+}
+
+async function hideAdmin2faSetupBox() {
+    const box = document.getElementById('totp_setup_box');
+    if (box) box.style.display = 'none';
+    const input = document.getElementById('totp_confirm_code');
+    if (input) input.value = '';
+    if (totpBoxMode === 'rotate') {
+        totpBoxMode = 'share';
+        await authFetch('/api/admin/2fa/cancel-rotate', { method: 'POST' }).catch(() => {});
+        showMessage('已取消更换密钥，原有 2FA 保持生效', 'info');
     }
 }
 
@@ -136,12 +194,17 @@ async function confirmAdmin2fa() {
         const res = await authFetch('/api/admin/2fa/confirm', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code })
+            body: JSON.stringify({ code, mode: totpBoxMode })
         });
         const data = await res.json();
-        showMessage(data.message || (data.success ? '已启用' : '失败'), data.success ? 'success' : 'error');
+        showMessage(data.message || (data.success ? '已确认' : '失败'), data.success ? 'success' : 'error');
         if (data.success) {
-            document.getElementById('totp_setup_box').style.display = 'none';
+            const input = document.getElementById('totp_confirm_code');
+            if (input) input.value = '';
+            if (!data.verifiedOnly) {
+                document.getElementById('totp_setup_box').style.display = 'none';
+                totpBoxMode = 'share';
+            }
             await loadAdminSecurityStatus();
         }
     } catch (error) {

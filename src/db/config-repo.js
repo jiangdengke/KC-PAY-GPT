@@ -76,6 +76,7 @@ async function ensureDefaultConfigs() {
         ['admin_secondary_password_hash', createPasswordHash(config.admin.defaultSecondaryPassword)],
         ['admin_secondary_password_version', '1'],
         ['admin_totp_secret', ''],
+        ['admin_totp_pending_secret', ''],
         ['admin_totp_enabled', '0'],
         ['telegram_on_admin_login', '1'],
         ['admin_2fa_login_mode', 'either'],
@@ -410,7 +411,7 @@ async function getAdminAuthConfig() {
     const rows = await runQuery(
         `SELECT config_key, config_value
          FROM app_config
-         WHERE config_key IN (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         WHERE config_key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
             'admin_password_hash',
             'admin_password_version',
@@ -418,6 +419,7 @@ async function getAdminAuthConfig() {
             'admin_secondary_password_hash',
             'admin_secondary_password_version',
             'admin_totp_secret',
+            'admin_totp_pending_secret',
             'admin_totp_enabled',
             'telegram_on_admin_login',
             'admin_2fa_login_mode'
@@ -432,6 +434,7 @@ async function getAdminAuthConfig() {
         secondaryPasswordHash: String(map.admin_secondary_password_hash || ''),
         secondaryPasswordVersion: Math.max(1, Number(map.admin_secondary_password_version || 1)),
         totpSecret: String(map.admin_totp_secret || ''),
+        totpPendingSecret: String(map.admin_totp_pending_secret || ''),
         totpEnabled: String(map.admin_totp_enabled || '0') === '1',
         notifyAdminLogin: String(map.telegram_on_admin_login || '1') !== '0',
         login2faMode: ['either', 'totp', 'telegram'].includes(String(map.admin_2fa_login_mode || '').trim().toLowerCase())
@@ -532,19 +535,24 @@ async function updateAdminSecondaryPassword(password) {
     return { secondaryPasswordVersion: nextVersion };
 }
 
-async function saveAdminTotpConfig({ secret, enabled }) {
+async function saveAdminTotpConfig({ secret, enabled, pendingSecret = '' }) {
     await withTransaction(async (connection) => {
         await runExecute(
             `INSERT INTO app_config (config_key, config_value)
-             VALUES (?, ?), (?, ?)
+             VALUES (?, ?), (?, ?), (?, ?)
              ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)`,
             [
                 'admin_totp_secret', String(secret || ''),
-                'admin_totp_enabled', enabled ? '1' : '0'
+                'admin_totp_enabled', enabled ? '1' : '0',
+                'admin_totp_pending_secret', String(pendingSecret || '')
             ],
             { connection }
         );
     });
+}
+
+async function saveAdminTotpPendingSecret(pendingSecret) {
+    await setAppConfigValue('admin_totp_pending_secret', String(pendingSecret || ''));
 }
 
 module.exports = {
@@ -566,5 +574,6 @@ module.exports = {
     updateAdminEmail,
     updateAdminPassword,
     updateAdminSecondaryPassword,
-    saveAdminTotpConfig
+    saveAdminTotpConfig,
+    saveAdminTotpPendingSecret
 };

@@ -201,6 +201,7 @@ describe('Hardened security without Cloudflare Access', () => {
     let securityRef;
     let passwordVersion = 2;
     let totpSecret = '';
+    let totpPendingSecret = '';
     let totpEnabled = false;
     let login2faMode = 'either';
     const clearedCdks = [];
@@ -225,12 +226,17 @@ describe('Hardened security without Cloudflare Access', () => {
                 secondaryPasswordVersion: 1,
                 totpEnabled,
                 totpSecret,
+                totpPendingSecret,
                 login2faMode,
                 notifyAdminLogin: false
             }),
-            saveAdminTotpConfig: async ({ secret, enabled }) => {
+            saveAdminTotpConfig: async ({ secret, enabled, pendingSecret = '' }) => {
                 totpSecret = String(secret || '');
                 totpEnabled = Boolean(enabled);
+                totpPendingSecret = String(pendingSecret || '');
+            },
+            saveAdminTotpPendingSecret: async (pendingSecret) => {
+                totpPendingSecret = String(pendingSecret || '');
             },
             saveAdmin2faLoginMode: async (mode) => {
                 login2faMode = mode;
@@ -558,5 +564,102 @@ describe('Hardened security without Cloudflare Access', () => {
         });
         expect(okCdkClear.status).toBe(200);
         expect(clearedCdks).toContain('KC-COOLED-PLUS01');
+    });
+
+    it('reuses existing TOTP secret for multi-device QR sharing and protects active 2FA during pending rotation', async () => {
+        const validToken = adminAuth.issueAdminToken(passwordVersion, 'owner@example.com').token;
+        totpSecret = '';
+        totpPendingSecret = '';
+        totpEnabled = false;
+
+        // 1. Initial setup generates a secret and keeps enabled=false until confirmed
+        const firstSetupRes = await fetch(`${baseUrl}/api/admin/2fa/setup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${validToken}` },
+            body: JSON.stringify({})
+        });
+        expect(firstSetupRes.status).toBe(200);
+        const firstSetup = await firstSetupRes.json();
+        expect(firstSetup.alreadyEnabled).toBe(false);
+        expect(firstSetup.pendingRotation).toBe(false);
+        const originalSecret = firstSetup.secret;
+
+        const nowCounter = Math.floor(Date.now() / 1000 / 30);
+        const initialCode = adminAuth.generateTotpToken(originalSecret, nowCounter);
+        const confirmInitialRes = await fetch(`${baseUrl}/api/admin/2fa/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${validToken}` },
+            body: JSON.stringify({ code: initialCode, mode: 'enable' })
+        });
+        expect(confirmInitialRes.status).toBe(200);
+        expect(totpEnabled).toBe(true);
+        expect(totpSecret).toBe(originalSecret);
+
+        // 2. Clicking setup again while already enabled returns the SAME secret without disabling 2FA
+        const shareRes = await fetch(`${baseUrl}/api/admin/2fa/setup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${validToken}` },
+            body: JSON.stringify({})
+        });
+        expect(shareRes.status).toBe(200);
+        const shareBody = await shareRes.json();
+        expect(shareBody.secret).toBe(originalSecret);
+        expect(shareBody.alreadyEnabled).toBe(true);
+        expect(shareBody.pendingRotation).toBe(false);
+        expect(totpEnabled).toBe(true);
+        expect(totpSecret).toBe(originalSecret);
+
+        // 3. Second device can verify its 6-digit code without changing active secret
+        const verifySecondRes = await fetch(`${baseUrl}/api/admin/2fa/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${validToken}` },
+            body: JSON.stringify({ code: adminAuth.generateTotpToken(originalSecret, nowCounter), mode: 'share' })
+        });
+        expect(verifySecondRes.status).toBe(200);
+        const verifySecondBody = await verifySecondRes.json();
+        expect(verifySecondBody.verifiedOnly).toBe(true);
+        expect(totpSecret).toBe(originalSecret);
+        expect(totpEnabled).toBe(true);
+
+        // 4. Explicit rotation stores a pending secret without touching the active secret until confirmed
+        const rotateRes = await fetch(`${baseUrl}/api/admin/2fa/setup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${validToken}` },
+            body: JSON.stringify({ reset: true })
+        });
+        expect(rotateRes.status).toBe(200);
+        const rotateBody = await rotateRes.json();
+        expect(rotateBody.pendingRotation).toBe(true);
+        expect(rotateBody.secret).not.toBe(originalSecret);
+        expect(totpSecret).toBe(originalSecret);
+        expect(totpEnabled).toBe(true);
+        expect(totpPendingSecret).toBe(rotateBody.secret);
+
+        // Wrong code during rotation does NOT affect active 2FA
+        const badRotateConfirm = await fetch(`${baseUrl}/api/admin/2fa/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${validToken}` },
+            body: JSON.stringify({ code: '000000', mode: 'rotate' })
+        });
+        expect(badRotateConfirm.status).toBe(400);
+        expect(totpSecret).toBe(originalSecret);
+        expect(totpEnabled).toBe(true);
+
+        // Valid code for pending secret promotes it and clears pending
+        const goodRotateConfirm = await fetch(`${baseUrl}/api/admin/2fa/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${validToken}` },
+            body: JSON.stringify({ code: adminAuth.generateTotpToken(rotateBody.secret, nowCounter), mode: 'rotate' })
+        });
+        expect(goodRotateConfirm.status).toBe(200);
+        const goodRotateBody = await goodRotateConfirm.json();
+        expect(goodRotateBody.rotated).toBe(true);
+        expect(totpSecret).toBe(rotateBody.secret);
+        expect(totpPendingSecret).toBe('');
+        expect(totpEnabled).toBe(true);
+
+        totpEnabled = false;
+        totpSecret = '';
+        totpPendingSecret = '';
     });
 });

@@ -683,6 +683,7 @@ module.exports = {
     safeJsonReviver,
     MIN_IMPORTED_CDK_LENGTH,
     findWeakCdkCodes,
+    generateTotpToken,
     generateTotpSecret,
     verifyTotpCode,
     getTotpUri,
