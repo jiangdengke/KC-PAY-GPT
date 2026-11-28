@@ -222,7 +222,7 @@ describe('runGptApiWorker failure notification wiring', () => {
         expect(other.submitCalls[0].idempotencyKey).not.toBe(first.submitCalls[0].idempotencyKey);
     });
 
-    it('keeps customer text generic and sends an Open terminal reason/code to Telegram admins', async () => {
+    it('auto-rolls back CDK without manual hold on customer-definite failure (EXISTING_SUBSCRIPTION_NOT_OURS) and still sends full diagnostic to admins', async () => {
         const harness = createHarness({
             openProtocol: true,
             queryResults: [{
@@ -240,12 +240,11 @@ describe('runGptApiWorker failure notification wiring', () => {
 
         await harness.run();
 
-        expect(getFinalUpdate(harness, 'failed').message).toBe(GENERIC_FAILURE_MESSAGE);
-        expect(getFinalBroadcast(harness, 'failed').message).toBe(GENERIC_FAILURE_MESSAGE);
+        expect(getFinalUpdate(harness, 'failed').message).toContain('已有生效中的订阅');
+        expect(getFinalBroadcast(harness, 'failed').message).toContain('原卡密已自动退回');
         expect(harness.notifications).toHaveLength(1);
         expect(harness.notifications[0]).toMatchObject({
             event: 'failure',
-            message: GENERIC_FAILURE_MESSAGE,
             diagnostic: {
                 reason: 'Account has an existing subscription or recent payment.',
                 code: 'EXISTING_SUBSCRIPTION_NOT_OURS',
@@ -258,14 +257,13 @@ describe('runGptApiWorker failure notification wiring', () => {
         expect(formatTelegramMessage('failure', harness.notifications[0]))
             .toContain('详情: Account has an existing subscription or recent payment.');
 
-        expect(harness.holdCalls).toHaveLength(2);
-        expect(harness.holdRows).toHaveLength(1);
-        expect(harness.holdRows[0].reason).toContain('Account has an existing subscription or recent payment.');
-        expect(harness.holdRows[0].reason).not.toBe(GENERIC_FAILURE_MESSAGE);
+        expect(harness.holdCalls).toHaveLength(0);
+        expect(harness.holdRows).toHaveLength(0);
+        expect(harness.releasedCards).toEqual([7]);
         expect(harness.markedUnusedCdks).toEqual(['KC-SYNTHETIC']);
     });
 
-    it('wires a legacy terminal failure into the same admin diagnostic path', async () => {
+    it('wires a legacy CAPTCHA_FAILED failure into customer-definite auto-rollback with admin diagnostic', async () => {
         const harness = createHarness({
             openProtocol: false,
             queryResults: [{
@@ -285,7 +283,10 @@ describe('runGptApiWorker failure notification wiring', () => {
 
         await harness.run();
 
-        expect(getFinalUpdate(harness, 'failed').message).toBe(GENERIC_FAILURE_MESSAGE);
+        expect(getFinalUpdate(harness, 'failed').message).toContain('人机验证超时或未通过');
+        expect(harness.holdRows).toHaveLength(0);
+        expect(harness.releasedCards).toEqual([7]);
+        expect(harness.markedUnusedCdks).toEqual(['KC-SYNTHETIC']);
         expect(harness.notifications[0].diagnostic).toMatchObject({
             reason: 'cf_challenge_unresolved',
             code: 'CAPTCHA_FAILED',
@@ -626,5 +627,421 @@ describe('runGptApiWorker failure notification wiring', () => {
         });
         expect([...taskUpdates].reverse().find((u) => u.status === 'failed')?.message)
             .toBe('当前暂无可用卡片，请稍后再试或联系客服');
+    });
+
+    it('retires a declined Orbitcard card and seamlessly swaps to a backup card once to succeed', async () => {
+        const orbitcardClient = require('../src/services/orbitcard-client');
+        const taskUpdates = [];
+        const broadcasts = [];
+        const notifications = [];
+        const holdRows = [];
+        const markedUnusedCdks = [];
+        const retiredCards = [];
+        const releasedCards = [];
+        const rechargeCreates = [];
+        const submitCalls = [];
+
+        const dbCards = new Map([
+            [901, { cardId: 901, status: 'ACTIVE', planType: 'plus', usageCount: 0, maxUsageCount: 2, initialAmount: 32, last4: '1111' }],
+            [902, { cardId: 902, status: 'ACTIVE', planType: 'plus', usageCount: 0, maxUsageCount: 2, initialAmount: 32, last4: '2222' }]
+        ]);
+
+        const store = {
+            getGptApiConfig: async () => ({
+                enabled: true,
+                api_key: 'synthetic-api-key',
+                card_source: 'orbitcard',
+                orbitcard_auto_create_card: false,
+                orbitcard_plus_unit_price: 20,
+                orbitcard_base_url: 'https://orbitcard.cc',
+                orbitcard_api_key: 'ok',
+                orbitcard_api_secret: 'os',
+                orbitcard_reuse_limits: { plus: 2 },
+                orbitcard_safety_margins: { plus: 0 },
+                country: 'US',
+                currency: 'USD'
+            }),
+            reserveOrbitcardCard: async (cards, _owner, { planType }) => {
+                for (const card of cards) {
+                    const row = dbCards.get(card.cardId);
+                    if (row && row.status === 'ACTIVE' && row.planType === planType && row.usageCount < row.maxUsageCount) {
+                        return {
+                            id: row.cardId,
+                            orbitcard_id: row.cardId,
+                            last4: row.last4,
+                            usage_count: row.usageCount,
+                            max_usage_count: row.maxUsageCount,
+                            plan_type: row.planType,
+                            initial_amount: row.initialAmount
+                        };
+                    }
+                }
+                return null;
+            },
+            createOrbitcardRecharge: async (input) => {
+                rechargeCreates.push({ ...input });
+                return true;
+            },
+            updateOrbitcardRecharge: async () => null,
+            recordOrbitcardCardUsage: async (cardId) => {
+                const row = dbCards.get(cardId);
+                row.usageCount += 1;
+                return { usageCount: row.usageCount, maxUsageCount: row.maxUsageCount };
+            },
+            releaseOrbitcardCard: async (cardId) => {
+                releasedCards.push(cardId);
+            },
+            retireOrbitcardCard: async (cardId) => {
+                retiredCards.push(cardId);
+                const row = dbCards.get(cardId);
+                if (row) row.status = 'RETIRED';
+            },
+            updateTaskLog: async (_jobKey, update) => taskUpdates.push({ ...update }),
+            createActivationManualHold: async (input) => {
+                holdRows.push(input);
+                return input;
+            },
+            resetCdkFailure: async () => null,
+            markCdkUnused: async (cdk) => markedUnusedCdks.push(cdk),
+            getMaintenanceModeState: async () => ({ enabled: false, drain: false }),
+            setMaintenanceModeState: async () => null
+        };
+
+        let orderAttempt = 0;
+        const runWorker = createGptApiWorker({
+            store,
+            gptApi: {
+                isDesolateOpenProtocol: () => true,
+                resolveOpenPlanCode: () => 'chatgptplusplan',
+                inspectPay: async () => ({ success: true }),
+                submitPay: async (_cfg, input) => {
+                    submitCalls.push({ ...input });
+                    orderAttempt += 1;
+                    return { success: true, orderId: `ord-swap-${orderAttempt}`, data: { status: 'pending' } };
+                },
+                queryTask: async () => ({ success: false }),
+                queryOrder: async (_cfg, orderId) => {
+                    if (orderId === 'ord-swap-1') {
+                        return {
+                            success: true,
+                            data: {
+                                status: 'failed',
+                                failureCode: 'CARD_DECLINED',
+                                failureMessage: '银行卡支付未获通过，本次充值失败。'
+                            },
+                            rawStatus: 'failed'
+                        };
+                    }
+                    return {
+                        success: true,
+                        data: { status: 'succeeded', subscriptionCancelled: true },
+                        rawStatus: 'succeeded'
+                    };
+                },
+                getGptOrderPollDelayMs: () => 0,
+                extractProviderMessage: (d) => d?.failureMessage || '',
+                extractCaptcha: () => null,
+                normalizeOpenOrderSummary: (d) => d,
+                extractTopupCode: () => null,
+                formatProgressMessage: () => '处理中'
+            },
+            orbitcard: {
+                ...orbitcardClient,
+                getCardList: vi.fn(async () => ({
+                    success: true,
+                    data: [
+                        { cardId: 901, status: 'ACTIVE', balance: 32, currency: 'USD', last4: '1111' },
+                        { cardId: 902, status: 'ACTIVE', balance: 32, currency: 'USD', last4: '2222' }
+                    ]
+                })),
+                getCardDetail: vi.fn(async (_cfg, cardId) => ({
+                    success: true,
+                    data: {
+                        cardId,
+                        cardNumber: cardId === 901 ? '4466190707811111' : '4466190707812222',
+                        expiry: '12/30',
+                        cvc: '123',
+                        holder: 'User'
+                    }
+                }))
+            },
+            activeTaskCaptchas: new Map(),
+            broadcastToTask: (_jobKey, update) => broadcasts.push({ ...update }),
+            notifyTaskOutcome: (payload) => notifications.push({ ...payload }),
+            logTask: vi.fn(),
+            releaseForegroundSlot: vi.fn(),
+            getTotalActiveJobs: () => 1,
+            sleep: async () => null,
+            env: { GPT_API_MAX_POLLS: '3', GPT_API_POLL_INTERVAL_MS: '0' },
+            logger: { error: vi.fn(), warn: vi.fn(), log: vi.fn() }
+        });
+
+        await runWorker({
+            task: { jobKey: 'job-swap-ok' },
+            token: 'synthetic-token',
+            session: { user: { email: 'user@example.com' }, accessToken: 'synthetic-access-token' },
+            cdk: 'KC-SWAP-OK',
+            planType: 'plus'
+        });
+
+        expect(retiredCards).toEqual([901]);
+        expect(releasedCards).toEqual([902]);
+        expect(dbCards.get(902).usageCount).toBe(1);
+        expect(submitCalls.map((c) => c.idempotencyKey)).toEqual(['gpt-api-job-swap-ok', 'gpt-api-job-swap-ok-r1']);
+        expect(rechargeCreates.map((r) => ({ cardId: r.cardId, jobKey: r.jobKey }))).toEqual([
+            { cardId: 901, jobKey: 'job-swap-ok' },
+            { cardId: 902, jobKey: 'job-swap-ok-r1' }
+        ]);
+        expect(holdRows).toHaveLength(0);
+        expect(markedUnusedCdks).toHaveLength(0);
+        expect([...taskUpdates].reverse().find((u) => u.status === 'success')?.message).toBe('开通成功');
+        expect(notifications.map((n) => n.event)).toEqual(['failure', 'success']);
+    });
+
+    it('retires a declined Orbitcard card and rolls back CDK without manual hold when no backup card is available', async () => {
+        const orbitcardClient = require('../src/services/orbitcard-client');
+        const taskUpdates = [];
+        const notifications = [];
+        const holdRows = [];
+        const markedUnusedCdks = [];
+        const retiredCards = [];
+
+        const dbCards = new Map([
+            [901, { cardId: 901, status: 'ACTIVE', planType: 'plus', usageCount: 0, maxUsageCount: 2, initialAmount: 32, last4: '1111' }]
+        ]);
+
+        const store = {
+            getGptApiConfig: async () => ({
+                enabled: true,
+                api_key: 'synthetic-api-key',
+                card_source: 'orbitcard',
+                orbitcard_auto_create_card: false,
+                orbitcard_plus_unit_price: 20,
+                orbitcard_base_url: 'https://orbitcard.cc',
+                orbitcard_api_key: 'ok',
+                orbitcard_api_secret: 'os',
+                orbitcard_reuse_limits: { plus: 2 },
+                orbitcard_safety_margins: { plus: 0 },
+                country: 'US',
+                currency: 'USD'
+            }),
+            getOrbitcardCardMetaByIds: async () => [],
+            syncOrbitcardCards: async () => ({ total: 0, inserted: 0, updated: 0, autoAssigned: 0, autoAssignedCards: [] }),
+            reserveOrbitcardCard: async (cards, _owner, { planType }) => {
+                for (const card of cards) {
+                    const row = dbCards.get(card.cardId);
+                    if (row && row.status === 'ACTIVE' && row.planType === planType && row.usageCount < row.maxUsageCount) {
+                        return {
+                            id: row.cardId,
+                            orbitcard_id: row.cardId,
+                            last4: row.last4,
+                            usage_count: row.usageCount,
+                            max_usage_count: row.maxUsageCount,
+                            plan_type: row.planType,
+                            initial_amount: row.initialAmount
+                        };
+                    }
+                }
+                return null;
+            },
+            createOrbitcardRecharge: async () => true,
+            updateOrbitcardRecharge: async () => null,
+            releaseOrbitcardCard: async () => null,
+            retireOrbitcardCard: async (cardId) => {
+                retiredCards.push(cardId);
+                const row = dbCards.get(cardId);
+                if (row) row.status = 'RETIRED';
+            },
+            updateTaskLog: async (_jobKey, update) => taskUpdates.push({ ...update }),
+            createActivationManualHold: async (input) => {
+                holdRows.push(input);
+                return input;
+            },
+            markCdkUnused: async (cdk) => markedUnusedCdks.push(cdk),
+            getMaintenanceModeState: async () => ({ enabled: false, drain: false }),
+            setMaintenanceModeState: async () => null
+        };
+
+        const runWorker = createGptApiWorker({
+            store,
+            gptApi: {
+                isDesolateOpenProtocol: () => true,
+                resolveOpenPlanCode: () => 'chatgptplusplan',
+                inspectPay: async () => ({ success: true }),
+                submitPay: async () => ({ success: true, orderId: 'ord-declined-only', data: { status: 'pending' } }),
+                queryTask: async () => ({ success: false }),
+                queryOrder: async () => ({
+                    success: true,
+                    data: {
+                        status: 'failed',
+                        failureMessage: '该卡片已达订阅上限，请更换银行卡后重试。'
+                    },
+                    rawStatus: 'failed'
+                }),
+                getGptOrderPollDelayMs: () => 0,
+                extractProviderMessage: (d) => d?.failureMessage || '',
+                extractCaptcha: () => null,
+                normalizeOpenOrderSummary: (d) => d,
+                extractTopupCode: () => null,
+                formatProgressMessage: () => '处理中'
+            },
+            orbitcard: {
+                ...orbitcardClient,
+                getCardList: vi.fn(async () => ({
+                    success: true,
+                    data: [{ cardId: 901, status: 'ACTIVE', balance: 32, currency: 'USD', last4: '1111' }]
+                })),
+                getProductCode: vi.fn(async () => ({ success: true, data: [] })),
+                getCardDetail: vi.fn(async () => ({
+                    success: true,
+                    data: { cardId: 901, cardNumber: '4466190707811111', expiry: '12/30', cvc: '123', holder: 'User' }
+                }))
+            },
+            activeTaskCaptchas: new Map(),
+            broadcastToTask: vi.fn(),
+            notifyTaskOutcome: (payload) => notifications.push({ ...payload }),
+            logTask: vi.fn(),
+            releaseForegroundSlot: vi.fn(),
+            getTotalActiveJobs: () => 1,
+            sleep: async () => null,
+            env: { GPT_API_MAX_POLLS: '3', GPT_API_POLL_INTERVAL_MS: '0' },
+            logger: { error: vi.fn(), warn: vi.fn(), log: vi.fn() }
+        });
+
+        await runWorker({
+            task: { jobKey: 'job-swap-empty' },
+            token: 'synthetic-token',
+            session: { user: { email: 'user@example.com' }, accessToken: 'synthetic-access-token' },
+            cdk: 'KC-SWAP-EMPTY',
+            planType: 'plus'
+        });
+
+        expect(retiredCards).toEqual([901]);
+        expect(holdRows).toHaveLength(0);
+        expect(markedUnusedCdks).toEqual(['KC-SWAP-EMPTY']);
+        expect(notifications.map((n) => n.event)).toEqual(['failure', 'card_pool_empty']);
+        expect([...taskUpdates].reverse().find((u) => u.status === 'failed')?.message)
+            .toContain('暂无备用卡');
+    });
+
+    it('releases Orbitcard card back to pool without retiring or holding CDK on customer-definite or pre-submit HTTP 422 failure', async () => {
+        const orbitcardClient = require('../src/services/orbitcard-client');
+        const runCase = async ({ submitResult, queryResult }) => {
+            const retiredCards = [];
+            const releasedCards = [];
+            const holdRows = [];
+            const markedUnusedCdks = [];
+            const taskUpdates = [];
+
+            const store = {
+                getGptApiConfig: async () => ({
+                    enabled: true,
+                    api_key: 'synthetic-api-key',
+                    card_source: 'orbitcard',
+                    orbitcard_auto_create_card: false,
+                    orbitcard_plus_unit_price: 20,
+                    orbitcard_base_url: 'https://orbitcard.cc',
+                    orbitcard_api_key: 'ok',
+                    orbitcard_api_secret: 'os',
+                    orbitcard_reuse_limits: { plus: 2 },
+                    orbitcard_safety_margins: { plus: 0 },
+                    country: 'US',
+                    currency: 'USD'
+                }),
+                reserveOrbitcardCard: async () => ({
+                    id: 905,
+                    orbitcard_id: 905,
+                    last4: '5555',
+                    usage_count: 0,
+                    max_usage_count: 2,
+                    plan_type: 'plus',
+                    initial_amount: 32
+                }),
+                createOrbitcardRecharge: async () => true,
+                updateOrbitcardRecharge: async () => null,
+                releaseOrbitcardCard: async (cardId) => releasedCards.push(cardId),
+                retireOrbitcardCard: async (cardId) => retiredCards.push(cardId),
+                updateTaskLog: async (_jobKey, update) => taskUpdates.push({ ...update }),
+                createActivationManualHold: async (input) => holdRows.push(input),
+                markCdkUnused: async (cdk) => markedUnusedCdks.push(cdk),
+                getMaintenanceModeState: async () => ({ enabled: false, drain: false }),
+                setMaintenanceModeState: async () => null
+            };
+
+            const runWorker = createGptApiWorker({
+                store,
+                gptApi: {
+                    isDesolateOpenProtocol: () => true,
+                    resolveOpenPlanCode: () => 'chatgptplusplan',
+                    inspectPay: async () => ({ success: true }),
+                    submitPay: async () => submitResult || { success: true, orderId: 'ord-cust', data: { status: 'pending' } },
+                    queryTask: async () => ({ success: false }),
+                    queryOrder: async () => queryResult,
+                    getGptOrderPollDelayMs: () => 0,
+                    extractProviderMessage: (d) => d?.failureMessage || d?.message || '',
+                    extractCaptcha: () => null,
+                    normalizeOpenOrderSummary: (d) => d,
+                    extractTopupCode: () => null,
+                    formatProgressMessage: () => '处理中'
+                },
+                orbitcard: {
+                    ...orbitcardClient,
+                    getCardList: vi.fn(async () => ({
+                        success: true,
+                        data: [{ cardId: 905, status: 'ACTIVE', balance: 32, currency: 'USD', last4: '5555' }]
+                    })),
+                    getCardDetail: vi.fn(async () => ({
+                        success: true,
+                        data: { cardId: 905, cardNumber: '4466190707815555', expiry: '12/30', cvc: '123', holder: 'User' }
+                    }))
+                },
+                activeTaskCaptchas: new Map(),
+                broadcastToTask: vi.fn(),
+                notifyTaskOutcome: vi.fn(),
+                logTask: vi.fn(),
+                releaseForegroundSlot: vi.fn(),
+                getTotalActiveJobs: () => 1,
+                sleep: async () => null,
+                env: { GPT_API_MAX_POLLS: '3', GPT_API_POLL_INTERVAL_MS: '0' },
+                logger: { error: vi.fn(), warn: vi.fn(), log: vi.fn() }
+            });
+
+            await runWorker({
+                task: { jobKey: 'job-safe-release' },
+                token: 'synthetic-token',
+                session: { user: { email: 'user@example.com' }, accessToken: 'synthetic-access-token' },
+                cdk: 'KC-SAFE-RELEASE',
+                planType: 'plus'
+            });
+            return { retiredCards, releasedCards, holdRows, markedUnusedCdks, taskUpdates };
+        };
+
+        const existingSub = await runCase({
+            queryResult: {
+                success: true,
+                data: { status: 'failed', failureCode: 'EXISTING_SUBSCRIPTION_NOT_OURS', failureMessage: 'Account already has subscription' },
+                rawStatus: 'failed'
+            }
+        });
+        expect(existingSub.retiredCards).toHaveLength(0);
+        expect(existingSub.releasedCards).toEqual([905]);
+        expect(existingSub.holdRows).toHaveLength(0);
+        expect(existingSub.markedUnusedCdks).toEqual(['KC-SAFE-RELEASE']);
+
+        const http422 = await runCase({
+            submitResult: {
+                success: false,
+                status: 422,
+                businessCode: 40013,
+                error: 'Session token expired',
+                data: { code: 40013, message: 'Session token expired' }
+            }
+        });
+        expect(http422.retiredCards).toHaveLength(0);
+        expect(http422.releasedCards).toEqual([905]);
+        expect(http422.holdRows).toHaveLength(0);
+        expect(http422.markedUnusedCdks).toEqual(['KC-SAFE-RELEASE']);
+        expect([...http422.taskUpdates].reverse().find((u) => u.status === 'failed')?.message)
+            .toContain('Session');
     });
 });

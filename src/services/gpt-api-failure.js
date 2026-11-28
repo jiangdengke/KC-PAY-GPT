@@ -1,8 +1,72 @@
 'use strict';
 
+const {
+    GPT_API_CUSTOMER_FAILURE_MESSAGE,
+    GPT_API_CUSTOMER_TIMEOUT_MESSAGE
+} = require('../utils/task-messages');
+
 const UNKNOWN_FAILURE_REASON = '原因缺失（第三方未提供失败原因）';
 const UNKNOWN_FAILURE_CODE = '未提供';
 const UNKNOWN_FAILURE_STATUS = '未知';
+
+const EXISTING_SUBSCRIPTION_CODES = new Set([
+    'EXISTING_SUBSCRIPTION_NOT_OURS',
+    'ALREADY_SUBSCRIBED',
+    'ALREADY_PLUS',
+    'ACTIVE_SUBSCRIPTION',
+    'DUPLICATE_SUBSCRIPTION'
+]);
+const SESSION_INVALID_CODES = new Set([
+    'SESSION_INVALID',
+    'SESSION_EXPIRED',
+    'UNAUTHORIZED',
+    'AUTH_FAILED',
+    'TOKEN_EXPIRED',
+    'LOGIN_REQUIRED',
+    'NOT_LOGGED_IN'
+]);
+const CAPTCHA_FAILURE_CODES = new Set([
+    'CAPTCHA_FAILED',
+    'CAPTCHA_TIMEOUT',
+    'CAPTCHA_EXPIRED',
+    'CAPTCHA_UNRESOLVED',
+    'CHALLENGE_FAILED',
+    'CHALLENGE_TIMEOUT'
+]);
+const ACCOUNT_INELIGIBLE_CODES = new Set([
+    'ACCOUNT_INELIGIBLE',
+    'INELIGIBLE',
+    'NOT_ELIGIBLE',
+    'UNSUPPORTED_ACCOUNT',
+    'WORKSPACE_NOT_SUPPORTED',
+    'REGION_UNSUPPORTED',
+    'COUNTRY_UNSUPPORTED',
+    'TEAM_ACCOUNT',
+    'ENTERPRISE_ACCOUNT'
+]);
+const CARD_DECLINED_CODES = new Set([
+    'CARD_DECLINED',
+    'PAYMENT_DECLINED',
+    'PAYMENT_FAILED',
+    'INSUFFICIENT_FUNDS',
+    'CARD_LIMIT_EXCEEDED',
+    'CARD_SUBSCRIPTION_LIMIT',
+    'DO_NOT_HONOR',
+    'EXPIRED_CARD',
+    'INVALID_CARD',
+    'GENERIC_DECLINE',
+    'FRAUDULENT',
+    'STOLEN_CARD',
+    'LOST_CARD',
+    'CARD_ERROR'
+]);
+
+const AMBIGUOUS_GUARD_PATTERN = /timeout|timed out|超时|状态未知|不确定|已扣款|ambiguous|uncertain/i;
+const EXISTING_SUBSCRIPTION_PATTERN = /existing subscription|already subscribed|already has.{0,24}subscription|already.{0,12}plus|已有.{0,8}订阅|已开通.{0,8}订阅|重复订阅|当前账号已有/i;
+const SESSION_INVALID_PATTERN = /session.{0,24}(invalid|expired|missing|required|无效|过期|失效)|access.?token.{0,24}(invalid|expired|无效|过期)|not logged in|unauthenticated|unauthorized|登录已失效|未登录/i;
+const CAPTCHA_FAILURE_PATTERN = /captcha.{0,24}(fail|timeout|expired|unresolved|cancel)|cf_challenge|challenge.{0,24}(fail|timeout|unresolved)|人机验证.{0,12}(超时|失败|未通过|过期)|验证码.{0,12}(超时|失败)/i;
+const ACCOUNT_INELIGIBLE_PATTERN = /not eligible|ineligible|account.{0,24}not supported|team.{0,12}account|enterprise.{0,12}account|app store|google play|无资格|不符合开通条件|不支持.{0,12}账号|团队.{0,12}不支持|企业.{0,12}不支持/i;
+const CARD_DECLINED_PATTERN = /银行卡支付未获通过|该卡片已达订阅上限|已达订阅上限|余额不足|卡被拒|扣款失败|支付被拒|支付未获通过|card.{0,24}declin|payment.{0,24}declin|payment.{0,24}not.{0,12}approved|insufficient.?funds|do not honor|subscription limit|card.{0,16}limit|your card was declined|expired.?card|incorrect.?cvc|invalid.?card|stripe.{0,24}declin/i;
 const MAX_REASON_LENGTH = 1600;
 const MAX_FIELD_LENGTH = 120;
 const URL_PATTERN = /https?:\/\/[^\s<>"']+/gi;
@@ -357,10 +421,158 @@ function buildGptApiFailureDiagnostic({
     };
 }
 
+/**
+ * 4 级失败分流分类器：
+ * - pre_submit_definite: 提交前明确失败（未建单，退回 CDK、释放卡片、不转人工）
+ * - customer_definite:   上游终态明确为客户账号/Session/验证问题（未扣款，退回 CDK、释放卡片、不转人工）
+ * - card_declined:       上游终态明确为卡片支付被拒/达上限/余额不足（退役坏卡、支持换卡重试 1 次、不转人工）
+ * - ambiguous:           状态不明（轮询超时、409/5xx/网络中断、无明确原因终态失败 -> 保留人工确认防双花）
+ */
+function classifyGptApiFailure({
+    stage = 'runtime_error',
+    diagnostic = null,
+    error = null,
+    status = null,
+    businessCode = null,
+    timeout = false
+} = {}) {
+    const rawCode = String(diagnostic?.code || error?.providerCode || error?.code || '').trim().toUpperCase();
+    const rawReason = String(diagnostic?.reason || error?.providerMessage || error?.message || '').trim();
+
+    if (stage === 'pre_submit') {
+        let customerMessage = String(error?.customerMessage || '').trim();
+        if (!customerMessage) {
+            if (error?.code === 'inspect_failed' || SESSION_INVALID_PATTERN.test(rawReason)) {
+                customerMessage = 'Session 格式或有效期校验未通过，原卡密已自动退回，请重新获取完整 Session 后重试';
+            } else {
+                customerMessage = '支付通道准备失败，原卡密已自动退回，请稍后重试或联系客服';
+            }
+        }
+        return {
+            category: 'pre_submit_definite',
+            requiresManualHold: false,
+            retireCard: false,
+            allowCardSwap: false,
+            customerMessage,
+            summaryTag: error?.code || 'pre_submit'
+        };
+    }
+
+    if (stage === 'submit_rejected') {
+        const httpStatus = Number(status ?? error?.status);
+        const bizCode = Number(businessCode ?? error?.businessCode);
+        const isAmbiguousSubmit = !Number.isFinite(httpStatus)
+            || httpStatus <= 0
+            || httpStatus >= 500
+            || httpStatus === 409
+            || httpStatus === 429
+            || bizCode === 40005
+            || bizCode === 40901;
+
+        if (!isAmbiguousSubmit) {
+            const customerMessage = SESSION_INVALID_PATTERN.test(rawReason)
+                ? '您的 ChatGPT Session 已失效或格式无效，原卡密已自动退回，请重新获取完整 Session 后重试'
+                : '本次提交未通过上游校验，原卡密已自动退回，请检查 Session 或稍后重试';
+            return {
+                category: 'pre_submit_definite',
+                requiresManualHold: false,
+                retireCard: false,
+                allowCardSwap: false,
+                customerMessage,
+                summaryTag: `submit_http_${httpStatus}`
+            };
+        }
+
+        return {
+            category: 'ambiguous',
+            requiresManualHold: true,
+            retireCard: true,
+            allowCardSwap: false,
+            customerMessage: GPT_API_CUSTOMER_FAILURE_MESSAGE,
+            summaryTag: 'submit_ambiguous'
+        };
+    }
+
+    if (stage === 'timeout' || timeout || rawCode === 'POLL_TIMEOUT') {
+        return {
+            category: 'ambiguous',
+            requiresManualHold: true,
+            retireCard: true,
+            allowCardSwap: false,
+            customerMessage: GPT_API_CUSTOMER_TIMEOUT_MESSAGE,
+            summaryTag: 'poll_timeout'
+        };
+    }
+
+    if (stage === 'terminal') {
+        if (EXISTING_SUBSCRIPTION_CODES.has(rawCode) || EXISTING_SUBSCRIPTION_PATTERN.test(rawReason)) {
+            return {
+                category: 'customer_definite',
+                requiresManualHold: false,
+                retireCard: false,
+                allowCardSwap: false,
+                customerMessage: '检测到该账号已有生效中的订阅，无法重复开通；原卡密已自动退回，请更换未订阅账号后重试',
+                summaryTag: 'existing_subscription'
+            };
+        }
+        if (SESSION_INVALID_CODES.has(rawCode) || SESSION_INVALID_PATTERN.test(rawReason)) {
+            return {
+                category: 'customer_definite',
+                requiresManualHold: false,
+                retireCard: false,
+                allowCardSwap: false,
+                customerMessage: '您的 ChatGPT Session 已失效或未登录，原卡密已自动退回，请重新获取完整 Session 后重试',
+                summaryTag: 'session_invalid'
+            };
+        }
+        if (CAPTCHA_FAILURE_CODES.has(rawCode) || CAPTCHA_FAILURE_PATTERN.test(rawReason)) {
+            return {
+                category: 'customer_definite',
+                requiresManualHold: false,
+                retireCard: false,
+                allowCardSwap: false,
+                customerMessage: '人机验证超时或未通过，原卡密已自动退回，请重新提交并及时完成验证',
+                summaryTag: 'captcha_failed'
+            };
+        }
+        if (ACCOUNT_INELIGIBLE_CODES.has(rawCode) || ACCOUNT_INELIGIBLE_PATTERN.test(rawReason)) {
+            return {
+                category: 'customer_definite',
+                requiresManualHold: false,
+                retireCard: false,
+                allowCardSwap: false,
+                customerMessage: '当前账号暂不符合自助开通条件（如团队/企业号、移动端订阅或地区受限），原卡密已自动退回，请更换普通个人账号或联系客服',
+                summaryTag: 'account_ineligible'
+            };
+        }
+        if (!AMBIGUOUS_GUARD_PATTERN.test(rawReason)
+            && (CARD_DECLINED_CODES.has(rawCode) || CARD_DECLINED_PATTERN.test(rawReason))) {
+            return {
+                category: 'card_declined',
+                requiresManualHold: false,
+                retireCard: true,
+                allowCardSwap: true,
+                customerMessage: '当前支付通道卡片异常，原卡密已自动退回，请稍后重试或联系客服',
+                summaryTag: 'card_declined'
+            };
+        }
+    }
+
+    return {
+        category: 'ambiguous',
+        requiresManualHold: true,
+        retireCard: true,
+        allowCardSwap: false,
+        customerMessage: GPT_API_CUSTOMER_FAILURE_MESSAGE,
+        summaryTag: 'ambiguous'
+    };
+}
+
 module.exports = {
     UNKNOWN_FAILURE_REASON,
     UNKNOWN_FAILURE_CODE,
     MAX_REASON_LENGTH,
     redactSensitiveText,
-    buildGptApiFailureDiagnostic
+    buildGptApiFailureDiagnostic,
+    classifyGptApiFailure
 };

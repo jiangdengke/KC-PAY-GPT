@@ -3,6 +3,7 @@
 const {
     MAX_REASON_LENGTH,
     buildGptApiFailureDiagnostic,
+    classifyGptApiFailure,
     redactSensitiveText
 } = require('../src/services/gpt-api-failure');
 const { formatTelegramMessage } = require('../src/services/telegram-notify');
@@ -328,5 +329,109 @@ describe('GPT API admin failure diagnostics', () => {
         expect(success).toContain('详情: 开通成功');
         expect(success).not.toContain('should-not-be-shown');
         expect(success).not.toContain('SHOULD_NOT_BE_SHOWN');
+    });
+});
+
+describe('classifyGptApiFailure 4-tier routing', () => {
+    it('routes pre-submit and non-409 4xx submit rejections to pre_submit_definite without manual hold or card retirement', () => {
+        expect(classifyGptApiFailure({
+            stage: 'pre_submit',
+            error: Object.assign(new Error('Session invalid'), { code: 'inspect_failed' })
+        })).toMatchObject({
+            category: 'pre_submit_definite',
+            requiresManualHold: false,
+            retireCard: false,
+            allowCardSwap: false
+        });
+
+        expect(classifyGptApiFailure({
+            stage: 'submit_rejected',
+            status: 422,
+            businessCode: 40013,
+            diagnostic: { reason: 'Invalid payload', code: '40013' }
+        })).toMatchObject({
+            category: 'pre_submit_definite',
+            requiresManualHold: false,
+            retireCard: false
+        });
+
+        // HTTP 409 / businessCode 40901 / 5xx remain ambiguous to prevent double-spend
+        expect(classifyGptApiFailure({
+            stage: 'submit_rejected',
+            status: 409,
+            businessCode: 40901,
+            diagnostic: { reason: 'Duplicate request', code: '40901' }
+        })).toMatchObject({
+            category: 'ambiguous',
+            requiresManualHold: true,
+            retireCard: true
+        });
+        expect(classifyGptApiFailure({
+            stage: 'submit_rejected',
+            status: 502,
+            diagnostic: { reason: 'Bad Gateway', code: '502' }
+        })).toMatchObject({
+            category: 'ambiguous',
+            requiresManualHold: true,
+            retireCard: true
+        });
+    });
+
+    it('routes customer account/session/captcha errors to customer_definite without retiring cards or holding CDK', () => {
+        for (const diagnostic of [
+            { code: 'EXISTING_SUBSCRIPTION_NOT_OURS', reason: 'Account has an existing subscription.' },
+            { code: 'SESSION_EXPIRED', reason: 'Session token expired' },
+            { code: 'CAPTCHA_FAILED', reason: 'cf_challenge_unresolved' },
+            { code: 'ACCOUNT_INELIGIBLE', reason: 'Team account is not eligible' }
+        ]) {
+            expect(classifyGptApiFailure({ stage: 'terminal', diagnostic })).toMatchObject({
+                category: 'customer_definite',
+                requiresManualHold: false,
+                retireCard: false,
+                allowCardSwap: false
+            });
+        }
+    });
+
+    it('routes explicit card declines to card_declined with swap enabled, while keeping ambiguous or timeout wording in ambiguous', () => {
+        for (const diagnostic of [
+            { code: 'CARD_DECLINED', reason: 'Your card was declined.' },
+            { code: '未提供', reason: '银行卡支付未获通过，本次充值失败。' },
+            { code: '未提供', reason: '该卡片已达订阅上限，请更换银行卡后重试。' },
+            { code: 'INSUFFICIENT_FUNDS', reason: 'Insufficient funds on card' }
+        ]) {
+            expect(classifyGptApiFailure({ stage: 'terminal', diagnostic })).toMatchObject({
+                category: 'card_declined',
+                requiresManualHold: false,
+                retireCard: true,
+                allowCardSwap: true
+            });
+        }
+
+        // Guard: ambiguous/timeout wording must NOT be downgraded to card_declined
+        expect(classifyGptApiFailure({
+            stage: 'terminal',
+            diagnostic: { code: 'CARD_DECLINED', reason: 'Card payment timed out, status unknown' }
+        })).toMatchObject({
+            category: 'ambiguous',
+            requiresManualHold: true,
+            retireCard: true,
+            allowCardSwap: false
+        });
+        expect(classifyGptApiFailure({
+            stage: 'terminal',
+            diagnostic: { code: '未提供', reason: '原因缺失（第三方未提供失败原因）' }
+        })).toMatchObject({
+            category: 'ambiguous',
+            requiresManualHold: true,
+            retireCard: true,
+            allowCardSwap: false
+        });
+        expect(classifyGptApiFailure({ stage: 'timeout', timeout: true })).toMatchObject({
+            category: 'ambiguous',
+            requiresManualHold: true,
+            retireCard: true,
+            allowCardSwap: false
+        });
     });
 });
